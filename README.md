@@ -1,12 +1,23 @@
 # KuickShare
 
-[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
-[![CI](https://github.com/the-beper/KuickShare/actions/workflows/ci.yml/badge.svg)](https://github.com/the-beper/KuickShare/actions/workflows/ci.yml)
+<p align="center">
+  <img src="data/icons/hicolor/scalable/apps/io.github.the_beper.KuickShare.svg" width="112" alt="KuickShare icon" />
+</p>
+
+<p align="center">
+  <b>Native KDE Plasma 6 app to send files, text and links to Android phones with Quick Share.</b><br>
+  Send and receive with phones and other Quick Share devices on the same Wi-Fi network, with a Breeze interface, tray icon, Plasma notifications and a Dolphin menu entry.
+</p>
+
+<p align="center">
+  <a href="https://github.com/the-beper/KuickShare/releases"><img src="https://img.shields.io/badge/Download-Flatpak-3b7086?logo=flatpak&logoColor=white" alt="Flatpak" /></a>
+  <a href="https://github.com/the-beper/KuickShare/releases"><img src="https://img.shields.io/badge/Download-AppImage-16a085?logo=linux&logoColor=white" alt="AppImage" /></a>
+  <a href="https://github.com/the-beper/KuickShare/actions/workflows/ci.yml"><img src="https://github.com/the-beper/KuickShare/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue" alt="License" />
+</p>
 
 > [!IMPORTANT]
 > KuickShare began as a project for my own personal use, and is shared as is. Generative AI (Claude Code) assisted me in writing the code (almost all of the C++ and QML and a large part of the Rust core) and drafted the documentation and diagrams.
-
-Send files, text and links between your Linux desktop and Android phones with [Quick Share](https://www.android.com/better-together/quick-share/), from a native KDE Plasma 6 app.
 
 <table>
   <tr>
@@ -17,24 +28,30 @@ Send files, text and links between your Linux desktop and Android phones with [Q
 
 ## Why
 
-[Packet](https://github.com/nozwock/packet) is a good Quick Share client, but it is a GTK4 + libadwaita app built for a GNOME environment. KuickShare started from it and keeps its protocol work, with an interface written for Plasma: Breeze look, system tray, Plasma notifications and job progress, and a Dolphin menu entry.
+[Packet](https://github.com/nozwock/packet) is a good Quick Share client, but it is a GTK4 + libadwaita app built for GNOME. KuickShare started from it and keeps its protocol work, with an interface written for Plasma.
 
-## Why not KDE Connect?
+KDE Connect would be the natural choice, but its data transfer has been unreliable on my machine. The problems seem related to `wpa_supplicant`, and switching to `iwd` would make my Wi-Fi card stop working.
 
-I would love to use KDE Connect, but unfortunately its data transfer feature has been quite unreliable for me. The problems seem to be related to `wpa_supplicant`, but I was not able to triage the issue and switching to `iwd` would cause my Wi-Fi card to simply stop working.
+## What it does
 
-## Features
-
-- Send and receive files, text and links with phones and other Quick Share devices on the same Wi-Fi network.
-- Accept or decline incoming transfers from a notification; progress shows in Plasma's job tracker.
+**Send and receive**
+- Files, text and links with phones and other Quick Share devices on the same Wi-Fi network.
 - Drag and drop, clipboard paste and **Send with KuickShare** in Dolphin.
-- History of past transfers, with automatic cleanup.
+- Accept or decline incoming transfers from a notification; progress shows in Plasma's job tracker.
+
+**Devices and history**
 - Trusted devices (matched by name and MAC address) and paired KuickShare computers (8-digit code) can send without asking.
+- History of past transfers, with automatic cleanup.
+
+**Desktop integration**
 - Tray icon, start at login, Do Not Disturb aware.
 - English and Italian interface.
 
+**Experimental, off by default**
+- Send to and receive from a phone that shares no network with the computer, over Bluetooth and a temporary Wi-Fi link. See [Wi-Fi upgrade](docs/wifi-direct.md).
+
 > [!NOTE]
-> AirDrop cannot be supported. It needs Apple's AWDL Wi-Fi link, which on Linux works only with a few Wi-Fi chips that allow monitor mode and packet injection. Google's AirDrop support in Quick Share on Pixel phones relies on Android-side code and does not change the Quick Share protocol KuickShare speaks. Wi-Fi Direct is possible but not implemented: see the [study](docs/wifi-direct.md).
+> AirDrop cannot be supported. It needs Apple's AWDL Wi-Fi link, which on Linux works only with a few Wi-Fi chips that allow monitor mode and packet injection. Google's AirDrop support in Quick Share on Pixel phones relies on Android-side code and does not change the Quick Share protocol KuickShare speaks.
 
 ## Install
 
@@ -57,20 +74,20 @@ Update, uninstall and requirements are in the [usage guide](docs/usage.md).
 
 ## Documentation
 
-| Document | Content |
-|---|---|
-| [Usage](docs/usage.md) | Install, update, uninstall, everyday use, trusted and paired devices |
-| [Architecture](docs/architecture.md) | Design, security model, packaging |
-| [Wi-Fi Direct](docs/wifi-direct.md) | Feasibility study: prior art, requirements, limits (not implemented) |
-| [D-Bus API](docs/dbus-api.md) | The interface of the background service |
-| [Contributing](CONTRIBUTING.md) | Build, tests, translations, releases |
-| [Security](SECURITY.md) | Reporting a vulnerability, known limits |
-| [Changelog](CHANGELOG.md) | Release notes |
+- [Usage](docs/usage.md): install, update, uninstall, everyday use, trusted and paired devices.
+- [Architecture](docs/architecture.md): design, security model, packaging.
+- [Wi-Fi upgrade](docs/wifi-direct.md): transfers without a shared network (experimental), how it works, requirements, limits, open work.
+- [D-Bus API](docs/dbus-api.md): the interface of the background service.
+- [Contributing](CONTRIBUTING.md): build, tests, translations, releases.
+- [Security](SECURITY.md): reporting a vulnerability, known limits.
+- [Changelog](CHANGELOG.md): release notes.
 
-## Credits and license
+## Credits
 
 KuickShare is derived from [Packet](https://github.com/nozwock/packet) and uses [`rqs_lib`](https://github.com/nozwock/rquickshare) for the Quick Share protocol. Dependencies are listed in [THIRD_PARTY.md](THIRD_PARTY.md).
 
-Licensed under [GPL-3.0-or-later](LICENSE).
+## License
 
-Quick Share is a Google product. KuickShare is an independent project, not affiliated with or endorsed by Google.
+GPL-3.0-or-later. See [LICENSE](LICENSE), and [THIRD_PARTY.md](THIRD_PARTY.md) for the third-party code and data it uses.
+
+*KuickShare is an independent open-source project, not affiliated with or endorsed by Google.*
