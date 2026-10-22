@@ -1,0 +1,958 @@
+# turkish translation of kuickshare.
+# This file is distributed under the same license as the kuickshare package.
+# the-beper <193650145+the-beper@users.noreply.github.com>, 2026.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: kuickshare 1.0.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-19 17:50+0000\n"
+"PO-Revision-Date: 2026-10-20 00:00+0000\n"
+"Last-Translator: dosulu <eray.ulu@tutamail.com>\n"
+"Language-Team: Turkish\n"
+"Language: tr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: src/shell/corebridge.cpp:480
+msgid "Could not update Dolphin's context menu"
+msgstr "Dolphin bağlam menüsü güncelenemedi"
+
+#: src/shell/corebridge.cpp:492
+msgid "Could not add KuickShare to the menus"
+msgstr "KuickShare menülere eklenemedi"
+
+#: src/shell/corebridge.cpp:588
+msgid ""
+"The Flatpak has no access to %1. Allow it with: flatpak override --user --"
+"filesystem=\"%1\" %2"
+msgstr ""
+"Flatpak ın %1 a hiçbir erişimi yok. Erişim vermek için: flatpak override --user --"
+"filesystem=\"%1\" %2"
+
+#: src/shell/corebridge.cpp:635
+msgid "Could not update the autostart entry"
+msgstr "otomatik başlatma girdisi güncelenemiyor"
+
+#: src/shell/corebridge.cpp:720
+msgid "Only files can be shared, folders are not supported"
+msgstr "Sadece dosyalar desteklidir, dosyalar değil"
+
+#: src/shell/main.cpp:38 src/shell/qml/AboutDialog.qml:156
+msgid "Quick Share client for KDE"
+msgstr "KDE için bir Quick Share istemcisi"
+
+#: src/shell/main.cpp:47
+msgid "Start hidden in the system tray"
+msgstr "Sistem tepsisinde gizli başlat"
+
+#: src/shell/main.cpp:48
+msgid "Open the given page: send, transfers, settings or help"
+msgstr "Belirtilen sayfayı aç: gönder, aktarımlar, ayarlar veya yardım"
+
+#: src/shell/main.cpp:54 src/shell/qml/SendPage.qml:144
+msgid "Files to send"
+msgstr "Gönderilecek dosyalar"
+
+#: src/shell/main.cpp:149
+msgid "Open KuickShare"
+msgstr "KuickShare ı aç"
+
+#: src/shell/main.cpp:151
+msgid "Send files…"
+msgstr "Dosya gönder…"
+
+#: src/shell/main.cpp:152
+msgid "Send clipboard"
+msgstr "Panoyu gönder"
+
+#: src/shell/main.cpp:153 src/shell/qml/SettingsPage.qml:63
+msgid "Visible to nearby devices"
+msgstr "Yakındaki görünür cihazlar"
+
+#: src/shell/main.cpp:160 src/shell/qml/Main.qml:223
+#: src/shell/qml/SettingsPage.qml:13 src/shell/qml/ShortcutsDialog.qml:13
+msgid "Preferences"
+msgstr "Tercihler"
+
+#: src/shell/main.cpp:161 src/shell/qml/Main.qml:237
+msgid "Quit"
+msgstr "Çık"
+
+#: src/shell/qml/AboutDialog.qml:74 src/shell/qml/Main.qml:251
+msgid "About"
+msgstr "Hakında"
+
+#: src/shell/qml/AboutDialog.qml:109 src/shell/qml/PairDialog.qml:69
+#: src/shell/qml/ShortcutsDialog.qml:75
+msgid "Close"
+msgstr "Kapat"
+
+#: src/shell/qml/AboutDialog.qml:153
+msgid "KuickShare %1"
+msgstr "KuickShare %1"
+
+#: src/shell/qml/AboutDialog.qml:172
+msgid "Homepage"
+msgstr "Ana sayfa"
+
+#: src/shell/qml/AboutDialog.qml:176
+msgid "Report a Bug"
+msgstr "Bir hata bildir"
+
+#: src/shell/qml/AboutDialog.qml:181
+msgid "License"
+msgstr "Lisans"
+
+#: src/shell/qml/AboutDialog.qml:185
+msgid "GPL-3.0-or-later"
+msgstr "GPL-3.0-yada-sonrası"
+
+#: src/shell/qml/AboutDialog.qml:190
+msgid "Built on"
+msgstr "Temeleri"
+
+#: src/shell/qml/AboutDialog.qml:194
+msgid "Packet"
+msgstr "Paket"
+
+#: src/shell/qml/AboutDialog.qml:195
+msgid "The Quick Share client this started from, by nozwock"
+msgstr "temel alınan Quick Share istemcisi, nozwock tarafından"
+
+#: src/shell/qml/AboutDialog.qml:199
+msgid "rquickshare"
+msgstr "rQuickShare"
+
+#: src/shell/qml/AboutDialog.qml:200
+msgid "The Quick Share protocol library (rqs_lib), by nozwock and Martichou"
+msgstr "nozwock ve Martichou tarafından geliştirilen Quick Share protokol kütüphanesi (rqs_lib)"
+
+#: src/shell/qml/AboutDialog.qml:205
+msgid "Libraries in use"
+msgstr "Kullanılan kütüphaneler"
+
+#: src/shell/qml/AboutDialog.qml:209
+msgid "Qt %1"
+msgstr "Qt %1"
+
+#: src/shell/qml/AboutDialog.qml:210
+msgid "Cross-platform application framework"
+msgstr "Çoklu platform uygulama altyapısı"
+
+#: src/shell/qml/AboutDialog.qml:213
+msgid "KDE Frameworks %1"
+msgstr "KDE Altyapısı %1"
+
+#: src/shell/qml/AboutDialog.qml:214
+msgid "Kirigami, notifications, jobs and the other KDE libraries"
+msgstr "Kirigami, bildirimler, İşler ve the diğer KDE küthüpaneleri"
+
+#: src/shell/qml/HelpPage.qml:12 src/shell/qml/Main.qml:244
+#: src/shell/qml/ShortcutsDialog.qml:14 src/shell/qml/ShortcutsDialog.qml:15
+msgid "Help"
+msgstr "Yardım"
+
+#: src/shell/qml/HelpPage.qml:25
+msgid "Getting started"
+msgstr "Başlarken"
+
+#: src/shell/qml/HelpPage.qml:31 src/shell/qml/Main.qml:182
+#: src/shell/qml/SendPage.qml:36 src/shell/qml/ShortcutsDialog.qml:11
+msgid "Send"
+msgstr "Gönder"
+
+#: src/shell/qml/HelpPage.qml:32
+msgid ""
+"Choose or drop files, or type some text, on the Send page, then pick a "
+"device. On the phone, open Quick Share."
+msgstr ""
+"Gönderme sayfasında bir dosya seç yada sürükle veya bir metin yaz ve sonrasında"
+"bir cihaz seç. Telefonda QuickShare i aç."
+
+#: src/shell/qml/HelpPage.qml:36
+msgid "Be found"
+msgstr "Bulun"
+
+#: src/shell/qml/HelpPage.qml:37
+msgid ""
+"Keep “Visible to nearby devices” on in Preferences. The phone must be set to "
+"Everyone to be found, and Android sets it back after 10 minutes."
+msgstr ""
+"Tercihler menüsünden "Yakındaki cihazlara görün" seçeneğini açın. Telefonun "
+"Herkes paylaşım yapabilsin" ayarlanmalı (android bu ayarı 10Dk sonra eski haline döndürür)."
+
+#: src/shell/qml/HelpPage.qml:41
+msgid "Receive"
+msgstr "Al"
+
+#: src/shell/qml/HelpPage.qml:42
+msgid ""
+"An incoming transfer asks for your approval in a notification. Received "
+"files go to the download folder chosen in Preferences."
+msgstr ""
+"Gelen bir paylaşım, bildirim üzerinden onayınızı istiyor. Alınan "
+"dosyalar tercihler de seçilen indirilenler klasörüne gider."
+
+#: src/shell/qml/HelpPage.qml:47
+msgid "Paired and trusted devices"
+msgstr "eşleştirilmiş ve güvenilen cihazlar"
+
+#: src/shell/qml/HelpPage.qml:53
+msgid "Paired computers"
+msgstr "Eşleştirilmiş bilgisayarlar"
+
+#: src/shell/qml/HelpPage.qml:54
+msgid ""
+"Two computers running KuickShare can pair with an 8-digit code, then send to "
+"each other without asking. The port 47891 must be reachable."
+msgstr ""
+"KuickShare kulanan iki bilgisayar 8 haneli bir pin ile eşleştirilebilir, sonrasında birbirlerine "
+"onay gerekmeksizin paylaşım yapabilirler. 47891 Portunun erişilebilir olması gerekir."
+
+#: src/shell/qml/HelpPage.qml:58 src/shell/qml/SettingsPage.qml:175
+msgid "Trusted devices"
+msgstr "Güvenilen cihazlar"
+
+#: src/shell/qml/HelpPage.qml:59
+msgid ""
+"“Accept and trust” on a notification accepts a phone without asking from "
+"then on. It is recognised by name and MAC address, so only on the same "
+"network."
+msgstr ""
+"Bir bildirimdeki “Kabul et ve güven” o telefonu bundan böyle "
+"sormadan kabul eder. Telefon adı ve MAC adresiyle tanınır, bu nedenle "
+"yalnızca aynı ağdayken geçerlidir. "
+
+#: src/shell/qml/HelpPage.qml:64
+msgid "Troubleshooting"
+msgstr "Sorun giderme"
+
+#: src/shell/qml/HelpPage.qml:70
+msgid "The phone does not see this computer"
+msgstr "Telefon bu bilgidayarı görmüyor"
+
+#: src/shell/qml/HelpPage.qml:71
+msgid ""
+"Check that “Visible to nearby devices” is on, that Do Not Disturb is off (it "
+"hides this computer) and that both are on the same network."
+msgstr ""
+"“Yakındaki cihazlara görünür” seçeneğinin açık olduğundan, Rahatsız Etmeyin modunun kapalı olduğundan "
+"(bu bilgisayarı gizler çünkü) ve her iki cihazın da aynı ağda olduğundan emin olun."
+
+#: src/shell/qml/HelpPage.qml:75
+msgid "This computer does not see the phone"
+msgstr "Bu bilgisayar telefonu görmüyor"
+
+#: src/shell/qml/HelpPage.qml:76
+msgid "Set the phone to Everyone and keep its Quick Share screen open."
+msgstr "Telefonu herkese görüne alın ve Quick Share ekranını açık tutun."
+
+#: src/shell/qml/HelpPage.qml:80
+msgid "Firewall"
+msgstr "Güvenlik duvarı"
+
+#: src/shell/qml/HelpPage.qml:81
+msgid ""
+"Discovery uses mDNS. The transfer port is random unless you fix one in "
+"Preferences: open that port in the firewall."
+msgstr ""
+"Keşif mDNS kulnaır. Tercihlerde sabit bir tane belirtmediğiniz sürece paylaşım portu "
+"rasgeledir: portu güvenlik duvarında aç."
+
+#: src/shell/qml/IntegrationDialog.qml:14
+msgid "Add KuickShare to the menus?"
+msgstr "Add KuickShare to the menus?"
+
+#: src/shell/qml/IntegrationDialog.qml:24
+msgid "It will appear in the application menu and in Dolphin's context menu."
+msgstr "It will appear in the application menu and in Dolphin's context menu."
+
+#: src/shell/qml/Main.qml:22
+msgid "KuickShare"
+msgstr "KuickShare"
+
+#: src/shell/qml/Main.qml:81
+msgid "Quit KuickShare?"
+msgstr "KuickShare dan çıkılsınmı?"
+
+#: src/shell/qml/Main.qml:82
+msgid "A transfer is in progress. Quitting stops it."
+msgstr "Paylaşım daha tamamlanmadı. Çıkmak paylaşımı durduracak."
+
+#: src/shell/qml/Main.qml:189 src/shell/qml/ShortcutsDialog.qml:12
+#: src/shell/qml/TransfersPage.qml:11
+msgid "Transfers"
+msgstr "Paylaşımlar"
+
+#: src/shell/qml/Main.qml:207
+msgid "More"
+msgstr "Daha fazla"
+
+#: src/shell/qml/Main.qml:230 src/shell/qml/ShortcutsDialog.qml:40
+msgid "Shortcuts"
+msgstr "Kısayolar"
+
+#: src/shell/qml/Main.qml:371
+msgid ""
+"The sharing service is not running. Nothing can be sent or received until it "
+"is started."
+msgstr ""
+"Paylaşım servisi şuan çalışmıyor. Başlatılana kadar hiçbirşey alınamaz yada "
+"gönderilemez."
+
+#: src/shell/qml/Main.qml:374
+msgid "Start service"
+msgstr "Servisi başlat"
+
+#: src/shell/qml/PairDialog.qml:19
+msgid "Pair a device"
+msgstr "Cihaz eşleltir"
+
+#: src/shell/qml/PairDialog.qml:54
+msgid "The codes match"
+msgstr "Kodlar eşleşiyor"
+
+#: src/shell/qml/PairDialog.qml:63
+msgid "They differ"
+msgstr "Farklılar"
+
+#: src/shell/qml/PairDialog.qml:81
+msgid ""
+"Open Preferences → Pair a device on the other computer as well, then choose "
+"it here."
+msgstr ""
+"Tercihleri aç → Diğer bilgisayrada bir cihaz eşleştir, ve burdan "
+"seç."
+
+#: src/shell/qml/PairDialog.qml:108
+msgid "Already paired"
+msgstr "Çoktan eşleştirilmiş"
+
+#: src/shell/qml/PairDialog.qml:129
+msgid "Looking for computers running KuickShare…"
+msgstr "KuickShare kullanan bilgisayarlar aranıyor…"
+
+#: src/shell/qml/PairDialog.qml:143
+msgid "Waiting for %1…"
+msgstr "%1 bekleniyor…"
+
+#: src/shell/qml/PairDialog.qml:143
+msgid "Waiting…"
+msgstr "Bekleniyor…"
+
+#: src/shell/qml/PairDialog.qml:157
+msgid "Check that %1 shows exactly this code:"
+msgstr "%1 in de aynı kodu gösterdiğine emin olun:"
+
+#: src/shell/qml/PairDialog.qml:175
+msgid "Paired with %1"
+msgstr "%1 ile eşleştirildi"
+
+#: src/shell/qml/PairDialog.qml:176
+msgid "Transfers between these computers are accepted without asking."
+msgstr "Bu bilgisayarlar arasındaki paylaşımlar onaysız kabul ediliyor."
+
+#: src/shell/qml/PairDialog.qml:182
+msgid "Pairing did not complete"
+msgstr "Eşleşme tamamlanmadı"
+
+#: src/shell/qml/SendPage.qml:136 src/shell/qml/SettingsPage.qml:152
+#: src/shell/qml/SettingsPage.qml:200
+msgid "Remove"
+msgstr "Kaldır"
+
+#: src/shell/qml/SendPage.qml:184 src/shell/qml/ShortcutsDialog.qml:17
+msgid "Choose files to send"
+msgstr "Göndermek için dosya seç"
+
+#: src/shell/qml/SendPage.qml:218
+msgid "Starting…"
+msgstr "Başlıyor…"
+
+#: src/shell/qml/SendPage.qml:218
+msgid "Hidden"
+msgstr "Gizli"
+
+#: src/shell/qml/SendPage.qml:218
+msgid "Do Not Disturb"
+msgstr "Rahatsız etme"
+
+#: src/shell/qml/SendPage.qml:218
+msgid "Ready"
+msgstr "Hazır"
+
+#: src/shell/qml/SendPage.qml:223
+msgid "Turn on visibility in Preferences to receive files"
+msgstr "Dosya alabilmek için tercihlerden görünürlüğü açın"
+
+#: src/shell/qml/SendPage.qml:223
+msgid "Hidden until Do Not Disturb ends"
+msgstr "Rahatsız etme bitene kadar gizli"
+
+#: src/shell/qml/SendPage.qml:223
+msgid "Visible as \"%1\""
+msgstr "\"%1\" olarak görünür"
+
+#: src/shell/qml/SendPage.qml:257
+msgid "Drop to share"
+msgstr "Paylaşmak için bırak"
+
+#: src/shell/qml/SendPage.qml:257
+msgid "Drop files here"
+msgstr "Paylaşmak için dosyaları sürükle"
+
+#: src/shell/qml/SendPage.qml:262
+msgid "or click to choose them"
+msgstr "yada seçmek için tıkla"
+
+#: src/shell/qml/SendPage.qml:269
+msgid "Paste from clipboard"
+msgstr "Panodan yapıştır"
+
+#: src/shell/qml/SendPage.qml:284 src/shell/qml/TransfersPage.qml:278
+#: src/shell/transferwatcher.cpp:83
+msgid "%1 file"
+msgid_plural "%1 files"
+msgstr[0] "%1 dosya"
+msgstr[1] "%1 dosyalar"
+
+#: src/shell/qml/SendPage.qml:293
+msgid "Add"
+msgstr "Ekle"
+
+#: src/shell/qml/SendPage.qml:298 src/shell/qml/SendPage.qml:354
+msgid "Clear"
+msgstr "Temizle"
+
+#: src/shell/qml/SendPage.qml:317
+msgid "Show all %1 files"
+msgstr "Bütün %1 dosyaları göster"
+
+#: src/shell/qml/SendPage.qml:341
+msgid "Text or link"
+msgstr "Metin yada link"
+
+#: src/shell/qml/SendPage.qml:360
+msgid "Paste"
+msgstr "Yapıştır"
+
+#: src/shell/qml/SendPage.qml:388
+msgid "Type or paste something to send…"
+msgstr "Göndermek için birşeyler yaz…"
+
+#: src/shell/qml/SendPage.qml:423
+msgid "A string can only be sent as a link when it is the only content"
+msgstr "Bir metin yalnızca tek içerik olduğunda bağlantı olarak gönderilebilir"
+
+#: src/shell/qml/SendPage.qml:423
+msgid "No valid link"
+msgstr "Geçerli link yok"
+
+#: src/shell/qml/SendPage.qml:429
+msgid "Send as text"
+msgstr "Metin olarak gönder"
+
+#: src/shell/qml/SendPage.qml:462
+msgid "Send to"
+msgstr "A gönder"
+
+#: src/shell/qml/SendPage.qml:482
+msgid "Looking for nearby devices…"
+msgstr "Yakındaki cihazlar aranıyor…"
+
+#: src/shell/qml/SendPage.qml:497
+msgid "Choose or drop something to send, then pick a device."
+msgstr "Göndermek için bir dosyayı seç yada sürükle ve bir cihaz seç."
+
+#: src/shell/qml/SendPage.qml:557
+msgid "Paired"
+msgstr "Eşleşti"
+
+#: src/shell/qml/SettingsPage.qml:28
+msgid "Choose the download folder"
+msgstr "İndirilenler klasörünü seç"
+
+#: src/shell/qml/SettingsPage.qml:49
+msgid "Visibility"
+msgstr "Görünürlük"
+
+#: src/shell/qml/SettingsPage.qml:56
+msgid "Device name"
+msgstr "Cihaz ismi"
+
+#: src/shell/qml/SettingsPage.qml:64
+msgid "Others can find this computer and send to it"
+msgstr "Başkaları bu bilgisayarı görebilir ve birşeyler gönderebilir"
+
+#: src/shell/qml/SettingsPage.qml:71
+msgid "Hide during Do Not Disturb"
+msgstr "Rahatsız etme açıken gizle"
+
+#: src/shell/qml/SettingsPage.qml:72
+msgid "Not visible while Do Not Disturb is on"
+msgstr "Rahatsız etme açıken görünmez"
+
+#: src/shell/qml/SettingsPage.qml:80
+msgid "Receiving"
+msgstr "Alınıyor"
+
+#: src/shell/qml/SettingsPage.qml:86
+msgid "Download folder"
+msgstr "İndirme klasörü"
+
+#: src/shell/qml/SettingsPage.qml:87
+msgid "Default (Downloads)"
+msgstr "Varsayılan (İndirilenler)"
+
+#: src/shell/qml/SettingsPage.qml:94
+msgid "Use the default folder"
+msgstr "Varsayılan klasörü kullan"
+
+#: src/shell/qml/SettingsPage.qml:100
+msgid "Random port"
+msgstr "Rasgele port"
+
+#: src/shell/qml/SettingsPage.qml:101
+msgid "A different port at every start"
+msgstr "Her başlatışta farklı bir port"
+
+#: src/shell/qml/SettingsPage.qml:114
+msgid "Fixed port"
+msgstr "Sabit port"
+
+#: src/shell/qml/SettingsPage.qml:131
+msgid ""
+"A fixed port (1024–65535) can be opened in the firewall. Changing the name "
+"or the port restarts sharing."
+msgstr ""
+"Sabit port (1024–65535) güvenlik duvarı içerisinden açılabilir. İsmi yada portu "
+"değiştirmek paylaşımı sıfırlar."
+
+#: src/shell/qml/SettingsPage.qml:135
+msgid "Paired devices"
+msgstr "Eşleştirilmiş cihazlar"
+
+#: src/shell/qml/SettingsPage.qml:148
+msgid "Fingerprint %1"
+msgstr "Parmak izi %1"
+
+#: src/shell/qml/SettingsPage.qml:159
+msgid "No paired computers yet"
+msgstr "Daha eşleştirilmiş bilgisayar yok"
+
+#: src/shell/qml/SettingsPage.qml:160
+msgid "Paired computers can send to each other without asking"
+msgstr "Eşleştirilmiş bilgisayarlar onay gerekmeksizin dosya alışverişi yapabilir"
+
+#: src/shell/qml/SettingsPage.qml:164
+msgid "Pair a device…"
+msgstr "Cihazı eşle…"
+
+#: src/shell/qml/SettingsPage.qml:171
+msgid "A paired computer can send you files without asking."
+msgstr "Eşleştirilmiş bilgisayarlar onay almadan size dosya gönderebilir."
+
+#: src/shell/qml/SettingsPage.qml:181
+msgid "Trust devices"
+msgstr "Cihazlara güven"
+
+#: src/shell/qml/SettingsPage.qml:182
+msgid "Accept transfers from trusted devices without asking"
+msgstr "Güvenilen cihazlarda onay sormadan paylaşım al"
+
+#: src/shell/qml/SettingsPage.qml:196
+msgid "MAC address %1"
+msgstr "MAC adresi %1"
+
+#: src/shell/qml/SettingsPage.qml:207
+msgid "No devices yet"
+msgstr "Daha cihaz yok"
+
+#: src/shell/qml/SettingsPage.qml:208
+msgid "Use “Accept and trust” on an incoming transfer notification to add one"
+msgstr "Eklemek için gelen payalşım bildirimlerinden birinde  “Kabul et ve güven” e tıklayın"
+
+#: src/shell/qml/SettingsPage.qml:215
+msgid ""
+"Matched by name and MAC address. Another device that copies both would be "
+"accepted too. Use only if you trust all devices in your LAN."
+msgstr ""
+"MAC adresi ve isim ile eşleştirilir. Bunları kopyalayan başka bir cihaz "
+"da kabul edilir. Sadece tamamen güvendiğiniz LAN ağlarında kulanın."
+
+#: src/shell/qml/SettingsPage.qml:221
+msgid "History"
+msgstr "Geçmiş"
+
+#: src/shell/qml/SettingsPage.qml:227
+msgid "Save transfer history"
+msgstr "Paylaşım geçmişini kayded"
+
+#: src/shell/qml/SettingsPage.qml:228
+msgid "Keep a list of sent and received transfers"
+msgstr "Alınan ve gönderilen paylaşımların listesini tut"
+
+#: src/shell/qml/SettingsPage.qml:250
+msgid "Delete entries after"
+msgstr "Sonrasında girdileri sil"
+
+#: src/shell/qml/SettingsPage.qml:258
+msgid "Never"
+msgstr "Asla"
+
+#: src/shell/qml/SettingsPage.qml:258
+msgid "1 day"
+msgstr "1 gün"
+
+#: src/shell/qml/SettingsPage.qml:258
+msgid "7 days"
+msgstr "7 gün"
+
+#: src/shell/qml/SettingsPage.qml:258
+msgid "30 days"
+msgstr "30 gün"
+
+#: src/shell/qml/SettingsPage.qml:258
+msgid "90 days"
+msgstr "90 gün"
+
+#: src/shell/qml/SettingsPage.qml:267
+msgid ""
+"With the history turned off nothing is saved. Entries already saved stay "
+"until they expire or you clear them."
+msgstr ""
+"Geçmiş kapalıyken hiçbirşey kaydedilmez. Önceden kaydedilmiş girdiler "
+"siz onları silene yada tarihleri dolana kadar kalırlar."
+
+#: src/shell/qml/SettingsPage.qml:271
+msgid "Startup"
+msgstr "Başlama"
+
+#: src/shell/qml/SettingsPage.qml:277
+msgid "Start at login"
+msgstr "Giriş yapmada başlat"
+
+#: src/shell/qml/SettingsPage.qml:278
+msgid "Starts hidden, in the system tray if it is shown"
+msgstr "Gösteriliyorsa sistem tepsisinde gizli olarak başlar"
+
+#: src/shell/qml/SettingsPage.qml:284
+msgid "Integration"
+msgstr "Entegrasyon"
+
+#: src/shell/qml/SettingsPage.qml:290
+msgid "Show tray icon"
+msgstr "Tepsi simgesini göster"
+
+#: src/shell/qml/SettingsPage.qml:291
+msgid "Keep KuickShare in the system tray"
+msgstr "KuickShare i sistem tepsisinde tut"
+
+#: src/shell/qml/SettingsPage.qml:298
+msgid "Dolphin context menu"
+msgstr "Dolphin bağlam menüsü"
+
+#: src/shell/qml/SettingsPage.qml:299
+msgid "Add “Send with KuickShare” to the menu of files"
+msgstr "menüye “KuickShare ile paylaş” seçeneğini ekle"
+
+#: src/shell/qml/SettingsPage.qml:308
+msgid ""
+"Without the tray icon, closing the window quits KuickShare, and nothing can "
+"be received until you open it again. At login it starts hidden: open "
+"KuickShare again to show the window."
+msgstr ""
+"Sistem tepsisi simgesi olmadan pencereyi kapatmak KuickShare'i kapatır ve "
+"uygulamayı tekrar açana kadar hiçbir şey alınamaz. Oturum açıldığında gizli "
+"olarak başlar: Pencereyi göstermek için KuickShare'i tekrar açın."
+
+#: src/shell/qml/SettingsPage.qml:314
+msgid "Reset preferences?"
+msgstr "Tercihleri sıfırlayalımı?"
+
+#: src/shell/qml/SettingsPage.qml:315
+msgid ""
+"Every setting goes back to its default. The history and the paired and "
+"trusted devices are kept."
+msgstr ""
+"Bütün ayarlar ilk haline dönüyor. Geçmiş ve eşleştirilmiş ve "
+"güvenilmiş cihazlar korunuyor."
+
+#: src/shell/qml/SettingsPage.qml:321
+msgid "Reset"
+msgstr "Sıfırla"
+
+#: src/shell/qml/SettingsPage.qml:327
+msgid "Reset preferences…"
+msgstr "Tercihleri sıfırla…"
+
+#: src/shell/qml/SettingsPage.qml:328
+msgid "Go back to the default preferences"
+msgstr "İlk tercih ayarlarına geri dön"
+
+#: src/shell/qml/ShortcutsDialog.qml:16
+msgid "Show the shortcuts"
+msgstr "Kısayoları göster"
+
+#: src/shell/qml/ShortcutsDialog.qml:18
+msgid "Paste files, an image or text from the clipboard"
+msgstr "Dosyaları yapıştır, panodan bir resim yada metin"
+
+#: src/shell/qml/ShortcutsDialog.qml:19
+msgid "Clear files and text"
+msgstr "Metin ve dosyaları temizle"
+
+#: src/shell/qml/ShortcutsDialog.qml:20
+msgid "Close the window"
+msgstr "Pencereyi kapat"
+
+#: src/shell/qml/ShortcutsDialog.qml:21
+msgid "Quit KuickShare"
+msgstr "KuickShare den çık"
+
+#: src/shell/qml/TransfersPage.qml:21
+msgid "Clear history?"
+msgstr "Geçmişi silicekmisiniz?"
+
+#: src/shell/qml/TransfersPage.qml:22
+msgid "Files you received are not touched."
+msgstr "Aldınız dosyalara hiç dokunulmadı."
+
+#: src/shell/qml/TransfersPage.qml:75
+msgid "Copied to clipboard"
+msgstr "Panoya kopyalandı"
+
+#: src/shell/qml/TransfersPage.qml:111
+msgid "Transfer details"
+msgstr "Paylaşım detayları"
+
+#: src/shell/qml/TransfersPage.qml:133
+msgid "Result"
+msgstr "Sonuç"
+
+#: src/shell/qml/TransfersPage.qml:133
+msgid "Size"
+msgstr "Boyut"
+
+#: src/shell/qml/TransfersPage.qml:257
+msgid "Waiting for your approval"
+msgstr "Onayınız bekleniyor"
+
+#: src/shell/qml/TransfersPage.qml:259
+msgid "Receiving…"
+msgstr "Alınıyor…"
+
+#: src/shell/qml/TransfersPage.qml:261
+msgid "Sending…"
+msgstr "Gönderiliyor…"
+
+#: src/shell/qml/TransfersPage.qml:263
+msgid "Sent"
+msgstr "Gönderildi"
+
+#: src/shell/qml/TransfersPage.qml:263
+msgid "Received"
+msgstr "Alındı"
+
+#: src/shell/qml/TransfersPage.qml:265
+msgid "Cancelled"
+msgstr "Vazgeçildi"
+
+#: src/shell/qml/TransfersPage.qml:267
+msgid "Declined"
+msgstr "Reddedildi"
+
+#: src/shell/qml/TransfersPage.qml:267
+msgid "You declined"
+msgstr "Reddettiniz"
+
+#: src/shell/qml/TransfersPage.qml:270
+msgid "Not accepted"
+msgstr "Kabuledilmedi"
+
+#: src/shell/qml/TransfersPage.qml:270
+msgid "Interrupted"
+msgstr "İptal edildi"
+
+#: src/shell/qml/TransfersPage.qml:272
+msgid "Connecting…"
+msgstr "Bağlanılıyor…"
+
+#: src/shell/qml/TransfersPage.qml:306
+msgid "The history is large (%1) and may slow KuickShare down."
+msgstr "Geçmiş çok büyük (%1) ve belki KuickShare i yavaşlatabilir."
+
+#: src/shell/qml/TransfersPage.qml:309 src/shell/qml/TransfersPage.qml:332
+msgid "Clear history"
+msgstr "Geçmişi temizle"
+
+#: src/shell/qml/TransfersPage.qml:320
+msgid ""
+"History is turned off: new transfers are not saved. You can turn it on in "
+"Preferences."
+msgstr ""
+"Geçmiş kapalı: yeni paylaşımlar kaydedilmiyor. Bölümünde açabilirsiniz: "
+"Tercihler."
+
+#: src/shell/qml/TransfersPage.qml:344
+msgid "No transfers yet"
+msgstr "Şimdilik hiç paylaşım yok"
+
+#: src/shell/qml/TransfersPage.qml:344
+msgid "Starting the sharing service…"
+msgstr "Paylaşım servisi başlatılıyor…"
+
+#: src/shell/qml/TransfersPage.qml:345
+msgid ""
+"Sent and received transfers are listed here. Make sure this computer is "
+"visible in Preferences to receive."
+msgstr ""
+"Gönderilmiş ve alınmış paylaşımlar burda listeli. Bu makinanın "
+"tercihlerde görünür olduğundan emin olun."
+
+#: src/shell/qml/TransfersPage.qml:345
+msgid ""
+"Transfers are only listed while the app is open, because the history is "
+"turned off."
+msgstr ""
+"Paylaşımlar sadece program açıken listede çünkü geçmiş "
+"Kapalı."
+
+#: src/shell/qml/TransfersPage.qml:496
+msgid "Unknown device"
+msgstr "Bilinmeyen cihaz"
+
+#: src/shell/qml/TransfersPage.qml:521
+msgid "Trusted"
+msgstr "Güvenilen"
+
+#: src/shell/qml/TransfersPage.qml:530
+msgid "%1%"
+msgstr "%1%"
+
+#: src/shell/qml/TransfersPage.qml:537
+msgid "Cancel"
+msgstr "Vazgeç"
+
+#: src/shell/qml/TransfersPage.qml:544
+msgid "Remove from list"
+msgstr "Listeden kaldır"
+
+#: src/shell/qml/TransfersPage.qml:554
+msgid "Wants to share with you · PIN %1"
+msgstr "Seninle paylaşmak istiyor · PIN %1"
+
+#: src/shell/qml/TransfersPage.qml:563
+msgid "More details"
+msgstr "Daha çok detay"
+
+#: src/shell/qml/TransfersPage.qml:601 src/shell/transferwatcher.cpp:145
+msgid "Accept"
+msgstr "Kabulet"
+
+#: src/shell/qml/TransfersPage.qml:607 src/shell/transferwatcher.cpp:157
+msgid "Decline"
+msgstr "Reddet"
+
+#: src/shell/qml/TransfersPage.qml:613 src/shell/transferwatcher.cpp:190
+msgid "Open folder"
+msgstr "Klasörü aç"
+
+#: src/shell/qml/TransfersPage.qml:619 src/shell/transferwatcher.cpp:174
+msgid "Copy"
+msgstr "Kopyala"
+
+#: src/shell/transferjob.cpp:16
+msgid "Sending files"
+msgstr "Dosyalar gönderiliyor"
+
+#: src/shell/transferjob.cpp:16
+msgid "Receiving files"
+msgstr "Dosyalar alınıyor"
+
+#: src/shell/transferjob.cpp:17
+msgid "To"
+msgstr "E"
+
+#: src/shell/transferjob.cpp:17
+msgid "From"
+msgstr "Den"
+
+#: src/shell/transferjob.cpp:18
+msgid "Files"
+msgstr "Dosyalar"
+
+#: src/shell/transferjob.cpp:49
+msgid "The transfer was interrupted"
+msgstr "Paylaşım iptal edildi"
+
+#: src/shell/transferwatcher.cpp:120
+msgid "a nearby device"
+msgstr "yakındaki bir cihaz"
+
+#: src/shell/transferwatcher.cpp:129
+msgid "Transfer not accepted"
+msgstr "Paylaşım reddedildi"
+
+#: src/shell/transferwatcher.cpp:129
+msgid "%1 declined the transfer or could not receive it"
+msgstr "%1 paylaşımı reddetti yada alamadı"
+
+#: src/shell/transferwatcher.cpp:133
+msgid "Transfer interrupted"
+msgstr "Paylaşım iptal edildi"
+
+#: src/shell/transferwatcher.cpp:133
+msgid "The connection with %1 was lost"
+msgstr "%1 ile bağlantı koptu"
+
+#: src/shell/transferwatcher.cpp:141
+msgid "Incoming transfer"
+msgstr "Gelen paylaşım"
+
+#: src/shell/transferwatcher.cpp:142
+msgid "A nearby device"
+msgstr "Yakındaki bir cihaz"
+
+#: src/shell/transferwatcher.cpp:143
+msgid "%1 wants to share with you"
+msgstr "%1 seninle paylaşmak istiyor"
+
+#: src/shell/transferwatcher.cpp:143
+msgid ""
+"%1 wants to share with you\n"
+"PIN: %2"
+msgstr ""
+"%1 seninle paylaşmak istiyor\n"
+"PIN: %2"
+
+#: src/shell/transferwatcher.cpp:151
+msgid "Accept and trust"
+msgstr "Güven ve kabul et"
+
+#: src/shell/transferwatcher.cpp:172
+msgid "Text received"
+msgstr "Metin alındı"
+
+#: src/shell/transferwatcher.cpp:173
+msgid ""
+"From %1:\n"
+"%2"
+msgstr ""
+"%1 den:\n"
+"%2"
+
+#: src/shell/transferwatcher.cpp:180
+msgid "Open link"
+msgstr "Linki aç"
+
+#: src/shell/transferwatcher.cpp:188
+msgid "Files received"
+msgstr "Dosya alındı"
+
+#: src/shell/transferwatcher.cpp:189
+msgid "From %1"
+msgstr "%1 den"
