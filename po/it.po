@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-25 11:44+0000\n"
+"POT-Creation-Date: 2026-10-26 14:59+0000\n"
 "PO-Revision-Date: 2026-10-18 00:00+0000\n"
 "Last-Translator: the-beper <193650145+the-beper@users.noreply.github.com>\n"
 "Language-Team: Italian\n"
@@ -16,23 +16,23 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: src/shell/corebridge.cpp:555
+#: src/shell/corebridge.cpp:566
 msgid "Could not update Dolphin's context menu"
 msgstr "Impossibile aggiornare il menu contestuale di Dolphin"
 
-#: src/shell/corebridge.cpp:579
+#: src/shell/corebridge.cpp:590
 msgid "Could not update the application menu"
 msgstr "Impossibile aggiornare il menu delle applicazioni"
 
-#: src/shell/corebridge.cpp:590
+#: src/shell/corebridge.cpp:601
 msgid "Could not add KuickShare to the menus"
 msgstr "Impossibile aggiungere KuickShare ai menu"
 
-#: src/shell/corebridge.cpp:647 src/shell/corebridge.cpp:654
+#: src/shell/corebridge.cpp:658 src/shell/corebridge.cpp:665
 msgid "The sharing service did not accept the request"
 msgstr "Il servizio di condivisione non ha accettato la richiesta"
 
-#: src/shell/corebridge.cpp:710
+#: src/shell/corebridge.cpp:742
 msgid ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
@@ -40,56 +40,66 @@ msgstr ""
 "Il Flatpak non ha accesso a %1. Consentilo con: flatpak override --user --"
 "filesystem=\"%1\" %2"
 
-#: src/shell/corebridge.cpp:757
+#: src/shell/corebridge.cpp:789
 msgid "Could not update the autostart entry"
 msgstr "Impossibile aggiornare la voce di avvio automatico"
 
-#: src/shell/corebridge.cpp:883
+#: src/shell/corebridge.cpp:915
 msgid "Only files can be shared, folders are not supported"
 msgstr "È possibile condividere solo file, le cartelle non sono supportate"
 
-#: src/shell/main.cpp:47 src/shell/qml/AboutDialog.qml:158
+#: src/shell/main.cpp:48 src/shell/qml/AboutDialog.qml:158
 msgid "Quick Share client for KDE Plasma"
 msgstr "Client Quick Share per KDE Plasma"
 
-#: src/shell/main.cpp:56
+#: src/shell/main.cpp:57
 msgid "Start hidden in the system tray"
 msgstr "Avvia nascosto nell'area di notifica"
 
-#: src/shell/main.cpp:57
+#: src/shell/main.cpp:58
 msgid "Open the given page: send, transfers, settings or help"
 msgstr "Apre la pagina indicata: send, transfers, settings o help"
 
-#: src/shell/main.cpp:58
+#: src/shell/main.cpp:59
 msgid "Quit a running instance and take its place"
 msgstr "Chiudi un'istanza in esecuzione e prendine il posto"
 
-#: src/shell/main.cpp:65 src/shell/qml/SendPage.qml:147
+#: src/shell/main.cpp:66 src/shell/qml/SendPage.qml:147
 msgid "Files to send"
 msgstr "File da inviare"
 
-#: src/shell/main.cpp:266
+#: src/shell/main.cpp:267
 msgid "Open KuickShare"
 msgstr "Apri KuickShare"
 
-#: src/shell/main.cpp:268
+#: src/shell/main.cpp:269
 msgid "Send files…"
 msgstr "Invia file…"
 
-#: src/shell/main.cpp:269
+#: src/shell/main.cpp:270
 msgid "Send clipboard"
 msgstr "Invia appunti"
 
-#: src/shell/main.cpp:270 src/shell/qml/SettingsPage.qml:66
+#: src/shell/main.cpp:271 src/shell/qml/SettingsPage.qml:66
 msgid "Visible to nearby devices"
 msgstr "Visibile ai dispositivi vicini"
 
-#: src/shell/main.cpp:277 src/shell/qml/Main.qml:273
+#: src/shell/main.cpp:287
+msgid "Visible for %1 more minute (click to stop)"
+msgid_plural "Visible for %1 more minutes (click to stop)"
+msgstr[0] "Visibile per ancora %1 minuto (clic per interrompere)"
+msgstr[1] "Visibile per altri %1 minuti (clic per interrompere)"
+
+#: src/shell/main.cpp:288
+msgid "Visible for 10 minutes"
+msgstr "Visibile per 10 minuti"
+
+#: src/shell/main.cpp:302 src/shell/qml/Main.qml:273
 #: src/shell/qml/SettingsPage.qml:16 src/shell/qml/ShortcutsDialog.qml:17
 msgid "Preferences"
 msgstr "Preferenze"
 
-#: src/shell/main.cpp:280 src/shell/qml/Main.qml:287
+#: src/shell/main.cpp:305 src/shell/qml/Main.qml:287
 msgid "Quit"
 msgstr "Esci"
 
@@ -181,7 +191,9 @@ msgstr "Invia"
 msgid ""
 "Choose or drop files, or type some text, on the Send page, then pick a "
 "device. On the phone, open Quick Share."
-msgstr "Nella pagina Invia scegli o trascina dei file, oppure scrivi del testo, poi seleziona un dispositivo. Sul telefono, apri Quick Share."
+msgstr ""
+"Nella pagina Invia scegli o trascina dei file, oppure scrivi del testo, poi "
+"seleziona un dispositivo. Sul telefono, apri Quick Share."
 
 #: src/shell/qml/HelpPage.qml:35
 msgid "Be found"

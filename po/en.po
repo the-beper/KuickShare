@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-25 11:44+0000\n"
+"POT-Creation-Date: 2026-10-26 14:59+0000\n"
 "PO-Revision-Date: 2026-10-18 00:00+0000\n"
 "Last-Translator: the-beper <193650145+the-beper@users.noreply.github.com>\n"
 "Language-Team: English\n"
@@ -16,23 +16,23 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: src/shell/corebridge.cpp:555
+#: src/shell/corebridge.cpp:566
 msgid "Could not update Dolphin's context menu"
 msgstr "Could not update Dolphin's context menu"
 
-#: src/shell/corebridge.cpp:579
+#: src/shell/corebridge.cpp:590
 msgid "Could not update the application menu"
 msgstr "Could not update the application menu"
 
-#: src/shell/corebridge.cpp:590
+#: src/shell/corebridge.cpp:601
 msgid "Could not add KuickShare to the menus"
 msgstr "Could not add KuickShare to the menus"
 
-#: src/shell/corebridge.cpp:647 src/shell/corebridge.cpp:654
+#: src/shell/corebridge.cpp:658 src/shell/corebridge.cpp:665
 msgid "The sharing service did not accept the request"
 msgstr "The sharing service did not accept the request"
 
-#: src/shell/corebridge.cpp:710
+#: src/shell/corebridge.cpp:742
 msgid ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
@@ -40,56 +40,66 @@ msgstr ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
 
-#: src/shell/corebridge.cpp:757
+#: src/shell/corebridge.cpp:789
 msgid "Could not update the autostart entry"
 msgstr "Could not update the autostart entry"
 
-#: src/shell/corebridge.cpp:883
+#: src/shell/corebridge.cpp:915
 msgid "Only files can be shared, folders are not supported"
 msgstr "Only files can be shared, folders are not supported"
 
-#: src/shell/main.cpp:47 src/shell/qml/AboutDialog.qml:158
+#: src/shell/main.cpp:48 src/shell/qml/AboutDialog.qml:158
 msgid "Quick Share client for KDE Plasma"
 msgstr "Quick Share client for KDE Plasma"
 
-#: src/shell/main.cpp:56
+#: src/shell/main.cpp:57
 msgid "Start hidden in the system tray"
 msgstr "Start hidden in the system tray"
 
-#: src/shell/main.cpp:57
+#: src/shell/main.cpp:58
 msgid "Open the given page: send, transfers, settings or help"
 msgstr "Open the given page: send, transfers, settings or help"
 
-#: src/shell/main.cpp:58
+#: src/shell/main.cpp:59
 msgid "Quit a running instance and take its place"
 msgstr "Quit a running instance and take its place"
 
-#: src/shell/main.cpp:65 src/shell/qml/SendPage.qml:147
+#: src/shell/main.cpp:66 src/shell/qml/SendPage.qml:147
 msgid "Files to send"
 msgstr "Files to send"
 
-#: src/shell/main.cpp:266
+#: src/shell/main.cpp:267
 msgid "Open KuickShare"
 msgstr "Open KuickShare"
 
-#: src/shell/main.cpp:268
+#: src/shell/main.cpp:269
 msgid "Send files…"
 msgstr "Send files…"
 
-#: src/shell/main.cpp:269
+#: src/shell/main.cpp:270
 msgid "Send clipboard"
 msgstr "Send clipboard"
 
-#: src/shell/main.cpp:270 src/shell/qml/SettingsPage.qml:66
+#: src/shell/main.cpp:271 src/shell/qml/SettingsPage.qml:66
 msgid "Visible to nearby devices"
 msgstr "Visible to nearby devices"
 
-#: src/shell/main.cpp:277 src/shell/qml/Main.qml:273
+#: src/shell/main.cpp:287
+msgid "Visible for %1 more minute (click to stop)"
+msgid_plural "Visible for %1 more minutes (click to stop)"
+msgstr[0] "Visible for %1 more minute (click to stop)"
+msgstr[1] "Visible for %1 more minutes (click to stop)"
+
+#: src/shell/main.cpp:288
+msgid "Visible for 10 minutes"
+msgstr "Visible for 10 minutes"
+
+#: src/shell/main.cpp:302 src/shell/qml/Main.qml:273
 #: src/shell/qml/SettingsPage.qml:16 src/shell/qml/ShortcutsDialog.qml:17
 msgid "Preferences"
 msgstr "Preferences"
 
-#: src/shell/main.cpp:280 src/shell/qml/Main.qml:287
+#: src/shell/main.cpp:305 src/shell/qml/Main.qml:287
 msgid "Quit"
 msgstr "Quit"
 
@@ -180,7 +190,9 @@ msgstr "Send"
 msgid ""
 "Choose or drop files, or type some text, on the Send page, then pick a "
 "device. On the phone, open Quick Share."
-msgstr "Choose or drop files, or type some text, on the Send page, then pick a device. On the phone, open Quick Share."
+msgstr ""
+"Choose or drop files, or type some text, on the Send page, then pick a "
+"device. On the phone, open Quick Share."
 
 #: src/shell/qml/HelpPage.qml:35
 msgid "Be found"

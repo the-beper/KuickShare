@@ -5,6 +5,7 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QIcon>
@@ -273,6 +274,30 @@ int main(int argc, char *argv[])
     QObject::connect(visible, &QAction::triggered, &core, &CoreBridge::setVisible);
     QObject::connect(&core, &CoreBridge::visibleChanged, visible, [visible, &core]
                      { visible->setChecked(core.visible()); });
+    auto *visibleFor = menu->addAction(QIcon::fromTheme(QStringLiteral("chronometer")), QString());
+    visibleFor->setCheckable(true);
+    auto *visibleForTimer = new QTimer(visibleFor);
+    visibleForTimer->setInterval(30000);
+    auto updateVisibleFor = [visibleFor, &core]
+    {
+        const qint64 left = core.visibleUntil() - QDateTime::currentSecsSinceEpoch();
+        const bool active = core.visibleUntil() > 0 && left > 0;
+        visibleFor->setChecked(active);
+        const int minutes = static_cast<int>((left + 59) / 60);
+        visibleFor->setText(active ? i18np("Visible for %1 more minute (click to stop)", "Visible for %1 more minutes (click to stop)", minutes)
+                                   : i18n("Visible for 10 minutes"));
+    };
+    QObject::connect(visibleForTimer, &QTimer::timeout, visibleFor, updateVisibleFor);
+    QObject::connect(&core, &CoreBridge::visibleUntilChanged, visibleFor, [visibleForTimer, &core, updateVisibleFor]
+                     {
+        core.visibleUntil() > 0 ? visibleForTimer->start() : visibleForTimer->stop();
+        updateVisibleFor(); });
+    QObject::connect(visibleFor, &QAction::triggered, &core, [&core, updateVisibleFor]
+                     {
+        core.makeVisibleFor(core.visibleUntil() > QDateTime::currentSecsSinceEpoch() ? 0 : 600);
+        updateVisibleFor(); // the core's answer fixes the state if the call fails
+    });
+    updateVisibleFor();
     menu->addSeparator();
     menu->addAction(QIcon::fromTheme(QStringLiteral("configure")), i18n("Preferences"), inWindow("showSettings"));
 

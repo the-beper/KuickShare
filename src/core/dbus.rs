@@ -164,7 +164,33 @@ impl Service {
 
     #[zbus(property)]
     async fn set_visible(&self, visible: bool) {
-        self.core.lock().await.set_visible(visible);
+        let conn = {
+            let mut core = self.core.lock().await;
+            core.set_visible(visible);
+            core.connection()
+        };
+        // Setting `Visible` cancels a temporary visibility. Emitted from a task: the getter needs
+        // the interface lock this setter still holds.
+        if let Some(conn) = conn {
+            tokio::spawn(async move { emit_visible_until_changed(&conn).await });
+        }
+    }
+
+    /// Unix seconds when the temporary visibility from `MakeVisibleFor` ends; 0 when none is active.
+    #[zbus(property)]
+    async fn visible_until(&self) -> i64 {
+        self.core.lock().await.visible_until()
+    }
+
+    /// Makes this computer visible for `seconds` even if `Visible` is false (capped at 24 h;
+    /// 0 cancels). Not persisted.
+    async fn make_visible_for(
+        &self,
+        seconds: u32,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) {
+        self.core.lock().await.make_visible_for(seconds);
+        let _ = self.visible_until_changed(&emitter).await;
     }
 
     /// Finished transfers, newest first, as a JSON array.
@@ -276,12 +302,20 @@ impl Service {
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) -> fdo::Result<()> {
         // The lock is released here: the getters behind `*_changed` take it again.
-        let result = self.core.lock().await.reset_settings().await;
+        let (result, until_changed) = {
+            let mut core = self.core.lock().await;
+            let before = core.visible_until();
+            let result = core.reset_settings().await;
+            (result, before != core.visible_until())
+        };
         result.map_err(failed)?;
         let _ = self.device_name_changed(&emitter).await;
         let _ = self.download_dir_changed(&emitter).await;
         let _ = self.static_port_changed(&emitter).await;
         let _ = self.visible_changed(&emitter).await;
+        if until_changed {
+            let _ = self.visible_until_changed(&emitter).await;
+        }
         let _ = self.history_enabled_changed(&emitter).await;
         let _ = self.history_keep_days_changed(&emitter).await;
         let _ = self.trusted_devices_enabled_changed(&emitter).await;
@@ -1115,6 +1149,17 @@ async fn expire_device(
     }
     endpoints.lock().unwrap().remove(&id);
     emit_device_lost(&connection, &id).await;
+}
+
+pub async fn emit_visible_until_changed(connection: &Connection) {
+    let emitted = async {
+        let iface = interface_ref(connection).await?;
+        let service = iface.get().await;
+        service.visible_until_changed(iface.signal_emitter()).await
+    };
+    if let Err(e) = emitted.await {
+        tracing::warn!("failed to emit VisibleUntil: {e}");
+    }
 }
 
 pub async fn emit_device_lost(connection: &Connection, id: &str) {

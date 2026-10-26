@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-25 11:44+0000\n"
+"POT-Creation-Date: 2026-10-26 14:59+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -18,78 +18,88 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
-#: src/shell/corebridge.cpp:555
+#: src/shell/corebridge.cpp:566
 msgid "Could not update Dolphin's context menu"
 msgstr ""
 
-#: src/shell/corebridge.cpp:579
+#: src/shell/corebridge.cpp:590
 msgid "Could not update the application menu"
 msgstr ""
 
-#: src/shell/corebridge.cpp:590
+#: src/shell/corebridge.cpp:601
 msgid "Could not add KuickShare to the menus"
 msgstr ""
 
-#: src/shell/corebridge.cpp:647 src/shell/corebridge.cpp:654
+#: src/shell/corebridge.cpp:658 src/shell/corebridge.cpp:665
 msgid "The sharing service did not accept the request"
 msgstr ""
 
-#: src/shell/corebridge.cpp:710
+#: src/shell/corebridge.cpp:742
 msgid ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
 msgstr ""
 
-#: src/shell/corebridge.cpp:757
+#: src/shell/corebridge.cpp:789
 msgid "Could not update the autostart entry"
 msgstr ""
 
-#: src/shell/corebridge.cpp:883
+#: src/shell/corebridge.cpp:915
 msgid "Only files can be shared, folders are not supported"
 msgstr ""
 
-#: src/shell/main.cpp:47 src/shell/qml/AboutDialog.qml:158
+#: src/shell/main.cpp:48 src/shell/qml/AboutDialog.qml:158
 msgid "Quick Share client for KDE Plasma"
 msgstr ""
 
-#: src/shell/main.cpp:56
+#: src/shell/main.cpp:57
 msgid "Start hidden in the system tray"
 msgstr ""
 
-#: src/shell/main.cpp:57
+#: src/shell/main.cpp:58
 msgid "Open the given page: send, transfers, settings or help"
 msgstr ""
 
-#: src/shell/main.cpp:58
+#: src/shell/main.cpp:59
 msgid "Quit a running instance and take its place"
 msgstr ""
 
-#: src/shell/main.cpp:65 src/shell/qml/SendPage.qml:147
+#: src/shell/main.cpp:66 src/shell/qml/SendPage.qml:147
 msgid "Files to send"
 msgstr ""
 
-#: src/shell/main.cpp:266
+#: src/shell/main.cpp:267
 msgid "Open KuickShare"
 msgstr ""
 
-#: src/shell/main.cpp:268
+#: src/shell/main.cpp:269
 msgid "Send files…"
 msgstr ""
 
-#: src/shell/main.cpp:269
+#: src/shell/main.cpp:270
 msgid "Send clipboard"
 msgstr ""
 
-#: src/shell/main.cpp:270 src/shell/qml/SettingsPage.qml:66
+#: src/shell/main.cpp:271 src/shell/qml/SettingsPage.qml:66
 msgid "Visible to nearby devices"
 msgstr ""
 
-#: src/shell/main.cpp:277 src/shell/qml/Main.qml:273
+#: src/shell/main.cpp:287
+msgid "Visible for %1 more minute (click to stop)"
+msgid_plural "Visible for %1 more minutes (click to stop)"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/shell/main.cpp:288
+msgid "Visible for 10 minutes"
+msgstr ""
+
+#: src/shell/main.cpp:302 src/shell/qml/Main.qml:273
 #: src/shell/qml/SettingsPage.qml:16 src/shell/qml/ShortcutsDialog.qml:17
 msgid "Preferences"
 msgstr ""
 
-#: src/shell/main.cpp:280 src/shell/qml/Main.qml:287
+#: src/shell/main.cpp:305 src/shell/qml/Main.qml:287
 msgid "Quit"
 msgstr ""
 

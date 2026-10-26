@@ -85,6 +85,7 @@ Bluetooth devices are listed only while `WifiUpgrade` is on, can be sent to but 
 | `AllowDevice` | `(s transfer_id)` | Add the sender of an in-flight transfer to the always-accepted list | Transfer not in flight or sender without a name; MAC address not found in the kernel ARP table |
 | `ForgetAllowed` | `(s name, s mac)` | Remove an entry from the list; unknown entries are ignored | none |
 | `AllowedDevices` | `() -> s` | Always-accepted devices, JSON (see [Always-accepted devices](#always-accepted-devices)) | none |
+| `MakeVisibleFor` | `(u seconds)` | Be visible for `seconds` even when `Visible` is false (capped at 24 h; 0 cancels). Not persisted; setting `Visible`, `ResetSettings` or a core restart ends it. `VisibleUntil` reports the end. The window keeps running while `Suspended` (the computer stays hidden) | none |
 | `ResetSettings` | `()` | Put every persisted property back to its default and restart sharing. The always-accepted list is kept; `Suspended` is not touched | A transfer is in progress; restart failed (settings are put back) |
 
 `Accept`, `Decline` and `Cancel` only fail when the service is not running. An unknown or already finished `id` is not reported as an error (inferred from the code, which has no check for it).
@@ -98,7 +99,8 @@ All properties are read-write. Persisted ones are saved to `~/.config/kuickshare
 | `DeviceName` | `s` | machine hostname (`Unknown device` if unreadable) | yes | Name shown to other devices. Trimmed and cut to 64 bytes (at a character boundary); empty restores the default. Restarts sharing; fails during a transfer. A value equal to the current one does nothing |
 | `DownloadDir` | `s` | `""` (the library default, the XDG download directory) | yes | Trimmed; created if missing (fails if it cannot be). Applied immediately, no restart |
 | `StaticPort` | `u` | `0` (random port at each start) | yes | `0` or 1024-65535, else an error. Restarts sharing; fails during a transfer, or if the port cannot be bound (settings go back to the previous value) |
-| `Visible` | `b` | `true` | yes | Visible to nearby devices. The effective state is `Visible and not Suspended` |
+| `Visible` | `b` | `true` | yes | Visible to nearby devices. The effective state is `(Visible or a temporary visibility) and not Suspended` |
+| `VisibleUntil` | `x` | `0` | no | Unix seconds when the temporary visibility from `MakeVisibleFor` ends; `0` when none is active. Read-only, not persisted. The window keeps running while `Suspended` |
 | `Suspended` | `b` | `false` | no | Hides the computer without changing `Visible`. The shell sets it while Do Not Disturb is on |
 | `HideWhenDnd` | `b` | `true` | yes | Stored only; the shell reads it and sets `Suspended` |
 | `HistoryEnabled` | `b` | `true` | yes | Off: new transfers are not recorded (`history_uid` stays 0); entries already saved stay |

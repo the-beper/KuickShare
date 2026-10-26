@@ -87,6 +87,9 @@ pub struct Core {
     conn: Option<Connection>,
     /// Temporary hiding (not persisted), e.g. while Do Not Disturb is on.
     suspended: bool,
+    /// Temporary visibility (not persisted), set by `make_visible_for`.
+    temp_visible: Option<TempVisible>,
+    temp_visible_gen: u64,
     /// When the mDNS search was last restarted to look for a phone picked over Bluetooth.
     last_lan_lookup: Option<Instant>,
     /// The mutex this core lives in, for the tasks that lock it later (see `set_handle`).
@@ -118,6 +121,8 @@ impl Core {
             trusted_ips: TrustedIps::default(),
             conn: None,
             suspended: false,
+            temp_visible: None,
+            temp_visible_gen: 0,
             last_lan_lookup: None,
             handle: Weak::new(),
         }
@@ -252,6 +257,8 @@ impl Core {
     /// built up, not a preference. Fails, leaving things as they are, while a transfer is running.
     pub async fn reset_settings(&mut self) -> Result<()> {
         self.ensure_idle()?;
+        // Off during the restart, so the defaults apply; put back if the restart fails.
+        let temp = self.temp_visible.take();
         let previous = self.settings.clone();
         self.settings = Settings {
             allowed_devices: previous.allowed_devices.clone(),
@@ -272,7 +279,11 @@ impl Core {
                 .lock()
                 .unwrap()
                 .set_policy(previous.history_enabled, previous.history_keep_days);
+            self.temp_visible = temp;
             return Err(e);
+        }
+        if let Some(t) = temp {
+            t.task.abort();
         }
         self.trust.set_name(self.device_name());
         Ok(())
@@ -370,9 +381,49 @@ impl Core {
     }
 
     pub fn set_visible(&mut self, visible: bool) {
+        self.clear_temp_visible();
         self.settings.visible = visible;
         self.apply_visibility();
         self.save();
+    }
+
+    /// Unix seconds when the temporary visibility ends; 0 when none is active.
+    pub fn visible_until(&self) -> i64 {
+        self.temp_visible.as_ref().map_or(0, |t| t.until)
+    }
+
+    /// Makes this computer visible for `seconds` (capped, 0 cancels), whatever `Visible` says.
+    /// Visibility goes back to `Visible` when the time is up.
+    pub fn make_visible_for(&mut self, seconds: u32) {
+        self.clear_temp_visible();
+        if let Some(window) = temp_window(seconds) {
+            self.temp_visible_gen += 1;
+            let id = self.temp_visible_gen;
+            let until = unix_now() + window.as_secs() as i64;
+            let task = tokio::spawn(expire_temp_visible(self.handle.clone(), id, until));
+            self.temp_visible = Some(TempVisible { id, until, task });
+        }
+        self.apply_visibility();
+    }
+
+    fn clear_temp_visible(&mut self) {
+        if let Some(t) = self.temp_visible.take() {
+            t.task.abort();
+        }
+    }
+
+    /// Ends the temporary visibility `id`; false when it was already replaced or cancelled.
+    fn expire_temp_visible(&mut self, id: u64) -> bool {
+        if self.temp_visible.as_ref().is_none_or(|t| t.id != id) {
+            return false;
+        }
+        self.temp_visible = None;
+        self.apply_visibility();
+        true
+    }
+
+    pub fn connection(&self) -> Option<Connection> {
+        self.conn.clone()
     }
 
     pub fn suspended(&self) -> bool {
@@ -390,10 +441,18 @@ impl Core {
     }
 
     fn apply_visibility(&mut self) {
-        let visible = self.settings.visible && !self.suspended;
+        let visible = self.effective_visible();
         if let Some(engine) = &mut self.engine {
             engine.rqs.change_visibility(visibility(visible));
         }
+    }
+
+    fn effective_visible(&self) -> bool {
+        effective_visible(
+            self.settings.visible,
+            self.temp_visible.is_some(),
+            self.suspended,
+        )
     }
 
     /// Consent and cancel actions travel on the library's own event channel.
@@ -821,7 +880,7 @@ impl Core {
     async fn start_engine(&mut self, discovery: bool) -> Result<()> {
         let conn = self.conn.clone().context("not connected to the bus")?;
         let mut rqs = RQS::new(
-            visibility(self.settings.visible && !self.suspended),
+            visibility(self.effective_visible()),
             self.settings.static_port,
             self.settings.download_dir.clone(),
             Some(self.device_name()),
@@ -1127,6 +1186,59 @@ fn wifi_link(enabled: bool) -> Option<Arc<dyn WifiLink>> {
     enabled.then(|| Arc::new(NmLink::new()) as Arc<dyn WifiLink>)
 }
 
+/// Longest temporary visibility a caller can ask for.
+const MAX_TEMP_VISIBLE_SECS: u32 = 24 * 60 * 60;
+
+/// The expiry task re-checks the wall clock at least this often.
+const TEMP_VISIBLE_STEP_SECS: i64 = 30;
+
+struct TempVisible {
+    id: u64,
+    until: i64,
+    task: JoinHandle<()>,
+}
+
+/// The effective visibility: temporary visibility overrides `Visible`, never `Suspended`.
+fn effective_visible(visible: bool, temporary: bool, suspended: bool) -> bool {
+    (visible || temporary) && !suspended
+}
+
+/// How long to stay visible for a request of `seconds`: none for 0, capped otherwise.
+fn temp_window(seconds: u32) -> Option<Duration> {
+    (seconds > 0).then(|| Duration::from_secs(seconds.min(MAX_TEMP_VISIBLE_SECS).into()))
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// Waits until the wall clock reaches `until` (Unix seconds), in steps: a monotonic sleep does not
+/// count the time the system spent suspended.
+async fn expire_temp_visible(core: Weak<Mutex<Core>>, id: u64, until: i64) {
+    loop {
+        let left = until - unix_now();
+        if left <= 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(left.min(TEMP_VISIBLE_STEP_SECS) as u64)).await;
+    }
+    let Some(core) = core.upgrade() else {
+        return;
+    };
+    let conn = {
+        let mut core = core.lock().await;
+        if !core.expire_temp_visible(id) {
+            return;
+        }
+        core.connection()
+    };
+    if let Some(conn) = conn {
+        dbus::emit_visible_until_changed(&conn).await;
+    }
+}
+
 fn visibility(visible: bool) -> Visibility {
     if visible {
         Visibility::Visible
@@ -1138,6 +1250,47 @@ fn visibility(visible: bool) -> Visibility {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn temporary_visibility_overrides_visible_but_not_suspended() {
+        assert!(!effective_visible(false, false, false));
+        assert!(effective_visible(false, true, false));
+        assert!(effective_visible(true, false, false));
+        assert!(!effective_visible(true, true, true));
+    }
+
+    fn test_core() -> Core {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let trust = Trust::load(None, "test".into(), tx).unwrap();
+        let history = History::load(None);
+        Core::new(Settings::default(), None, history, trust, rx)
+    }
+
+    #[tokio::test]
+    async fn a_stale_expiry_is_a_no_op_and_set_visible_cancels() {
+        let mut core = test_core();
+        core.make_visible_for(600);
+        let old = core.temp_visible_gen;
+        core.make_visible_for(600);
+        assert!(!core.expire_temp_visible(old));
+        assert!(core.visible_until() > 0);
+        assert!(core.expire_temp_visible(old + 1));
+        assert_eq!(core.visible_until(), 0);
+
+        core.make_visible_for(600);
+        core.set_visible(false);
+        assert_eq!(core.visible_until(), 0);
+        core.make_visible_for(600);
+        core.make_visible_for(0);
+        assert_eq!(core.visible_until(), 0);
+    }
+
+    #[test]
+    fn temporary_visibility_window_is_capped_and_zero_cancels() {
+        assert_eq!(temp_window(0), None);
+        assert_eq!(temp_window(600), Some(Duration::from_secs(600)));
+        assert_eq!(temp_window(u32::MAX), Some(Duration::from_secs(86_400)));
+    }
 
     #[test]
     fn device_name_is_capped_at_a_char_boundary() {

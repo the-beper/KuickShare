@@ -71,6 +71,7 @@ CoreBridge::CoreBridge(QObject *parent)
     bus.connect(service, path, iface, QStringLiteral("DeviceLost"), this, SLOT(onDeviceLost(QString)));
     bus.connect(service, path, iface, QStringLiteral("PairingCode"), this, SLOT(onPairingCode(QString, QString)));
     bus.connect(service, path, iface, QStringLiteral("PairingFinished"), this, SLOT(onPairingFinished(bool, QString, QString)));
+    bus.connect(service, path, QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("PropertiesChanged"), this, SLOT(onPropertiesChanged(QString, QVariantMap, QStringList)));
     bus.connect(service, path, iface, QStringLiteral("TrustedChanged"), this, SLOT(loadTrustedDevices()));
 
     auto *watcher = new QDBusServiceWatcher(service, bus, QDBusServiceWatcher::WatchForOwnerChange, this);
@@ -265,6 +266,10 @@ void CoreBridge::onServiceRegistered()
 void CoreBridge::onServiceUnregistered()
 {
     m_connected = false;
+    if (m_visibleUntil != 0) {
+        m_visibleUntil = 0; // temporary visibility does not outlive a core
+        emit visibleUntilChanged();
+    }
     m_discoveryResume = m_discoveryRunning;
     m_discoveryRunning = false;
     m_devices.clear();
@@ -316,6 +321,9 @@ void CoreBridge::refreshProperties()
         }
         const QVariantMap props = reply.value();
         m_visible = props.value(QStringLiteral("Visible"), m_visible).toBool();
+        const qint64 visibleUntil = props.value(QStringLiteral("VisibleUntil"), 0).toLongLong();
+        const bool visibleUntilDiffers = visibleUntil != m_visibleUntil;
+        m_visibleUntil = visibleUntil;
         m_deviceName = props.value(QStringLiteral("DeviceName")).toString();
         m_downloadDir = props.value(QStringLiteral("DownloadDir")).toString();
         m_staticPort = props.value(QStringLiteral("StaticPort")).toInt();
@@ -354,6 +362,9 @@ void CoreBridge::refreshProperties()
             qWarning() << "Could not write the Dolphin entry";
         }
         emit visibleChanged();
+        if (visibleUntilDiffers) {
+            emit visibleUntilChanged();
+        }
         emit deviceNameChanged();
         emit downloadDirChanged();
         emit staticPortChanged();
@@ -692,6 +703,27 @@ void CoreBridge::setVisible(bool visible)
     m_visible = visible;
     emit visibleChanged();
     setRemoteProperty(QStringLiteral("Visible"), visible);
+}
+
+void CoreBridge::makeVisibleFor(int seconds)
+{
+    auto msg = methodCall(iface, QStringLiteral("MakeVisibleFor"));
+    msg << static_cast<quint32>(qMax(0, seconds));
+    callAsync(msg);
+}
+
+void CoreBridge::onPropertiesChanged(const QString &interface, const QVariantMap &changed, const QStringList &)
+{
+    if (interface != iface || !changed.contains(QStringLiteral("VisibleUntil")))
+    {
+        return;
+    }
+    const qint64 until = changed.value(QStringLiteral("VisibleUntil")).toLongLong();
+    if (until != m_visibleUntil)
+    {
+        m_visibleUntil = until;
+        emit visibleUntilChanged();
+    }
 }
 
 void CoreBridge::setDeviceName(const QString &name)

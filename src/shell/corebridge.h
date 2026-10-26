@@ -28,6 +28,8 @@ class CoreBridge : public QObject
     Q_PROPERTY(bool transferBusy READ transferBusy NOTIFY transferBusyChanged)
     Q_PROPERTY(bool suspended READ suspended NOTIFY suspendedChanged)
     Q_PROPERTY(bool visible READ visible WRITE setVisible NOTIFY visibleChanged)
+    /// Unix seconds when a temporary visibility ends; 0 when none is active.
+    Q_PROPERTY(qint64 visibleUntil READ visibleUntil NOTIFY visibleUntilChanged)
     Q_PROPERTY(QString deviceName READ deviceName WRITE setDeviceName NOTIFY deviceNameChanged)
     Q_PROPERTY(QString downloadDir READ downloadDir WRITE setDownloadDir NOTIFY downloadDirChanged)
     Q_PROPERTY(int staticPort READ staticPort WRITE setStaticPort NOTIFY staticPortChanged)
@@ -63,6 +65,7 @@ public:
     bool connected() const { return m_connected; }
     bool visible() const { return m_visible; }
     bool suspended() const { return m_suspended; }
+    qint64 visibleUntil() const { return m_visibleUntil; }
     QString deviceName() const { return m_deviceName; }
     QString downloadDir() const { return m_downloadDir; }
     int staticPort() const { return m_staticPort; }
@@ -91,6 +94,8 @@ public:
     QVariantList allowedDevices() const { return m_allowedDevices; }
 
     void setVisible(bool visible);
+    /// Visible for `seconds` whatever `visible` says; 0 cancels.
+    Q_INVOKABLE void makeVisibleFor(int seconds);
     void setDeviceName(const QString &name);
     void setDownloadDir(const QString &dir);
     void setStaticPort(int port);
@@ -177,6 +182,7 @@ Q_SIGNALS:
     void clipboardChanged();
     void historyBytesChanged();
     void visibleChanged();
+    void visibleUntilChanged();
     void suspendedChanged();
     void deviceNameChanged();
     void downloadDirChanged();
@@ -207,6 +213,7 @@ private Q_SLOTS:
     void onTransferUpdated(const QString &id, const QVariantMap &received);
     void onDeviceFound(const QString &id, const QVariantMap &info);
     void onDeviceLost(const QString &id);
+    void onPropertiesChanged(const QString &interface, const QVariantMap &changed, const QStringList &invalidated);
     void onPairingCode(const QString &code, const QString &peer) { emit pairingCode(code, plain(peer)); }
     void onPairingFinished(bool ok, const QString &peer, const QString &message) { emit pairingFinished(ok, plain(peer), plain(message)); }
     void loadTrustedDevices();
@@ -254,6 +261,7 @@ private:
     QVariantList m_trustedDevices;
     QVariantList m_allowedDevices;
     bool m_suspended = false;
+    qint64 m_visibleUntil = 0;
     int m_staticPort = 0;
     QString m_deviceName;
     QString m_downloadDir;

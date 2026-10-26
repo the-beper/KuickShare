@@ -128,6 +128,7 @@ The window has a fixed size. Closing it hides it in the tray and frees its memor
 | Send files... | Open the file chooser on the Send page |
 | Send clipboard | Add the clipboard to the Send page |
 | Visible to nearby devices | Same switch as in Preferences |
+| Visible for 10 minutes | Visible even when the switch above is off, then back to it. Shows the time left while active; click again to stop |
 | Preferences | Open Preferences |
 | Quit | Quit at once; if a transfer is running, opens the window to ask first |
 
