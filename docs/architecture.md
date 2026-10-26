@@ -81,6 +81,8 @@ flowchart LR
 
 Settings that restart the engine (device name, static port, reset) are refused while a transfer is active. A transfer with no event for 600 s counts as over, so a lost final event cannot block them forever.
 
+The core is behind one lock, held while a send chooses its route (up to about 8 s in the worst case, see the timeouts in `choose_route`) and during a restart, so other D-Bus calls wait meanwhile. Accept and Decline do not: they use the library's event channel directly. Cancel does wait, because a send that is still choosing its route has no library id to cancel yet.
+
 ### Inside the shell
 
 | Part | Role |

@@ -28,7 +28,8 @@ use zbus::{
 use crate::{
     allowed::{self, Allowed},
     app::{
-        ActiveTransfers, Core, Endpoints, Redirects, SharedHistory, TrustedIps, needs_lan_retry,
+        ActiveTransfers, Core, Endpoints, LibActions, Redirects, SharedHistory, TrustedIps,
+        needs_lan_retry,
     },
     history::{self, HistoryEntry},
     safety,
@@ -43,6 +44,8 @@ type SharedCore = Arc<Mutex<Core>>;
 
 struct Service {
     core: SharedCore,
+    /// Accept and Decline go through this, not through the `Core` lock.
+    actions: LibActions,
 }
 
 fn failed(e: anyhow::Error) -> fdo::Error {
@@ -52,8 +55,7 @@ fn failed(e: anyhow::Error) -> fdo::Error {
 impl Service {
     async fn send_action(&self, id: &str, action: TransferAction) -> fdo::Result<()> {
         // Lib actions travel on the same broadcast channel the service listens to.
-        let core = self.core.lock().await;
-        core.send_lib_action(id, action).map_err(failed)
+        self.actions.send(id, action).map_err(failed)
     }
 }
 
@@ -67,8 +69,13 @@ impl Service {
         self.send_action(id, TransferAction::ConsentDecline).await
     }
 
+    /// Takes the `Core` lock on purpose: a send that is still choosing its route maps its ids
+    /// only at the end, so a Cancel has to wait for that to find the transfer.
     async fn cancel(&self, id: &str) -> fdo::Result<()> {
-        self.send_action(id, TransferAction::TransferCancel).await
+        let actions = self.core.lock().await.lib_actions();
+        actions
+            .send(id, TransferAction::TransferCancel)
+            .map_err(failed)
     }
 
     /// Joins the Wi-Fi network received in a finished transfer, as a saved connection that
@@ -586,10 +593,10 @@ fn is_final(state: &TransferState) -> bool {
     )
 }
 
-pub async fn serve(core: SharedCore) -> Result<Connection> {
+pub async fn serve(core: SharedCore, actions: LibActions) -> Result<Connection> {
     connection::Builder::session()
         .name(BUS_NAME)
-        .serve_at(OBJECT_PATH, Service { core })
+        .serve_at(OBJECT_PATH, Service { core, actions })
         .build()
         .await
         .with_context(|| format!("failed to own {BUS_NAME} on the session bus"))

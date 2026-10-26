@@ -45,6 +45,39 @@ pub type SharedHistory = Arc<StdMutex<History>>;
 /// id used with the library); the transfer events are reported under the original id.
 pub type Redirects = Arc<StdMutex<HashMap<String, String>>>;
 
+/// Where Accept and Decline send their action: the library's event channel of the running
+/// engine (`None` while it is stopped). It is shared with the D-Bus service, so these calls never
+/// wait for the `Core` lock, which a send or a restart can hold for seconds.
+#[derive(Clone, Default)]
+pub struct LibActions {
+    sender: Arc<StdMutex<Option<broadcast::Sender<ChannelMessage>>>>,
+    redirects: Redirects,
+}
+
+impl LibActions {
+    fn set(&self, sender: Option<broadcast::Sender<ChannelMessage>>) {
+        *self.sender.lock().unwrap() = sender;
+    }
+
+    /// Consent and cancel actions travel on the library's own event channel.
+    pub fn send(&self, id_in: &str, action: TransferAction) -> Result<()> {
+        let sender = self
+            .sender
+            .lock()
+            .unwrap()
+            .clone()
+            .context("service is not running")?;
+        let id = self.redirects.lock().unwrap().get(id_in).cloned();
+        sender
+            .send(ChannelMessage {
+                id: id.unwrap_or_else(|| id_in.to_owned()),
+                msg: Message::Lib { action },
+            })
+            .map(|_| ())
+            .map_err(|e| anyhow!(e.to_string()))
+    }
+}
+
 struct Engine {
     rqs: RQS,
     send_tx: mpsc::Sender<SendInfo>,
@@ -77,6 +110,7 @@ pub struct Core {
     engine: Option<Engine>,
     endpoints: Endpoints,
     redirects: Redirects,
+    lib_actions: LibActions,
     active: ActiveTransfers,
     /// Wi-Fi networks received from phones, in memory only (see `wifi_credentials`).
     wifi_creds: wifi_credentials::Shared,
@@ -111,6 +145,7 @@ impl Core {
     ) -> Self {
         let mut history = history;
         history.set_policy(settings.history_enabled, settings.history_keep_days);
+        let redirects = Redirects::default();
         Self {
             allowed: Allowed::new(StdMutex::new(settings.allowed_devices.clone())),
             trusted_enabled: Arc::new(AtomicBool::new(settings.trusted_devices)),
@@ -118,7 +153,11 @@ impl Core {
             settings_path,
             engine: None,
             endpoints: Endpoints::default(),
-            redirects: Redirects::default(),
+            lib_actions: LibActions {
+                sender: Arc::default(),
+                redirects: redirects.clone(),
+            },
+            redirects,
             active: ActiveTransfers::default(),
             wifi_creds: wifi_credentials::Shared::default(),
             nm: Arc::new(NmLink::new()),
@@ -157,6 +196,7 @@ impl Core {
     }
 
     pub async fn shutdown(&mut self) {
+        self.lib_actions.set(None);
         if let Some(engine) = self.engine.take() {
             engine.stop().await;
         }
@@ -462,19 +502,9 @@ impl Core {
         )
     }
 
-    /// Consent and cancel actions travel on the library's own event channel.
-    pub fn send_lib_action(&self, id_in: &str, action: TransferAction) -> Result<()> {
-        let engine = self.engine.as_ref().context("service is not running")?;
-        let id = self.redirects.lock().unwrap().get(id_in).cloned();
-        engine
-            .rqs
-            .message_sender
-            .send(ChannelMessage {
-                id: id.unwrap_or_else(|| id_in.to_owned()),
-                msg: Message::Lib { action },
-            })
-            .map(|_| ())
-            .map_err(|e| anyhow!(e.to_string()))
+    /// The handle the D-Bus service uses for Accept and Decline (see `LibActions`).
+    pub fn lib_actions(&self) -> LibActions {
+        self.lib_actions.clone()
     }
 
     pub fn start_discovery(&mut self) -> Result<()> {
@@ -890,6 +920,8 @@ impl Core {
     /// Rebuilds the service, keeping discovery on if it was on.
     async fn restart(&mut self) -> Result<()> {
         let discovery = self.engine.as_ref().is_some_and(|e| e.discovery_on);
+        // Accept and Decline fail at once from here: the restart ends the old transfers anyway.
+        self.lib_actions.set(None);
         if let Some(engine) = self.engine.take() {
             engine.stop().await;
         }
@@ -932,6 +964,7 @@ impl Core {
             rqs.message_sender.subscribe(),
             discovery_tx.subscribe(),
         );
+        self.lib_actions.set(Some(rqs.message_sender.clone()));
         self.engine = Some(Engine {
             rqs,
             send_tx,
@@ -1287,6 +1320,35 @@ mod tests {
         let trust = Trust::load(None, "test".into(), tx).unwrap();
         let history = History::load(None);
         Core::new(Settings::default(), None, history, trust, rx)
+    }
+
+    #[tokio::test]
+    async fn lib_actions_do_not_wait_for_the_core_lock() {
+        let core = Arc::new(Mutex::new(test_core()));
+        let actions = core.lock().await.lib_actions();
+        assert!(actions.send("a", TransferAction::ConsentAccept).is_err()); // no engine yet
+        let (tx, mut rx) = broadcast::channel(4);
+        actions.set(Some(tx));
+        actions
+            .redirects
+            .lock()
+            .unwrap()
+            .insert("picked".into(), "sent".into());
+        let _held = core.lock().await; // a send holds the lock for seconds
+        actions
+            .send("picked", TransferAction::ConsentDecline)
+            .unwrap();
+        actions
+            .send("other", TransferAction::TransferCancel)
+            .unwrap();
+        assert_eq!(rx.recv().await.unwrap().id, "sent");
+        assert_eq!(rx.recv().await.unwrap().id, "other");
+        actions.set(None);
+        assert!(
+            actions
+                .send("other", TransferAction::TransferCancel)
+                .is_err()
+        );
     }
 
     #[tokio::test]
