@@ -270,7 +270,7 @@ Refused connections are closed without a reply.
 | Files kept per entry | 200 |
 | Text kept per entry | 10,000 characters |
 | Age | `history_keep_days` (0 keeps everything); applied on load, on add and on read |
-| Number of entries | No cap other than age (unverified that the library bounds what a sender can generate) |
+| Number of entries | 1000 (`MAX_ENTRIES` in `src/core/history.rs`), the oldest go first; applied on load, on add and on read |
 | Off switch | `history_enabled`; when off nothing is recorded |
 
 Wi-Fi credentials are recorded by network name only, never the password.

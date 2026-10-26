@@ -266,7 +266,7 @@ Errors the service reports, and "Copied to clipboard" (green, 1.5 s), use the sa
 
 Entries keep at most 200 file names and 10000 characters of text. Wi-Fi credentials received from a phone are stored without the password. **Clear history** deletes the whole list, not only the transfers the filters show, and does not touch received files. A banner suggests clearing when the history file gets large.
 
-The history is saved in a file on disk, 500 entries at most (the oldest go first). It is controlled in Preferences: it can be turned off, and entries can expire after 1, 7, 30 or 90 days. With the history off, the page only lists transfers made while the app is open.
+The history is saved in a file on disk, 1000 entries at most (the oldest go first). It is controlled in Preferences: it can be turned off, and entries can expire after 1, 7, 30 or 90 days. With the history off, the page only lists transfers made while the app is open.
 
 ## Paired devices
 

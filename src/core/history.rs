@@ -41,6 +41,9 @@ pub fn now() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
+/// The history keeps at most this many entries, whatever the retention period.
+const MAX_ENTRIES: usize = 1000;
+
 pub struct History {
     path: Option<PathBuf>,
     entries: Vec<HistoryEntry>,
@@ -101,14 +104,15 @@ impl History {
         self.save();
     }
 
-    /// Drops the entries older than the retention period; true if any was dropped.
+    /// Drops the entries beyond `MAX_ENTRIES` and those older than the retention period; true if
+    /// any was dropped.
     fn prune(&mut self) -> bool {
-        if self.keep_days == 0 {
-            return false;
-        }
-        let limit = now() - i64::from(self.keep_days) * 86_400;
         let before = self.entries.len();
-        self.entries.retain(|e| e.time >= limit);
+        self.entries.truncate(MAX_ENTRIES); // newest first
+        if self.keep_days > 0 {
+            let limit = now() - i64::from(self.keep_days) * 86_400;
+            self.entries.retain(|e| e.time >= limit);
+        }
         self.entries.len() != before
     }
 
@@ -186,6 +190,17 @@ mod tests {
         let reloaded = History::load(Some(path));
         let devices: Vec<_> = reloaded.entries.iter().map(|e| e.device.as_str()).collect();
         assert_eq!(devices, ["new", "old"]);
+    }
+
+    #[test]
+    fn keeps_only_the_newest_max_entries() {
+        let mut history = History::load(None);
+        for i in 0..=MAX_ENTRIES {
+            history.add(entry(&i.to_string()));
+        }
+        assert_eq!(history.entries.len(), MAX_ENTRIES);
+        assert_eq!(history.entries[0].device, MAX_ENTRIES.to_string());
+        assert_eq!(history.entries[MAX_ENTRIES - 1].device, "1");
     }
 
     #[test]

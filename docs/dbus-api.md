@@ -254,7 +254,7 @@ An incoming transfer is accepted without asking only if `TrustedDevicesEnabled` 
 | Settings that restart sharing | `DeviceName`, `StaticPort` and `ResetSettings` stop and rebuild the service; discovered devices are forgotten, discovery resumes if it was on. They fail with `Wait for the current transfer to finish before changing this setting` while a transfer is in flight |
 | Stale transfers | A transfer with no event for 600 seconds counts as over when checking the previous point, so a lost final event cannot block those settings for ever. Such a transfer never reaches the history |
 | Failed restart | The previous settings are restored and the service is started again with them |
-| History limits | 200 file names and 10 000 text characters per entry; entries older than `HistoryKeepDays` days are removed when the history is read, written, or the property changes |
+| History limits | 200 file names and 10 000 text characters per entry; the newest 1000 entries; entries older than `HistoryKeepDays` days are removed when the history is read, written, or the property changes |
 | Automatic acceptance | Paired computers (announced over the trust port) and always-accepted devices get `Accept` from the core itself, and the event carries `trusted` |
 
 ### Pairing and the trust port
