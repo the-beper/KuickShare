@@ -71,6 +71,21 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.4.0" date="2026-10-26">
+      <description>
+        <p>Join a Wi-Fi network from a phone, temporary visibility, folders, and command-line sending to a named device.</p>
+        <ul>
+          <li>Join a Wi-Fi network received from a phone. The password is kept in memory for 10 minutes and never written to disk.</li>
+          <li>Visible for 10 minutes from the tray menu.</li>
+          <li>Send folders: they are sent as their files, without their structure. Hidden files and symbolic links are skipped.</li>
+          <li><code>kuickshare --device "name" files...</code> sends to one nearby device with that name.</li>
+          <li>Open each received file from the transfer details, and see the speed and time left of a running transfer.</li>
+          <li>The history keeps the newest 1000 entries.</li>
+          <li>Accept and Decline no longer wait while a send chooses its route.</li>
+          <li>Fixes: received files with the same name no longer overwrite each other; an unreadable identity file keeps the pairings; a failed send is cancelled in the library; discovery resumes after a restart.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.3.3" date="2026-10-25">
       <description>
         <p>Fixes computers not seeing each other.</p>
