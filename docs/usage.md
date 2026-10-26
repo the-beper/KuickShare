@@ -196,6 +196,8 @@ Files go to the download folder, `~/Downloads` unless you chose another one in P
 
 A sender can propose file names that would write outside the download folder. KuickShare declines such a transfer before asking you. A name is refused if it is empty, is `.` or `..`, is longer than 255 bytes, or contains a `/`, a `\`, a control character, or an invisible character such as a zero-width space or a right-to-left override. The decision is logged and no notification is shown; how the Transfers page then shows the row was not checked (unverified).
 
+**Wi-Fi networks.** When a phone shares a Wi-Fi network, the finished transfer's row shows its name and a **Join network** button. After you confirm, KuickShare connects this computer through NetworkManager and saves the network, so it connects again by itself; the current Wi-Fi connection is replaced. Only WPA/WPA2 (a passphrase, not a 64-hex key) and open networks work, and not names starting with `kuickshare-`. If you already have a connection for that network, a second one is added. The password is never written to disk; it is kept in memory for 10 minutes at most, so the button stops working after that, after the transfer is declined, or when the sharing service restarts (the error says so); rows from earlier sessions have no button. It is refused while another transfer or a Wi-Fi upgrade is running. Not tried against a real NetworkManager or phone *(inferred)*.
+
 Sending to the phone produces the same notifications in the other direction. If the phone declines before any data moved, you see "Transfer not accepted"; a lost connection gives "Transfer interrupted".
 
 ## Without a shared network (experimental)
@@ -264,7 +266,7 @@ When a transfer ends, a message slides up from the bottom edge of the window, on
 
 Errors the service reports, and "Copied to clipboard" (green, 1.5 s), use the same messages. A message that stays more than 3 s has a close button.
 
-Entries keep at most 200 file names and 10000 characters of text. Wi-Fi credentials received from a phone are stored without the password. **Clear history** deletes the whole list, not only the transfers the filters show, and does not touch received files. A banner suggests clearing when the history file gets large.
+Entries keep at most 200 file names and 10000 characters of text. Wi-Fi credentials received from a phone are saved without the password; the password is never written to disk (it stays in memory for 10 minutes at most, see [Receiving](#receiving)). **Clear history** deletes the whole list, not only the transfers the filters show, and does not touch received files. A banner suggests clearing when the history file gets large.
 
 The history is saved in a file on disk, 1000 entries at most (the oldest go first). It is controlled in Preferences: it can be turned off, and entries can expire after 1, 7, 30 or 90 days. With the history off, the page only lists transfers made while the app is open.
 

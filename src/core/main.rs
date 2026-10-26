@@ -7,6 +7,7 @@ mod ratelimit;
 mod safety;
 mod settings;
 mod trust;
+mod wifi_credentials;
 
 use std::sync::Arc;
 

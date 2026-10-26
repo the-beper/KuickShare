@@ -708,6 +708,13 @@ void CoreBridge::openFile(const QString &path) const
     }
 }
 
+void CoreBridge::joinNetwork(const QString &transferId, const QString &ssid)
+{
+    auto msg = methodCall(iface, QStringLiteral("JoinNetwork"));
+    msg << transferId;
+    callAsync(msg, [this, ssid] { emit networkJoined(ssid); });
+}
+
 void CoreBridge::setVisible(bool visible)
 {
     if (visible == m_visible)

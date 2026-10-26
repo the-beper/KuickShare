@@ -52,6 +52,12 @@ const AP_POLL_DELAY: Duration = Duration::from_millis(500);
 const IP_POLLS: u32 = 5;
 const ACTIVATE_AP_TIMEOUT: Duration = Duration::from_secs(10);
 const ACTIVATE_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
+/// A saved network is joined once, with the user waiting: no phone-side window to race.
+/// Worst case of `join_saved`: this wait, plus the D-Bus calls before it (device, active
+/// connection, add) and the teardown after a failure (deactivate, delete, re-activate the previous
+/// connection), each normally a few milliseconds. It must stay well under the shell's 25 s D-Bus
+/// timeout, hence 15 s.
+const ACTIVATE_SAVED_TIMEOUT: Duration = Duration::from_secs(15);
 
 const MIN_PSK: usize = 8;
 const MAX_PSK: usize = 63;
@@ -83,7 +89,7 @@ const BAND_2GHZ: Band = Band {
 
 /// Wi-Fi key that never shows up in `Debug` output.
 #[derive(Clone)]
-struct Secret(String);
+pub struct Secret(pub String);
 
 impl std::fmt::Debug for Secret {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -94,12 +100,26 @@ impl std::fmt::Debug for Secret {
 #[derive(Clone, Copy, Debug)]
 pub enum Kind {
     Ap(Band),
-    Client { hidden: bool },
+    Client {
+        hidden: bool,
+    },
+    /// A network the user chose to join for good: saved, autoconnect, normal routing. `open`: no key.
+    Saved {
+        open: bool,
+    },
+}
+
+/// Where NetworkManager keeps the profile: our own temporary ones never reach the disk.
+fn persist_mode(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Saved { .. } => "disk",
+        Kind::Ap(_) | Kind::Client { .. } => "memory",
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct ConnSettings {
-    id: &'static str,
+    id: String,
     iface: String,
     ssid: Vec<u8>,
     psk: Secret,
@@ -114,7 +134,7 @@ fn invalid(msg: &str) -> io::Error {
 
 impl ConnSettings {
     /// Rejects an SSID or key WPA2 cannot carry (the error never quotes either).
-    fn new(id: &'static str, iface: &str, ssid: &str, psk: &str, kind: Kind) -> io::Result<Self> {
+    fn new(id: &str, iface: &str, ssid: &str, psk: &str, kind: Kind) -> io::Result<Self> {
         if ssid.is_empty() || ssid.len() > MAX_SSID {
             return Err(invalid("Wi-Fi SSID must be 1..=32 bytes"));
         }
@@ -122,13 +142,39 @@ impl ConnSettings {
             return Err(invalid("Wi-Fi key must be 8..=63 bytes"));
         }
         Ok(Self {
-            id,
+            id: id.to_owned(),
             iface: iface.to_owned(),
             ssid: ssid.as_bytes().to_vec(),
             psk: Secret(psk.to_owned()),
             kind,
             zone: "",
         })
+    }
+
+    /// A saved profile named after the network; `psk` is `None` for an open one.
+    fn saved(iface: &str, ssid: &str, psk: Option<&str>) -> io::Result<Self> {
+        // The sweep of leftover temporary profiles would delete a saved one with such a name.
+        if ssid.starts_with(PROFILE_PREFIX) {
+            return Err(invalid(
+                "Networks whose name starts with \"kuickshare-\" cannot be joined from here",
+            ));
+        }
+        match psk {
+            Some(psk) => Self::new(ssid, iface, ssid, psk, Kind::Saved { open: false }),
+            None => {
+                if ssid.is_empty() || ssid.len() > MAX_SSID {
+                    return Err(invalid("Wi-Fi SSID must be 1..=32 bytes"));
+                }
+                Ok(Self {
+                    id: ssid.to_owned(),
+                    iface: iface.to_owned(),
+                    ssid: ssid.as_bytes().to_vec(),
+                    psk: Secret(String::new()),
+                    kind: Kind::Saved { open: true },
+                    zone: "",
+                })
+            }
+        }
     }
 }
 
@@ -154,9 +200,12 @@ mod wire {
     /// The `a{sa{sv}}` argument of `AddAndActivateConnection2`.
     pub fn dict(s: &ConnSettings) -> Dict {
         let mut conn = vec![
-            ("id", Variant::from(s.id)),
+            ("id", Variant::from(s.id.clone())),
             ("type", Variant::from("802-11-wireless")),
-            ("autoconnect", Variant::from(false)),
+            (
+                "autoconnect",
+                Variant::from(matches!(s.kind, Kind::Saved { .. })),
+            ),
             ("interface-name", Variant::from(s.iface.clone())),
         ];
         let mut wireless = vec![("ssid", Variant::from(s.ssid.clone()))];
@@ -203,14 +252,25 @@ mod wire {
                 ]);
                 ipv6 = section([("method", Variant::from("disabled"))]);
             }
+            Kind::Saved { .. } => {
+                // The user's own choice, like Plasma's "Connect": normal routing and DNS.
+                wireless.push(("mode", Variant::from("infrastructure")));
+                ipv4 = section([("method", Variant::from("auto"))]);
+                ipv6 = section([("method", Variant::from("auto"))]);
+            }
         }
-        HashMap::from([
+        let mut dict = HashMap::from([
             ("connection", conn.into_iter().collect()),
             ("802-11-wireless", wireless.into_iter().collect()),
             ("802-11-wireless-security", security.into_iter().collect()),
             ("ipv4", ipv4),
             ("ipv6", ipv6),
-        ])
+        ]);
+        // An open network has no security section at all.
+        if matches!(s.kind, Kind::Saved { open: true }) {
+            dict.remove("802-11-wireless-security");
+        }
+        dict
     }
 }
 
@@ -528,8 +588,10 @@ impl DbusNm {
             .into_iter()
             .map(|(k, v)| (k, v.into_iter().collect()))
             .collect();
-        // "memory": the profile (and the key) is never written to disk.
-        let options = [("persist", "memory".into())].into_iter().collect();
+        // "memory": our temporary profile (and its key) is never written to disk.
+        let options = [("persist", persist_mode(settings.kind).into())]
+            .into_iter()
+            .collect();
         let (settings, active, _) = ManagerProxy::new(c)
             .await?
             .add_and_activate_connection2(
@@ -1054,6 +1116,43 @@ impl<A: NmApi> NmLink<A> {
             }
         }
         Err(io::Error::other("no IPv4 address on the Wi-Fi interface"))
+    }
+
+    async fn join_saved_inner(
+        &self,
+        st: &mut State,
+        ssid: &str,
+        psk: Option<&str>,
+    ) -> io::Result<()> {
+        let dev = self.api.wifi_device().await?;
+        let settings = ConnSettings::saved(&dev.iface, ssid, psk)?;
+        st.dev = Some(dev.clone());
+        self.remember_previous(st, &dev).await;
+        st.touched = true;
+        let created = self.api.add_and_activate(&dev, None, &settings).await?;
+        st.created = Some(created.clone());
+        self.api
+            .wait_activated(&created.active, ACTIVATE_SAVED_TIMEOUT)
+            .await
+    }
+
+    /// Joins a network the user chose, as a saved profile that connects by itself next time
+    /// (unlike `join`, whose profile is temporary). `psk` is `None` for an open network.
+    /// Refuses while an upgrade holds the link. On failure the profile is removed and the previous
+    /// connection restored; on success the profile stays. The error never contains the key.
+    pub async fn join_saved(&self, ssid: &str, psk: Option<&str>) -> io::Result<()> {
+        let mut st = self.begin()?;
+        match self.join_saved_inner(&mut st, ssid, psk).await {
+            Ok(()) => {
+                // Not ours to clean up any more: keep the profile and the connection.
+                *st = State::default();
+                Ok(())
+            }
+            Err(e) => {
+                self.teardown(&mut st).await;
+                Err(e)
+            }
+        }
     }
 
     /// Undoes whatever `st` records and resets it. Failures are only logged.
@@ -1811,6 +1910,97 @@ mod tests {
         link.host(1).await.unwrap();
         link.release().await;
         assert_eq!(count(&log, "activate"), 0);
+    }
+
+    #[test]
+    fn saved_settings_autoconnect_with_normal_routing_and_are_kept_on_disk() {
+        let s = ConnSettings::saved("wlan0", "Home", Some("Passw0rdPassw0rd")).unwrap();
+        let d = wire::dict(&s);
+        assert_eq!(d["connection"]["id"], Variant::from("Home"));
+        assert_eq!(d["connection"]["autoconnect"], Variant::from(true));
+        assert_eq!(
+            d["802-11-wireless"]["mode"],
+            Variant::from("infrastructure")
+        );
+        let sec = "802-11-wireless-security";
+        assert_eq!(d[sec]["key-mgmt"], Variant::from("wpa-psk"));
+        assert_eq!(d[sec]["psk"], Variant::from("Passw0rdPassw0rd"));
+        assert_eq!(d["ipv4"]["method"], Variant::from("auto"));
+        assert!(!d["ipv4"].contains_key("never-default"));
+        assert!(!d["ipv4"].contains_key("ignore-auto-dns"));
+        assert_eq!(persist_mode(s.kind), "disk");
+        assert_eq!(persist_mode(Kind::Client { hidden: false }), "memory");
+        assert_eq!(persist_mode(Kind::Ap(BAND_2GHZ)), "memory");
+        assert!(!format!("{s:?}").contains("Passw0rdPassw0rd"));
+    }
+
+    #[test]
+    fn saved_open_network_has_no_security_section() {
+        let s = ConnSettings::saved("wlan0", "Cafe", None).unwrap();
+        let d = wire::dict(&s);
+        assert!(!d.contains_key("802-11-wireless-security"));
+        assert_eq!(d["connection"]["autoconnect"], Variant::from(true));
+        assert!(ConnSettings::saved("wlan0", "", None).is_err());
+        for psk in [None, Some("Passw0rdPassw0rd")] {
+            let e = ConnSettings::saved("wlan0", "kuickshare-ap", psk).unwrap_err();
+            assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
+            assert!(!e.to_string().contains("Passw0rd"));
+        }
+        // A 64-hex PSK does not fit the 8..=63 passphrase rule and is refused.
+        assert!(ConnSettings::saved("wlan0", "Home", Some(&"a".repeat(64))).is_err());
+        assert!(ConnSettings::saved("wlan0", "Home", Some("short")).is_err());
+    }
+
+    #[tokio::test]
+    async fn join_saved_keeps_the_profile_and_frees_the_link() {
+        let (link, log) = fake().build();
+        link.join_saved("Home", Some("Passw0rdPassw0rd"))
+            .await
+            .unwrap();
+        assert_eq!(count(&log, "add_and_activate"), 1);
+        assert_eq!(count(&log, "delete"), 0);
+        assert_eq!(count(&log, "deactivate"), 0);
+        assert_eq!(count(&log, "activate /prev"), 0);
+        assert_eq!(count(&log, "request_scan"), 0);
+        assert_eq!(live(&link), 1);
+        assert_no_secret(&link, &log, "Passw0rdPassw0rd");
+        // The link is free again.
+        link.join_saved("Cafe", None).await.unwrap();
+        assert_eq!(live(&link), 2);
+    }
+
+    #[tokio::test]
+    async fn join_saved_failure_removes_the_profile_restores_the_previous_one_and_hides_the_key() {
+        let (link, log) = fake().fail(|op, _| op == "wait_activated").build();
+        let e = link
+            .join_saved("Home", Some("Passw0rdPassw0rd"))
+            .await
+            .unwrap_err();
+        assert!(!e.to_string().contains("Passw0rdPassw0rd"));
+        assert_eq!(live(&link), 0);
+        assert_eq!(count(&log, "activate /prev/home"), 1);
+        assert_no_secret(&link, &log, "Passw0rdPassw0rd");
+        // The link is free again.
+        assert!(link.begin().is_ok());
+    }
+
+    #[tokio::test]
+    async fn join_saved_is_refused_while_an_upgrade_holds_the_link() {
+        let (link, log) = fake().build();
+        let st = link.begin().unwrap();
+        let e = link.join_saved("Home", Some("Passw0rdPassw0rd")).await;
+        assert_eq!(e.unwrap_err().kind(), io::ErrorKind::WouldBlock);
+        drop(st);
+        assert_eq!(count(&log, "add_and_activate"), 0);
+    }
+
+    #[tokio::test]
+    async fn join_saved_rejects_a_bad_key_before_touching_anything() {
+        let (link, log) = fake().build();
+        let e = link.join_saved("Home", Some("short")).await.unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(count(&log, "add_and_activate"), 0);
+        assert_eq!(count(&log, "activate /prev"), 0);
     }
 
     /// Run by hand: `cargo test -p kuickshare-core real_networkmanager -- --ignored`. The Wi-Fi

@@ -71,11 +71,12 @@ flowchart LR
 | `main.rs` | Loads settings, history and trust, serves D-Bus, starts the engine, waits for a signal |
 | `app.rs` | `Core`: owns the `rqs_lib` engine and the settings. Settings that change the device name or port rebuild the engine, and the old values are restored if that fails |
 | `dbus.rs` | The D-Bus interface, plus forwarder tasks that turn library events into signals, run the consent timeout, the name guard and auto-accept |
-| `link.rs` | `NmLink`: the Wi-Fi link of the upgrade over NetworkManager's D-Bus (access point or join); see [Wi-Fi upgrade](wifi-direct.md) |
+| `link.rs` | `NmLink`: the Wi-Fi link of the upgrade over NetworkManager's D-Bus (access point or join) and the saved join of "Join network"; see [Wi-Fi upgrade](wifi-direct.md) |
 | `trust.rs` | Noise XX channel on TCP 47891: probe, announce, pairing |
 | `allowed.rs` | Trusted devices by name and MAC |
 | `safety.rs` | File name guard |
 | `ratelimit.rs` | Per-address connection limit for the trust port |
+| `wifi_credentials.rs` | In-memory store of received Wi-Fi credentials for "Join network" |
 | `history.rs`, `settings.rs` | JSON persistence |
 
 Settings that restart the engine (device name, static port, reset) are refused while a transfer is active. A transfer with no event for 600 s counts as over, so a lost final event cannot block them forever.
@@ -273,14 +274,30 @@ Refused connections are closed without a reply.
 | Number of entries | 1000 (`MAX_ENTRIES` in `src/core/history.rs`), the oldest go first; applied on load, on add and on read |
 | Off switch | `history_enabled`; when off nothing is recorded |
 
-Wi-Fi credentials are recorded by network name only, never the password.
+Wi-Fi credentials are recorded by network name only, never the password. The password lives only in the short-lived memory store described in [Wi-Fi credentials from a phone](#wi-fi-credentials-from-a-phone).
+
+### Wi-Fi credentials from a phone
+
+A phone can share a Wi-Fi network with the computer. `rqs_lib` hands the core the password inside the transfer metadata; the core keeps it only for "Join network".
+
+| Rule | Detail |
+|---|---|
+| Where | `Store` in `src/core/wifi_credentials.rs`, keyed by the transfer id used on D-Bus; memory only |
+| Stored when | An inbound transfer with a Wi-Fi payload reaches `Finished` |
+| Dropped when | A join succeeds; the transfer is rejected or cancelled; 10 minutes pass; the service restarts; the daemon exits. At most 8 are kept, the oldest go first |
+| Never in | D-Bus signals or properties (`TransferUpdated` has the network name in `text` only), the history, the settings, logs (`Debug` of `TransferPayload` and of the store entries prints `<redacted>`; the library's Wi-Fi parser errors no longer quote the payload) |
+| Joinable | WPA/WPA2 passphrases (8 to 63 characters; a 64-hex PSK is refused) and open networks; WEP and unknown security types are kept without a password and `JoinNetwork` refuses them. SSIDs starting with `kuickshare-` are refused: the sweep of temporary profiles would delete them |
+| Join | `NmLink::join_saved` in `link.rs`: one NetworkManager profile named after the SSID, saved to disk, autoconnect on, normal routing and DNS (unlike the temporary upgrade profile `kuickshare-join`, which is memory-only and never takes the default route). On failure the profile is removed and the previous connection restored. A profile that already exists for the SSID is not looked up, so a second one is added *(inferred)*. The join runs in its own task, so it ends (and frees the link) even if the D-Bus caller goes away; worst case about 15 s |
+| Guard | Refused while a transfer is in flight (the core's active-transfer list) or while the Wi-Fi upgrade holds the link (`NmLink` allows one session at a time) |
+
+The shell shows the button from the transfer row alone (payload kind `WiFi`, inbound, finished, live row), not from a D-Bus key; if the credentials expired, `JoinNetwork` answers with an error.
 
 ### What the core never does
 
 - Accept a transfer with an unsafe file name, or with no consent, intent or allowed-list match.
 - Pair without the window open, with an unnamed computer, or without both users confirming.
 - Connect to a non-local address because an mDNS advert named one. Probes go only to private, link-local and loopback addresses, at most once per 20 s per address.
-- Store a Wi-Fi password, or send the private key anywhere.
+- Write a Wi-Fi password to disk, put it on D-Bus or in a log (it is kept in memory only, for at most 10 minutes: see [Wi-Fi credentials from a phone](#wi-fi-credentials-from-a-phone)), or send the private key anywhere.
 - Open links or run received files. The shell opens a link only when the user clicks.
 - Read the contents of the files being sent, apart from handing their paths to the library.
 
@@ -306,7 +323,8 @@ Assumes the attacker is on the same LAN, or a malicious app runs as the same use
 | Other process on the session bus calls the API (accept, trust, send) | None seen in the interface code: no check of the caller | Same trust boundary as the user's session |
 | Huge metadata bloats the history | Caps on files and text per entry | Entry count is bounded only by age |
 | Rich-text or HTML injection through a remote name or text | Shell escapes names and text in notifications, labels use plain text | See next section |
-| Leak of Wi-Fi password through the history | Only the network name is kept | None known |
+| Leak of Wi-Fi password through the history, D-Bus or logs | Only the network name is kept; the password is never written to disk and stays in a bounded in-memory store (`wifi_credentials.rs`) whose `Debug` output is redacted, also in `rqs_lib` | The password is in the core's memory for up to 10 minutes (a process of the same user could read it) |
+| Another process on the session bus joins the computer to a phone's network | None: `JoinNetwork` does not check the caller, like `Accept`; it needs a transfer id with stored credentials, and the password is never sent to the caller | Same trust boundary as the user's session. A transfer started during the join (up to about 15 s) can lose its connection |
 | Forged "trusted" display on a card | The trust label comes from the core's probe, not from the advert | Depends on the probe being correct |
 | A nearby device uses the Bluetooth receiver (setting on) to read or cut a session | Only the device that opens the session with a valid connection request can write to it; one session at a time, new ones refused while one is live; a transfer still needs the user's consent and is never auto-accepted (ids `ble-N`) | A device can claim the slot in the instant between the phone's subscribe and its first write, and hold it while it keeps writing |
 | A peer's upgrade offer points the computer at a hostile network | SSID and password are validated, the gateway must be a private address, the profile never takes the default route or DNS and is kept in memory | The computer joins a network chosen by the peer |

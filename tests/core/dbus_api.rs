@@ -337,6 +337,16 @@ async fn trusting_needs_a_known_transfer() {
 }
 
 #[tokio::test]
+async fn joining_a_network_needs_credentials_from_a_finished_transfer() {
+    let daemon = Daemon::start("join", None).await;
+    let e = daemon
+        .call("JoinNetwork", &("10.0.0.9:4000",))
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("no longer available"), "{e}");
+}
+
+#[tokio::test]
 async fn bluetooth_ids_are_refused_where_they_make_no_sense() {
     let daemon = Daemon::start("ble", None).await;
 

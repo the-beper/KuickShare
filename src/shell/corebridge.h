@@ -174,6 +174,9 @@ public:
     Q_INVOKABLE bool fileExists(const QString &path) const;
     /// Opens a local file with the default application.
     Q_INVOKABLE void openFile(const QString &path) const;
+    /// Asks the core to join the Wi-Fi network received in a finished transfer (it keeps the password).
+    /// `ssid` is only for the `networkJoined` message; a failure is reported through `errorOccurred`.
+    Q_INVOKABLE void joinNetwork(const QString &transferId, const QString &ssid);
 
 Q_SIGNALS:
     void connectedChanged();
@@ -207,6 +210,7 @@ Q_SIGNALS:
     void pairingFinished(bool ok, const QString &peer, const QString &message);
     /// A request to the core failed; the message is meant for the user.
     void errorOccurred(const QString &message);
+    void networkJoined(const QString &ssid);
     void transferChanged(const QString &id);
     /// A send of files was requested; the transfer starts later (scan, connection, consent).
     void sendRequested(const QString &deviceId, const QString &deviceName, int fileCount);

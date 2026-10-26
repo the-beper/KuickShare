@@ -666,12 +666,12 @@ impl InboundRequest {
                                         ) -> anyhow::Result<String>
                                         {
                                             if buffer.len() < 4 {
-                                                anyhow::bail!("Buffer too short ({buffer:?})");
+                                                anyhow::bail!("Wi-Fi payload too short");
                                             }
 
                                             if buffer[(buffer.len() - 1) - 1] != 0x10 {
                                                 anyhow::bail!(
-                                                    "Buffer ({buffer:?}) doesn't ends with 0x10 0x?? as expected"
+                                                    "Wi-Fi payload doesn't end with 0x10 0x?? as expected"
                                                 );
                                             }
 
@@ -680,7 +680,7 @@ impl InboundRequest {
                                                 .expect("Validated for minimum length of 4")
                                                 as usize;
 
-                                            let payload_buffer = buffer.get(2..2 + len).with_context(||anyhow!( "Buffer too short ({buffer:?}) can't retrieve payload of length {len}"))?;
+                                            let payload_buffer = buffer.get(2..2 + len).with_context(|| anyhow!("Wi-Fi payload too short for its length {len}"))?;
 
                                             Ok(String::from_utf8(payload_buffer.to_owned())?)
                                         }

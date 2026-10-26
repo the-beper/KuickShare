@@ -135,6 +135,19 @@ Kirigami.ScrollablePage {
 
     required property var toasts
 
+    // Asks before joining a received Wi-Fi network; filled by the "Join network" button of a row.
+    Kirigami.PromptDialog {
+        id: joinDialog
+
+        property string transferId: ""
+        property string ssid: ""
+
+        title: KI18n.i18n("Join this network?")
+        subtitle: KI18n.i18n("Connect this computer to “%1” and save it, so it connects again by itself. The current Wi-Fi connection is replaced", ssid)
+        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        onAccepted: page.core.joinNetwork(transferId, ssid)
+    }
+
     // Size of the saved history above which a warning offers to clear it.
     readonly property real bigHistoryBytes: 5 * 1024 * 1024
 
@@ -599,6 +612,8 @@ Kirigami.ScrollablePage {
                 readonly property bool hasText: transferState === "Finished" && files.length === 0 && (bodyText.length > 0 || preview.length > 0)
                 readonly property string content: page.describe(files, bodyText, preview)
                 readonly property string shownText: bodyText.length > 0 ? bodyText : preview
+                // Wi-Fi details just received (the core keeps the password for a few minutes, not in the history).
+                readonly property bool joinable: kind === "inbound" && transferState === "Finished" && payloadKind === "WiFi" && shownText.length > 0 && !transferId.startsWith("history-")
                 readonly property bool isLink: /^https?:\/\/\S+$/i.test(shownText.trim())
 
                 padding: Kirigami.Units.largeSpacing
@@ -757,6 +772,16 @@ Kirigami.ScrollablePage {
                                     text: KI18n.i18n("Open folder")
                                     icon.name: "document-open-folder"
                                     onClicked: page.core.openDownloadFolder()
+                                }
+                                QQC2.Button {
+                                    visible: item.joinable
+                                    text: KI18n.i18n("Join network")
+                                    icon.name: "network-wireless"
+                                    onClicked: {
+                                        joinDialog.transferId = item.transferId;
+                                        joinDialog.ssid = item.shownText;
+                                        joinDialog.open();
+                                    }
                                 }
                                 QQC2.Button {
                                     visible: item.hasText

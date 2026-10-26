@@ -154,6 +154,9 @@ Kirigami.ApplicationWindow {
         function onErrorOccurred(message) {
             toasts.show(Kirigami.MessageType.Error, message, 10000);
         }
+        function onNetworkJoined(ssid) {
+            toasts.show(Kirigami.MessageType.Positive, KI18n.i18n("Connected to %1", ssid), 6000);
+        }
         // How a transfer ended, as a toast on whatever page is open: green for success, red for a
         // failure, blue otherwise.
         function onTransferEnded(id, state) {

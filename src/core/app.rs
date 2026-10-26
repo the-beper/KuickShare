@@ -31,6 +31,7 @@ use crate::{
     link::{NetworkEvent, NmLink},
     settings::{self, Settings},
     trust::{self, Trust, TrustEvent},
+    wifi_credentials,
 };
 
 /// Nearby devices found by discovery, keyed by endpoint id (`ip:port`, or `ble:<id>` over Bluetooth).
@@ -77,6 +78,10 @@ pub struct Core {
     endpoints: Endpoints,
     redirects: Redirects,
     active: ActiveTransfers,
+    /// Wi-Fi networks received from phones, in memory only (see `wifi_credentials`).
+    wifi_creds: wifi_credentials::Shared,
+    /// The NetworkManager link, shared by the Wi-Fi upgrade and "Join this network".
+    nm: Arc<NmLink>,
     history: SharedHistory,
     trust: Arc<Trust>,
     trust_events: Option<mpsc::UnboundedReceiver<TrustEvent>>,
@@ -115,6 +120,8 @@ impl Core {
             endpoints: Endpoints::default(),
             redirects: Redirects::default(),
             active: ActiveTransfers::default(),
+            wifi_creds: wifi_credentials::Shared::default(),
+            nm: Arc::new(NmLink::new()),
             history: Arc::new(StdMutex::new(history)),
             trust,
             trust_events: Some(trust_events),
@@ -298,7 +305,7 @@ impl Core {
     pub fn set_wifi_upgrade(&mut self, enabled: bool) {
         self.settings.wifi_upgrade = enabled;
         if let Some(engine) = &self.engine {
-            engine.rqs.set_wifi_link(wifi_link(enabled));
+            engine.rqs.set_wifi_link(wifi_link(enabled, &self.nm));
         }
         self.save();
     }
@@ -837,14 +844,28 @@ impl Core {
         unique_match(endpoints.values(), of, ble).cloned()
     }
 
-    fn ensure_idle(&self) -> Result<()> {
+    fn is_idle(&self) -> bool {
         let mut active = self.active.lock().unwrap();
         drop_stale(&mut active, history::now());
-        if active.is_empty() {
+        active.is_empty()
+    }
+
+    fn ensure_idle(&self) -> Result<()> {
+        if self.is_idle() {
             Ok(())
         } else {
             bail!("Wait for the current transfer to finish before changing this setting");
         }
+    }
+
+    /// What `JoinNetwork` needs, taken under the core lock so the join itself (seconds) runs
+    /// without it. Joining another network drops the connection a transfer may be using, so it
+    /// waits for the transfers to end; a running Wi-Fi upgrade is refused by the link itself.
+    pub fn wifi_join_parts(&self) -> Result<(Arc<NmLink>, wifi_credentials::Shared)> {
+        if !self.is_idle() {
+            bail!("Wait for the current transfer to finish before joining a network");
+        }
+        Ok((self.nm.clone(), self.wifi_creds.clone()))
     }
 
     /// Applies the new settings by restarting the service; if that fails, the previous settings
@@ -874,6 +895,7 @@ impl Core {
         }
         self.redirects.lock().unwrap().clear();
         self.endpoints.lock().unwrap().clear();
+        self.wifi_creds.lock().unwrap().clear();
         self.start_engine(discovery).await
     }
 
@@ -885,7 +907,7 @@ impl Core {
             self.settings.download_dir.clone(),
             Some(self.device_name()),
         );
-        rqs.set_wifi_link(wifi_link(self.settings.wifi_upgrade));
+        rqs.set_wifi_link(wifi_link(self.settings.wifi_upgrade, &self.nm));
         let (send_tx, _) = rqs
             .run()
             .await
@@ -898,6 +920,7 @@ impl Core {
                 endpoints: self.endpoints.clone(),
                 redirects: self.redirects.clone(),
                 active: self.active.clone(),
+                wifi_creds: self.wifi_creds.clone(),
                 history: self.history.clone(),
                 trust: self.trust.clone(),
                 trusted_ips: self.trusted_ips.clone(),
@@ -1182,8 +1205,8 @@ async fn remove_stale_wifi_profiles() {
     }
 }
 
-fn wifi_link(enabled: bool) -> Option<Arc<dyn WifiLink>> {
-    enabled.then(|| Arc::new(NmLink::new()) as Arc<dyn WifiLink>)
+fn wifi_link(enabled: bool, nm: &Arc<NmLink>) -> Option<Arc<dyn WifiLink>> {
+    enabled.then(|| nm.clone() as Arc<dyn WifiLink>)
 }
 
 /// Longest temporary visibility a caller can ask for.

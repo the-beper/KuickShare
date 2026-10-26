@@ -33,6 +33,7 @@ use crate::{
     history::{self, HistoryEntry},
     safety,
     trust::{self, Trust, TrustEvent},
+    wifi_credentials,
 };
 
 pub const BUS_NAME: &str = "io.github.the_beper.KuickShare";
@@ -68,6 +69,29 @@ impl Service {
 
     async fn cancel(&self, id: &str) -> fdo::Result<()> {
         self.send_action(id, TransferAction::TransferCancel).await
+    }
+
+    /// Joins the Wi-Fi network received in a finished transfer, as a saved connection that
+    /// reconnects by itself. The password stays in the core (never on the bus). Fails for an
+    /// unknown or expired transfer, a WEP or unknown security type, while a transfer or a Wi-Fi
+    /// upgrade is running, or when NetworkManager cannot connect.
+    async fn join_network(&self, transfer_id: &str) -> fdo::Result<()> {
+        let (nm, store) = self.core.lock().await.wifi_join_parts().map_err(failed)?;
+        let wifi = store
+            .lock()
+            .unwrap()
+            .get(transfer_id, Instant::now())
+            .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+        // Its own task: if the caller goes away (the call is dropped) the join still runs to the
+        // end, so the link is freed and a failed profile removed.
+        let (ssid, psk) = (wifi.ssid.clone(), wifi.psk().map(str::to_owned));
+        tokio::spawn(async move { nm.join_saved(&ssid, psk.as_deref()).await })
+            .await
+            .map_err(|_| fdo::Error::Failed("Could not join the network: interrupted".into()))?
+            .map_err(|e| fdo::Error::Failed(format!("Could not join the network: {e}")))?;
+        store.lock().unwrap().remove(transfer_id);
+        tracing::info!("joined a Wi-Fi network received from a phone");
+        Ok(())
     }
 
     /// Starts looking for nearby devices; they are reported via `DeviceFound`/`DeviceLost`.
@@ -584,6 +608,7 @@ pub struct Forwarding {
     pub endpoints: Endpoints,
     pub redirects: Redirects,
     pub active: ActiveTransfers,
+    pub wifi_creds: wifi_credentials::Shared,
     pub history: SharedHistory,
     pub trust: Arc<Trust>,
     pub trusted_ips: TrustedIps,
@@ -618,6 +643,7 @@ async fn forward_transfers(shared: Forwarding, mut events: broadcast::Receiver<C
         endpoints,
         redirects,
         active,
+        wifi_creds,
         history,
         trust,
         allowed,
@@ -732,6 +758,27 @@ async fn forward_transfers(shared: Forwarding, mut events: broadcast::Receiver<C
                     action: TransferAction::ConsentAccept,
                 },
             });
+        }
+
+        // Received Wi-Fi credentials are kept in memory for "Join this network" until used,
+        // declined, cancelled or expired. The password is not part of `event`.
+        if let Some(state) = &client.state {
+            let payload = client.metadata.as_ref().and_then(|m| m.payload.as_ref());
+            let inbound = matches!(client.kind, TransferKind::Inbound);
+            let stored = wifi_creds.lock().unwrap().on_event(
+                &message.id,
+                state,
+                inbound,
+                payload,
+                Instant::now(),
+            );
+            if stored {
+                let store = wifi_creds.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(wifi_credentials::TTL + Duration::from_secs(1)).await;
+                    store.lock().unwrap().prune(Instant::now());
+                });
+            }
         }
 
         // Track what is in flight, and record a transfer in the history when it ends.
