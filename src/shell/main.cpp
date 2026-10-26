@@ -202,22 +202,30 @@ int main(int argc, char *argv[])
             showWindow();
         }
     };
+    // Set by queueFiles when a folder was refused (too many files, or none): a `--device` send must not go on.
+    bool queueRefused = false;
     auto queueFiles = [&](const QStringList &paths, const QString &workingDirectory) -> QStringList
     {
-        QStringList files;
+        QStringList absolute;
         for (const QString &path : paths)
         {
-            const QString absolute = QDir(workingDirectory).absoluteFilePath(path);
-            if (QFileInfo(absolute).isFile())
-            {
-                files << absolute;
-            }
+            absolute << QDir(workingDirectory).absoluteFilePath(path);
         }
-        if (!files.isEmpty())
+        QStringList problems;
+        const QStringList files = core.expandPaths(absolute, &problems);
+        queueRefused = !problems.isEmpty();
+        if (!files.isEmpty() || !problems.isEmpty())
         {
             if (auto *window = ensureWindow())
             {
-                QMetaObject::invokeMethod(window, "queueFiles", Q_ARG(QVariant, QVariant(files)));
+                if (!files.isEmpty())
+                {
+                    QMetaObject::invokeMethod(window, "queueFiles", Q_ARG(QVariant, QVariant(files)));
+                }
+                for (const QString &problem : problems)
+                {
+                    QMetaObject::invokeMethod(window, "showError", Q_ARG(QVariant, problem));
+                }
             }
         }
         return files;
@@ -345,6 +353,13 @@ int main(int argc, char *argv[])
         const QStringList queued = queueFiles(other.positionalArguments(), workingDirectory);
         if (other.isSet(device))
         {
+            if (queueRefused)
+            {
+                // The error is already shown and the expanded files stay queued; nothing is sent, not even older queue contents.
+                endDeviceSend(false);
+                showWindow();
+                return;
+            }
             if (!other.isSet(background))
             {
                 showWindow();
@@ -358,7 +373,11 @@ int main(int argc, char *argv[])
     {
         showWindow();
     }
-    if (parser.isSet(device))
+    if (parser.isSet(device) && queueRefused)
+    {
+        showWindow();
+    }
+    else if (parser.isSet(device))
     {
         startDeviceSend(parser.value(device), queued);
     }

@@ -103,6 +103,11 @@ target_include_directories(openablefile_test PRIVATE .)
 target_link_libraries(openablefile_test PRIVATE Qt6::Core Qt6::Test)
 add_test(NAME openablefile COMMAND openablefile_test)
 
+qt_add_executable(folderexpand_test ../../tests/shell/folderexpand_test.cpp)
+target_include_directories(folderexpand_test PRIVATE .)
+target_link_libraries(folderexpand_test PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME folderexpand COMMAND folderexpand_test)
+
 qt_add_executable(devicematch_test ../../tests/shell/devicematch_test.cpp)
 target_include_directories(devicematch_test PRIVATE .)
 target_link_libraries(devicematch_test PRIVATE Qt6::Core Qt6::Test)

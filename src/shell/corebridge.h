@@ -131,7 +131,10 @@ public:
     Q_INVOKABLE void sendText(const QString &deviceId, const QString &text, bool isUrl);
 
     Q_INVOKABLE QString toLocalFile(const QUrl &url) const { return url.toLocalFile(); }
-    /// Local regular files among `urls`; reports an error if anything else (e.g. a folder) was skipped.
+    /// Files to queue for `paths`, folders flattened (see folderexpand.h). A message for each folder refused or empty
+    /// goes to `problems`, or to `errorOccurred` when that is null.
+    QStringList expandPaths(const QStringList &paths, QStringList *problems = nullptr);
+    /// Local files and folders among `urls`, expanded as above; reports an error if anything else was skipped.
     Q_INVOKABLE QStringList filesFromUrls(const QList<QUrl> &urls);
     /// Display data of a local file: path, name, size (text and bytes) and a MIME icon name.
     Q_INVOKABLE QVariantMap fileDetails(const QString &path) const;

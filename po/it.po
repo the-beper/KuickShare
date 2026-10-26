@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-26 15:22+0000\n"
+"POT-Creation-Date: 2026-10-26 15:31+0000\n"
 "PO-Revision-Date: 2026-10-18 00:00+0000\n"
 "Last-Translator: the-beper <193650145+the-beper@users.noreply.github.com>\n"
 "Language-Team: Italian\n"
@@ -16,23 +16,23 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: src/shell/corebridge.cpp:567
+#: src/shell/corebridge.cpp:571
 msgid "Could not update Dolphin's context menu"
 msgstr "Impossibile aggiornare il menu contestuale di Dolphin"
 
-#: src/shell/corebridge.cpp:591
+#: src/shell/corebridge.cpp:595
 msgid "Could not update the application menu"
 msgstr "Impossibile aggiornare il menu delle applicazioni"
 
-#: src/shell/corebridge.cpp:602
+#: src/shell/corebridge.cpp:606
 msgid "Could not add KuickShare to the menus"
 msgstr "Impossibile aggiungere KuickShare ai menu"
 
-#: src/shell/corebridge.cpp:659 src/shell/corebridge.cpp:666
+#: src/shell/corebridge.cpp:663 src/shell/corebridge.cpp:670
 msgid "The sharing service did not accept the request"
 msgstr "Il servizio di condivisione non ha accettato la richiesta"
 
-#: src/shell/corebridge.cpp:763
+#: src/shell/corebridge.cpp:767
 msgid ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
@@ -40,13 +40,21 @@ msgstr ""
 "Il Flatpak non ha accesso a %1. Consentilo con: flatpak override --user --"
 "filesystem=\"%1\" %2"
 
-#: src/shell/corebridge.cpp:810
+#: src/shell/corebridge.cpp:814
 msgid "Could not update the autostart entry"
 msgstr "Impossibile aggiornare la voce di avvio automatico"
 
-#: src/shell/corebridge.cpp:936
-msgid "Only files can be shared, folders are not supported"
-msgstr "È possibile condividere solo file, le cartelle non sono supportate"
+#: src/shell/corebridge.cpp:928
+msgid "The folder %1 has more than %2 files"
+msgstr "La cartella %1 contiene più di %2 file"
+
+#: src/shell/corebridge.cpp:932
+msgid "The folder %1 has no files to send"
+msgstr "La cartella %1 non contiene file da inviare"
+
+#: src/shell/corebridge.cpp:967
+msgid "Only local files and folders can be shared"
+msgstr "È possibile condividere solo file e cartelle locali"
 
 #: src/shell/main.cpp:50 src/shell/qml/AboutDialog.qml:158
 msgid "Quick Share client for KDE Plasma"
@@ -72,54 +80,54 @@ msgstr "Chiudi un'istanza in esecuzione e prendine il posto"
 msgid "Files to send"
 msgstr "File da inviare"
 
-#: src/shell/main.cpp:282
+#: src/shell/main.cpp:290
 msgid "Several devices are named %1"
 msgstr "Più dispositivi si chiamano %1"
 
-#: src/shell/main.cpp:289
+#: src/shell/main.cpp:297
 msgid "No device named %1 found"
 msgstr "Nessun dispositivo chiamato %1"
 
-#: src/shell/main.cpp:306 src/shell/qml/SendPage.qml:517
+#: src/shell/main.cpp:314 src/shell/qml/SendPage.qml:517
 msgid "A transfer is in progress. You can send again when it ends"
 msgstr "È in corso un trasferimento. Potrai inviare di nuovo al termine."
 
-#: src/shell/main.cpp:330
+#: src/shell/main.cpp:338
 msgid "No files to send"
 msgstr "Nessun file da inviare"
 
-#: src/shell/main.cpp:400
+#: src/shell/main.cpp:419
 msgid "Open KuickShare"
 msgstr "Apri KuickShare"
 
-#: src/shell/main.cpp:402
+#: src/shell/main.cpp:421
 msgid "Send files…"
 msgstr "Invia file…"
 
-#: src/shell/main.cpp:403
+#: src/shell/main.cpp:422
 msgid "Send clipboard"
 msgstr "Invia appunti"
 
-#: src/shell/main.cpp:404 src/shell/qml/SettingsPage.qml:66
+#: src/shell/main.cpp:423 src/shell/qml/SettingsPage.qml:66
 msgid "Visible to nearby devices"
 msgstr "Visibile ai dispositivi vicini"
 
-#: src/shell/main.cpp:420
+#: src/shell/main.cpp:439
 msgid "Visible for %1 more minute (click to stop)"
 msgid_plural "Visible for %1 more minutes (click to stop)"
 msgstr[0] "Visibile per ancora %1 minuto (clic per interrompere)"
 msgstr[1] "Visibile per altri %1 minuti (clic per interrompere)"
 
-#: src/shell/main.cpp:421
+#: src/shell/main.cpp:440
 msgid "Visible for 10 minutes"
 msgstr "Visibile per 10 minuti"
 
-#: src/shell/main.cpp:435 src/shell/qml/Main.qml:287
+#: src/shell/main.cpp:454 src/shell/qml/Main.qml:287
 #: src/shell/qml/SettingsPage.qml:16 src/shell/qml/ShortcutsDialog.qml:17
 msgid "Preferences"
 msgstr "Preferenze"
 
-#: src/shell/main.cpp:438 src/shell/qml/Main.qml:301
+#: src/shell/main.cpp:457 src/shell/qml/Main.qml:301
 msgid "Quit"
 msgstr "Esci"
 

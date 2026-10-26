@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-26 15:22+0000\n"
+"POT-Creation-Date: 2026-10-26 15:31+0000\n"
 "PO-Revision-Date: 2026-10-20 11:00+0200\n"
 "Last-Translator: Heimen Stoffels <vistausss@fastmail.com>\n"
 "Language-Team: \n"
@@ -19,23 +19,23 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 "X-Generator: Poedit 3.10\n"
 
-#: src/shell/corebridge.cpp:567
+#: src/shell/corebridge.cpp:571
 msgid "Could not update Dolphin's context menu"
 msgstr "Het rechtermuisknopmenu van Dolphin kan niet worden bijgewerkt"
 
-#: src/shell/corebridge.cpp:591
+#: src/shell/corebridge.cpp:595
 msgid "Could not update the application menu"
 msgstr "Het toepassingsmenu kan niet worden bijgewerkt"
 
-#: src/shell/corebridge.cpp:602
+#: src/shell/corebridge.cpp:606
 msgid "Could not add KuickShare to the menus"
 msgstr "KuickShare kan niet worden toegevoegd aan de menu's"
 
-#: src/shell/corebridge.cpp:659 src/shell/corebridge.cpp:666
+#: src/shell/corebridge.cpp:663 src/shell/corebridge.cpp:670
 msgid "The sharing service did not accept the request"
 msgstr "De deelservice heeft het verzoek niet geaccepteerd"
 
-#: src/shell/corebridge.cpp:763
+#: src/shell/corebridge.cpp:767
 msgid ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
@@ -43,13 +43,21 @@ msgstr ""
 "Flatpak heeft geen toegang tot %1. Toegang geven kan door middel van de "
 "opdracht: flatpak override --user --filesystem=\"%1\" %2"
 
-#: src/shell/corebridge.cpp:810
+#: src/shell/corebridge.cpp:814
 msgid "Could not update the autostart entry"
 msgstr "Het automatische opstartitem kan niet worden toegevoegd"
 
-#: src/shell/corebridge.cpp:936
-msgid "Only files can be shared, folders are not supported"
-msgstr "Je kunt alleen bestanden delen, geen mappen"
+#: src/shell/corebridge.cpp:928
+msgid "The folder %1 has more than %2 files"
+msgstr "De map %1 bevat meer dan %2 bestanden"
+
+#: src/shell/corebridge.cpp:932
+msgid "The folder %1 has no files to send"
+msgstr "De map %1 bevat geen bestanden om te versturen"
+
+#: src/shell/corebridge.cpp:967
+msgid "Only local files and folders can be shared"
+msgstr "Alleen lokale bestanden en mappen kunnen worden gedeeld"
 
 #: src/shell/main.cpp:50 src/shell/qml/AboutDialog.qml:158
 msgid "Quick Share client for KDE Plasma"
@@ -76,55 +84,55 @@ msgstr "Sluit een draaiende instantie af en neem de plaats ervan in"
 msgid "Files to send"
 msgstr "Te versturen bestanden"
 
-#: src/shell/main.cpp:282
+#: src/shell/main.cpp:290
 msgid "Several devices are named %1"
 msgstr "Meerdere apparaten heten %1"
 
-#: src/shell/main.cpp:289
+#: src/shell/main.cpp:297
 msgid "No device named %1 found"
 msgstr "Geen apparaat met de naam %1 gevonden"
 
-#: src/shell/main.cpp:306 src/shell/qml/SendPage.qml:517
+#: src/shell/main.cpp:314 src/shell/qml/SendPage.qml:517
 msgid "A transfer is in progress. You can send again when it ends"
 msgstr ""
 "Er is een overdracht gaande. Je kunt opnieuw versturen als die klaar is."
 
-#: src/shell/main.cpp:330
+#: src/shell/main.cpp:338
 msgid "No files to send"
 msgstr "Geen bestanden om te versturen"
 
-#: src/shell/main.cpp:400
+#: src/shell/main.cpp:419
 msgid "Open KuickShare"
 msgstr "KuickShare openen"
 
-#: src/shell/main.cpp:402
+#: src/shell/main.cpp:421
 msgid "Send files…"
 msgstr "Bestanden versturen…"
 
-#: src/shell/main.cpp:403
+#: src/shell/main.cpp:422
 msgid "Send clipboard"
 msgstr "Klembord versturen"
 
-#: src/shell/main.cpp:404 src/shell/qml/SettingsPage.qml:66
+#: src/shell/main.cpp:423 src/shell/qml/SettingsPage.qml:66
 msgid "Visible to nearby devices"
 msgstr "Zichtbaar voor apparaten in de buurt"
 
-#: src/shell/main.cpp:420
+#: src/shell/main.cpp:439
 msgid "Visible for %1 more minute (click to stop)"
 msgid_plural "Visible for %1 more minutes (click to stop)"
 msgstr[0] "Nog %1 minuut zichtbaar (klik om te stoppen)"
 msgstr[1] "Nog %1 minuten zichtbaar (klik om te stoppen)"
 
-#: src/shell/main.cpp:421
+#: src/shell/main.cpp:440
 msgid "Visible for 10 minutes"
 msgstr "Zichtbaar gedurende 10 minuten"
 
-#: src/shell/main.cpp:435 src/shell/qml/Main.qml:287
+#: src/shell/main.cpp:454 src/shell/qml/Main.qml:287
 #: src/shell/qml/SettingsPage.qml:16 src/shell/qml/ShortcutsDialog.qml:17
 msgid "Preferences"
 msgstr "Instellingen"
 
-#: src/shell/main.cpp:438 src/shell/qml/Main.qml:301
+#: src/shell/main.cpp:457 src/shell/qml/Main.qml:301
 msgid "Quit"
 msgstr "Afsluiten"
 

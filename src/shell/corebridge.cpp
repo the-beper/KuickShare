@@ -27,6 +27,7 @@
 #include <KLocalizedString>
 
 #include "autostart.h"
+#include "folderexpand.h"
 #include "openablefile.h"
 #include <kcoreaddons.h>
 #include "dolphinmenu.h"
@@ -178,7 +179,8 @@ void CoreBridge::updateClipboard()
         hasText = data->hasText() && !data->text().isEmpty();
         if (data->hasUrls()) {
             for (const QUrl &url : data->urls()) {
-                if (url.isLocalFile() && QFileInfo(url.toLocalFile()).isFile()) {
+                const QFileInfo info(url.toLocalFile());
+                if (url.isLocalFile() && (info.isFile() || info.isDir())) {
                     hasFiles = true;
                     break;
                 }
@@ -220,8 +222,10 @@ QStringList CoreBridge::clipboardFiles() const
     }
     if (data->hasUrls()) {
         for (const QUrl &url : data->urls()) {
-            if (url.isLocalFile() && QFileInfo(url.toLocalFile()).isFile()) {
-                files << url.toLocalFile();
+            const QString path = url.toLocalFile();
+            const QFileInfo info(path);
+            if (url.isLocalFile() && (info.isFile() || info.isDir())) {
+                files << path;
             }
         }
         if (!files.isEmpty()) {
@@ -915,27 +919,54 @@ QString CoreBridge::formatSize(qlonglong bytes) const
     return QLocale().formattedDataSize(bytes);
 }
 
+QStringList CoreBridge::expandPaths(const QStringList &paths, QStringList *problems)
+{
+    const SendExpansion expansion = expandForSend(paths);
+    QStringList messages;
+    for (const QString &folder : expansion.tooMany)
+    {
+        messages << i18n("The folder %1 has more than %2 files", QFileInfo(folder).fileName(), maxFolderFiles);
+    }
+    for (const QString &folder : expansion.empty)
+    {
+        messages << i18n("The folder %1 has no files to send", QFileInfo(folder).fileName());
+    }
+    if (problems)
+    {
+        *problems = messages;
+    }
+    else
+    {
+        for (const QString &message : messages)
+        {
+            emit errorOccurred(message);
+        }
+    }
+    return expansion.files;
+}
+
 QStringList CoreBridge::filesFromUrls(const QList<QUrl> &urls)
 {
-    QStringList files;
+    QStringList paths;
     bool skipped = false;
     for (const QUrl &url : urls)
     {
         const QString path = url.toLocalFile();
-        if (!path.isEmpty() && QFileInfo(path).isFile())
+        const QFileInfo info(path);
+        if (path.isEmpty() || !(info.isFile() || info.isDir()))
         {
-            files << path;
+            skipped = true;
         }
         else
         {
-            skipped = true;
+            paths << path;
         }
     }
     if (skipped)
     {
-        emit errorOccurred(i18n("Only files can be shared, folders are not supported"));
+        emit errorOccurred(i18n("Only local files and folders can be shared"));
     }
-    return files;
+    return expandPaths(paths);
 }
 
 void CoreBridge::cancel(const QString &id)

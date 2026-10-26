@@ -158,7 +158,7 @@ There are five ways to add files, and they combine:
 - Use **Paste from clipboard** in the drop area, or **Send clipboard** in the tray menu.
 - Pass them on the command line, or use the Dolphin entry below.
 
-Only regular files are queued; folders, given on the command line or dropped on the window, are ignored. The list shows the first five files and a "Show all" link for the rest. **Clear** empties the list, **Add** adds more.
+A folder, dropped, pasted or given on the command line, is flattened: each regular file below it is queued as if chosen on its own and the folder structure is not kept on the receiving side. Hidden files and folders (names starting with `.`) and symbolic links are skipped. A folder that would bring one add past 500 files in total, or has more than 20000 entries, adds none of its files and shows an error; so does a folder with no file to send. The file dialog picks files only. The list shows the first five files and a "Show all" link for the rest. **Clear** empties the list, **Add** adds more.
 
 ### Text and links
 
@@ -178,7 +178,7 @@ kuickshare [--background] [--page send|transfers|settings|help] [--device <name>
 
 `kuickshare --help` lists the options. If KuickShare is already running, a second launch hands its files to the running window and shows it. `--page` accepts `send`, `transfers`, `settings` or `help`; the window on the Send page is the default. `--background` starts hidden in the tray, which is what the login entry uses.
 
-`--device <name>` sends the files to the nearby device with that name, without a click: the name is compared whole, ignoring case and surrounding spaces. Discovery runs for up to 30 seconds, and a match must stay the only one for about 3 seconds before the send. On a match the Transfers page opens (with `--background` the app stays in the tray). If no device or several devices have that name, or there are no files (none given and none queued on the Send page), nothing is sent, the files stay queued on the Send page and the window opens to show the error, also with `--background`. A new `--device` request cancels a pending one, and files added meanwhile by a plain launch are not part of its send.
+`--device <name>` sends the files to the nearby device with that name, without a click: the name is compared whole, ignoring case and surrounding spaces. Discovery runs for up to 30 seconds, and a match must stay the only one for about 3 seconds before the send. On a match the Transfers page opens (with `--background` the app stays in the tray). If no device or several devices have that name, or there are no files (none given and none queued on the Send page), nothing is sent, the files stay queued on the Send page and the window opens to show the error, also with `--background`. If a folder is refused, nothing is sent: the error stays and the other files stay queued. A new `--device` request cancels a pending one, and files added meanwhile by a plain launch are not part of its send.
 
 ## Receiving
 
