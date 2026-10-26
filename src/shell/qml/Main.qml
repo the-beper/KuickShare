@@ -95,6 +95,17 @@ Kirigami.ApplicationWindow {
         show("transfers");
         Qt.callLater(() => (root.pageStack.currentItem as TransfersPage)?.showDetailsFor(id));
     }
+    // The `--device` option: the same send as a click on the device card of the Send page.
+    // `files` is what the request asked for; it replaces the queue so that nothing else joins the send.
+    function sendQueuedTo(deviceId, files) {
+        outgoingFiles = files;
+        show("send");
+        (root.pageStack.currentItem as SendPage)?.sendTo(deviceId);
+    }
+    function showError(text) {
+        show("send");
+        toasts.show(Kirigami.MessageType.Error, text, 10000);
+    }
     function showSettings() {
         show("settings");
     }

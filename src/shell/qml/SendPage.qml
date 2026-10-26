@@ -92,6 +92,9 @@ Kirigami.ScrollablePage {
     }
 
     function sendTo(deviceId) {
+        if (!hasContent) {
+            return;
+        }
         if (files.length > 0) {
             core.sendFiles(deviceId, files);
         } else {

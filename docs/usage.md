@@ -173,10 +173,12 @@ If the whole text is one link of the form `scheme://host.tld...`, it is sent as 
 Right-click files in Dolphin and choose **Send with KuickShare**. It is a top-level entry and opens the Send page with the files queued. It can be turned off in Preferences.
 
 ```sh
-kuickshare [--background] [--page send|transfers|settings|help] [files...]
+kuickshare [--background] [--page send|transfers|settings|help] [--device <name>] [files...]
 ```
 
 `kuickshare --help` lists the options. If KuickShare is already running, a second launch hands its files to the running window and shows it. `--page` accepts `send`, `transfers`, `settings` or `help`; the window on the Send page is the default. `--background` starts hidden in the tray, which is what the login entry uses.
+
+`--device <name>` sends the files to the nearby device with that name, without a click: the name is compared whole, ignoring case and surrounding spaces. Discovery runs for up to 30 seconds, and a match must stay the only one for about 3 seconds before the send. On a match the Transfers page opens (with `--background` the app stays in the tray). If no device or several devices have that name, or there are no files (none given and none queued on the Send page), nothing is sent, the files stay queued on the Send page and the window opens to show the error, also with `--background`. A new `--device` request cancels a pending one, and files added meanwhile by a plain launch are not part of its send.
 
 ## Receiving
 

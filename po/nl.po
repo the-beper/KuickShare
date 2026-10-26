@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-26 15:11+0000\n"
+"POT-Creation-Date: 2026-10-26 15:22+0000\n"
 "PO-Revision-Date: 2026-10-20 11:00+0200\n"
 "Last-Translator: Heimen Stoffels <vistausss@fastmail.com>\n"
 "Language-Team: \n"
@@ -51,63 +51,84 @@ msgstr "Het automatische opstartitem kan niet worden toegevoegd"
 msgid "Only files can be shared, folders are not supported"
 msgstr "Je kunt alleen bestanden delen, geen mappen"
 
-#: src/shell/main.cpp:48 src/shell/qml/AboutDialog.qml:158
+#: src/shell/main.cpp:50 src/shell/qml/AboutDialog.qml:158
 msgid "Quick Share client for KDE Plasma"
 msgstr "Deel snel bestanden vanaf KDE Plasma"
 
-#: src/shell/main.cpp:57
+#: src/shell/main.cpp:59
 msgid "Start hidden in the system tray"
 msgstr "Geminimaliseerd in systeemvak starten"
 
-#: src/shell/main.cpp:58
+#: src/shell/main.cpp:60
 msgid "Open the given page: send, transfers, settings or help"
 msgstr ""
 "Open het opgegeven tabblad: versturen, overdrachten, instellingen of hulp"
 
-#: src/shell/main.cpp:59
+#: src/shell/main.cpp:61
+msgid "Send the files to the nearby device with this name"
+msgstr "Verstuur de bestanden naar het apparaat in de buurt met deze naam"
+
+#: src/shell/main.cpp:62
 msgid "Quit a running instance and take its place"
 msgstr "Sluit een draaiende instantie af en neem de plaats ervan in"
 
-#: src/shell/main.cpp:66 src/shell/qml/SendPage.qml:147
+#: src/shell/main.cpp:70 src/shell/qml/SendPage.qml:150
 msgid "Files to send"
 msgstr "Te versturen bestanden"
 
-#: src/shell/main.cpp:267
+#: src/shell/main.cpp:282
+msgid "Several devices are named %1"
+msgstr "Meerdere apparaten heten %1"
+
+#: src/shell/main.cpp:289
+msgid "No device named %1 found"
+msgstr "Geen apparaat met de naam %1 gevonden"
+
+#: src/shell/main.cpp:306 src/shell/qml/SendPage.qml:517
+msgid "A transfer is in progress. You can send again when it ends"
+msgstr ""
+"Er is een overdracht gaande. Je kunt opnieuw versturen als die klaar is."
+
+#: src/shell/main.cpp:330
+msgid "No files to send"
+msgstr "Geen bestanden om te versturen"
+
+#: src/shell/main.cpp:400
 msgid "Open KuickShare"
 msgstr "KuickShare openen"
 
-#: src/shell/main.cpp:269
+#: src/shell/main.cpp:402
 msgid "Send files…"
 msgstr "Bestanden versturen…"
 
-#: src/shell/main.cpp:270
+#: src/shell/main.cpp:403
 msgid "Send clipboard"
 msgstr "Klembord versturen"
 
-#: src/shell/main.cpp:271 src/shell/qml/SettingsPage.qml:66
+#: src/shell/main.cpp:404 src/shell/qml/SettingsPage.qml:66
 msgid "Visible to nearby devices"
 msgstr "Zichtbaar voor apparaten in de buurt"
 
-#: src/shell/main.cpp:287
+#: src/shell/main.cpp:420
 msgid "Visible for %1 more minute (click to stop)"
 msgid_plural "Visible for %1 more minutes (click to stop)"
 msgstr[0] "Nog %1 minuut zichtbaar (klik om te stoppen)"
 msgstr[1] "Nog %1 minuten zichtbaar (klik om te stoppen)"
 
-#: src/shell/main.cpp:288
+#: src/shell/main.cpp:421
 msgid "Visible for 10 minutes"
 msgstr "Zichtbaar gedurende 10 minuten"
 
-#: src/shell/main.cpp:302 src/shell/qml/Main.qml:276
+#: src/shell/main.cpp:435 src/shell/qml/Main.qml:287
 #: src/shell/qml/SettingsPage.qml:16 src/shell/qml/ShortcutsDialog.qml:17
 msgid "Preferences"
 msgstr "Instellingen"
 
-#: src/shell/main.cpp:305 src/shell/qml/Main.qml:290
+#: src/shell/main.cpp:438 src/shell/qml/Main.qml:301
 msgid "Quit"
 msgstr "Afsluiten"
 
-#: src/shell/qml/AboutDialog.qml:75 src/shell/qml/Main.qml:304
+#: src/shell/qml/AboutDialog.qml:75 src/shell/qml/Main.qml:315
 msgid "About"
 msgstr "Over"
 
@@ -176,7 +197,7 @@ msgstr "KDE Frameworks %1"
 msgid "Kirigami, notifications, jobs and the other KDE libraries"
 msgstr "Kirigami, meldingen, taken en andere KDE-bibliotheken"
 
-#: src/shell/qml/HelpPage.qml:11 src/shell/qml/Main.qml:297
+#: src/shell/qml/HelpPage.qml:11 src/shell/qml/Main.qml:308
 #: src/shell/qml/ShortcutsDialog.qml:18 src/shell/qml/ShortcutsDialog.qml:19
 msgid "Help"
 msgstr "Hulp"
@@ -185,7 +206,7 @@ msgstr "Hulp"
 msgid "Getting started"
 msgstr "Instelhulp"
 
-#: src/shell/qml/HelpPage.qml:30 src/shell/qml/Main.qml:235
+#: src/shell/qml/HelpPage.qml:30 src/shell/qml/Main.qml:246
 #: src/shell/qml/SendPage.qml:39 src/shell/qml/ShortcutsDialog.qml:14
 msgid "Send"
 msgstr "Versturen"
@@ -369,48 +390,48 @@ msgstr ""
 msgid "KuickShare"
 msgstr "KuickShare"
 
-#: src/shell/qml/Main.qml:113
+#: src/shell/qml/Main.qml:124
 msgid "Quit KuickShare?"
 msgstr "Wil je KuickShare afsluiten?"
 
-#: src/shell/qml/Main.qml:114
+#: src/shell/qml/Main.qml:125
 msgid "A transfer is in progress. Quitting stops it"
 msgstr "Er is een overdracht gaande — door af te sluiten wordt deze afgebroken"
 
-#: src/shell/qml/Main.qml:158
+#: src/shell/qml/Main.qml:169
 msgid "Connected to %1"
 msgstr "Verbonden met %1"
 
-#: src/shell/qml/Main.qml:165
+#: src/shell/qml/Main.qml:176
 msgid "Transfer completed"
 msgstr "Overdracht voltooid"
 
-#: src/shell/qml/Main.qml:168
+#: src/shell/qml/Main.qml:179
 msgid "The transfer failed"
 msgstr "De overdracht is mislukt"
 
-#: src/shell/qml/Main.qml:171
+#: src/shell/qml/Main.qml:182
 msgid "The transfer was declined"
 msgstr "De overdracht is geweigerd"
 
-#: src/shell/qml/Main.qml:174
+#: src/shell/qml/Main.qml:185
 msgid "The transfer was cancelled"
 msgstr "De overdracht is geannuleerd"
 
-#: src/shell/qml/Main.qml:242 src/shell/qml/ShortcutsDialog.qml:15
+#: src/shell/qml/Main.qml:253 src/shell/qml/ShortcutsDialog.qml:15
 #: src/shell/qml/TransfersPage.qml:15
 msgid "Transfers"
 msgstr "Overdrachten"
 
-#: src/shell/qml/Main.qml:260
+#: src/shell/qml/Main.qml:271
 msgid "More"
 msgstr "Meer"
 
-#: src/shell/qml/Main.qml:283 src/shell/qml/ShortcutsDialog.qml:44
+#: src/shell/qml/Main.qml:294 src/shell/qml/ShortcutsDialog.qml:44
 msgid "Shortcuts"
 msgstr "Sneltoetsen"
 
-#: src/shell/qml/Main.qml:432
+#: src/shell/qml/Main.qml:443
 msgid ""
 "The sharing service is not running. Nothing can be sent or received until it "
 "is started"
@@ -418,15 +439,15 @@ msgstr ""
 "De deeldienst is niet actief. Er kan niets worden verstuurd of ontvangen "
 "totdat de dienst wordt gestart"
 
-#: src/shell/qml/Main.qml:435
+#: src/shell/qml/Main.qml:446
 msgid "Start service"
 msgstr "Dienst starten"
 
-#: src/shell/qml/Main.qml:454
+#: src/shell/qml/Main.qml:465
 msgid "A new version of KuickShare is installed"
 msgstr "Er is een nieuwe versie van KuickShare geïnstalleerd"
 
-#: src/shell/qml/Main.qml:457
+#: src/shell/qml/Main.qml:468
 msgid "Restart"
 msgstr "Herstarten"
 
@@ -487,139 +508,134 @@ msgstr ""
 msgid "Pairing did not complete"
 msgstr "Het koppelverzoek is niet ingewilligd"
 
-#: src/shell/qml/SendPage.qml:139 src/shell/qml/SettingsPage.qml:184
+#: src/shell/qml/SendPage.qml:142 src/shell/qml/SettingsPage.qml:184
 #: src/shell/qml/SettingsPage.qml:234
 msgid "Remove"
 msgstr "Verwijderen"
 
-#: src/shell/qml/SendPage.qml:187 src/shell/qml/ShortcutsDialog.qml:21
+#: src/shell/qml/SendPage.qml:190 src/shell/qml/ShortcutsDialog.qml:21
 msgid "Choose files to send"
 msgstr "Kies te versturen bestanden"
 
-#: src/shell/qml/SendPage.qml:221
+#: src/shell/qml/SendPage.qml:224
 msgid "Starting…"
 msgstr "Bezig met starten…"
 
-#: src/shell/qml/SendPage.qml:221
+#: src/shell/qml/SendPage.qml:224
 msgid "Hidden"
 msgstr "Verborgen"
 
-#: src/shell/qml/SendPage.qml:221
+#: src/shell/qml/SendPage.qml:224
 msgid "Do Not Disturb"
 msgstr "Niet storen"
 
-#: src/shell/qml/SendPage.qml:221
+#: src/shell/qml/SendPage.qml:224
 msgid "Ready"
 msgstr "Gereed"
 
-#: src/shell/qml/SendPage.qml:226
+#: src/shell/qml/SendPage.qml:229
 msgid "Turn on visibility in Preferences to receive files"
 msgstr "Schakel zichtbaarheid in in de instellingen om bestanden te ontvangen"
 
-#: src/shell/qml/SendPage.qml:226
+#: src/shell/qml/SendPage.qml:229
 msgid "Hidden until Do Not Disturb ends"
 msgstr "Verborgen totdat niet storen wordt uitgeschakeld"
 
-#: src/shell/qml/SendPage.qml:226
+#: src/shell/qml/SendPage.qml:229
 msgid "Visible as \"%1\""
 msgstr "Zichtbaar als ‘%1’"
 
-#: src/shell/qml/SendPage.qml:260
+#: src/shell/qml/SendPage.qml:263
 msgid "Drop to share"
 msgstr "Sleep hierheen om te delen"
 
-#: src/shell/qml/SendPage.qml:260
+#: src/shell/qml/SendPage.qml:263
 msgid "Drop files here"
 msgstr "Sleep bestanden hierheen"
 
-#: src/shell/qml/SendPage.qml:265
+#: src/shell/qml/SendPage.qml:268
 msgid "or click to choose them"
 msgstr "of klik om bestanden te kiezen"
 
-#: src/shell/qml/SendPage.qml:272
+#: src/shell/qml/SendPage.qml:275
 msgid "Paste from clipboard"
 msgstr "Plakken vanaf klembord"
 
-#: src/shell/qml/SendPage.qml:287 src/shell/qml/TransfersPage.qml:405
+#: src/shell/qml/SendPage.qml:290 src/shell/qml/TransfersPage.qml:405
 #: src/shell/transferwatcher.cpp:51 src/shell/transferwatcher.cpp:140
 msgid "%1 file"
 msgid_plural "%1 files"
 msgstr[0] "%1 bestand"
 msgstr[1] "%1 bestanden"
 
-#: src/shell/qml/SendPage.qml:296
+#: src/shell/qml/SendPage.qml:299
 msgid "Add"
 msgstr "Toevoegen"
 
-#: src/shell/qml/SendPage.qml:301 src/shell/qml/SendPage.qml:357
+#: src/shell/qml/SendPage.qml:304 src/shell/qml/SendPage.qml:360
 msgid "Clear"
 msgstr "Wissen"
 
-#: src/shell/qml/SendPage.qml:320
+#: src/shell/qml/SendPage.qml:323
 msgid "Show all %1 file"
 msgid_plural "Show all %1 files"
 msgstr[0] "Alle %1 bestanden tonen"
 msgstr[1] "Alle %1 bestanden tonen"
 
-#: src/shell/qml/SendPage.qml:344
+#: src/shell/qml/SendPage.qml:347
 msgid "Text or link"
 msgstr "Tekst of link"
 
-#: src/shell/qml/SendPage.qml:363
+#: src/shell/qml/SendPage.qml:366
 msgid "Paste"
 msgstr "Plakken"
 
-#: src/shell/qml/SendPage.qml:391
+#: src/shell/qml/SendPage.qml:394
 msgid "Type or paste something to send…"
 msgstr "Typ of plak een te versturen tekst…"
 
-#: src/shell/qml/SendPage.qml:426
+#: src/shell/qml/SendPage.qml:429
 msgid "A string can only be sent as a link when it is the only content"
 msgstr ""
 "Tekst kan alleen als link worden verstuurd als er geen andere inhoud is"
 
-#: src/shell/qml/SendPage.qml:426
+#: src/shell/qml/SendPage.qml:429
 msgid "No valid link"
 msgstr "De link is ongeldig"
 
-#: src/shell/qml/SendPage.qml:432
+#: src/shell/qml/SendPage.qml:435
 msgid "Send as text"
 msgstr "Versturen als tekst"
 
-#: src/shell/qml/SendPage.qml:465
+#: src/shell/qml/SendPage.qml:468
 msgid "Send to"
 msgstr "Versturen naar"
 
-#: src/shell/qml/SendPage.qml:474
+#: src/shell/qml/SendPage.qml:477
 msgid "Search again"
 msgstr "Opnieuw zoeken"
 
-#: src/shell/qml/SendPage.qml:477
+#: src/shell/qml/SendPage.qml:480
 msgid "Search for nearby phones over Bluetooth again"
 msgstr "Zoek opnieuw naar telefoons in de buurt via Bluetooth"
 
-#: src/shell/qml/SendPage.qml:498
+#: src/shell/qml/SendPage.qml:501
 msgid "Looking for nearby devices…"
 msgstr "Bezig met zoeken naar apparaten…"
 
-#: src/shell/qml/SendPage.qml:514
-msgid "A transfer is in progress. You can send again when it ends"
-msgstr ""
-"Er is een overdracht gaande. Je kunt opnieuw versturen als die klaar is."
-
-#: src/shell/qml/SendPage.qml:520
+#: src/shell/qml/SendPage.qml:523
 msgid "Choose or drop something to send, then pick a device"
 msgstr "Kies bestanden of sleep ze hierheen, en kies daarna een apparaat."
 
-#: src/shell/qml/SendPage.qml:568
+#: src/shell/qml/SendPage.qml:571
 msgid "Bluetooth device"
 msgstr "Bluetooth-apparaat"
 
-#: src/shell/qml/SendPage.qml:581
+#: src/shell/qml/SendPage.qml:584
 msgid "Bluetooth"
 msgstr "Bluetooth"
 
-#: src/shell/qml/SendPage.qml:594
+#: src/shell/qml/SendPage.qml:597
 msgid "Paired"
 msgstr "Gekoppeld"
 

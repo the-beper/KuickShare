@@ -25,6 +25,8 @@
 #include <KStatusNotifierItem>
 
 #include "corebridge.h"
+#include "devicematch.h"
+#include "devicemodel.h"
 #include "instance.h"
 #include "integration.h"
 #include "dndwatcher.h"
@@ -56,6 +58,7 @@ int main(int argc, char *argv[])
 
     const QCommandLineOption background(QStringLiteral("background"), i18n("Start hidden in the system tray"));
     const QCommandLineOption page(QStringList{QStringLiteral("page")}, i18n("Open the given page: send, transfers, settings or help"), QStringLiteral("page"));
+    const QCommandLineOption device(QStringLiteral("device"), i18n("Send the files to the nearby device with this name"), QStringLiteral("name"));
     const QCommandLineOption replace(QStringLiteral("replace"), i18n("Quit a running instance and take its place"));
     auto setupParser = [&](QCommandLineParser &p)
     {
@@ -63,6 +66,7 @@ int main(int argc, char *argv[])
         p.addOption(background);
         p.addOption(replace);
         p.addOption(page);
+        p.addOption(device);
         p.addPositionalArgument(QStringLiteral("files"), i18n("Files to send"), QStringLiteral("[files...]"));
     };
     QCommandLineParser parser;
@@ -198,7 +202,7 @@ int main(int argc, char *argv[])
             showWindow();
         }
     };
-    auto queueFiles = [&](const QStringList &paths, const QString &workingDirectory)
+    auto queueFiles = [&](const QStringList &paths, const QString &workingDirectory) -> QStringList
     {
         QStringList files;
         for (const QString &path : paths)
@@ -216,18 +220,147 @@ int main(int argc, char *argv[])
                 QMetaObject::invokeMethod(window, "queueFiles", Q_ARG(QVariant, QVariant(files)));
             }
         }
+        return files;
     };
-    QObject::connect(&service, &KDBusService::activateRequested, &app, [=](const QStringList &arguments, const QString &workingDirectory)
+
+    // `--device <name>`: wait for discovery to show exactly one device with that name, then send the queued files to it.
+    // On any failure nothing is sent and the files stay queued on the Send page.
+    // The request owns its files: the window (and its queue) may be closed while it waits.
+    QString pendingDevice;
+    QStringList pendingFiles;
+    qint64 deviceDeadline = 0;
+    // A match must stay the only one for a few seconds before the send: a twin may still show up.
+    QString settleId;
+    qint64 settleSince = 0;
+    QTimer devicePoll;
+    devicePoll.setInterval(500);
+    auto endDeviceSend = [&](bool stopDiscovery)
+    {
+        devicePoll.stop();
+        pendingDevice.clear();
+        pendingFiles.clear();
+        settleId.clear();
+        if (stopDiscovery)
+        {
+            core.stopDiscovery();
+        }
+    };
+    auto failDeviceSend = [&](const QString &reason)
+    {
+        // A visible Send page keeps discovery on by itself.
+        const auto *window = engine ? qobject_cast<QQuickWindow *>(engine->rootObjects().constFirst()) : nullptr;
+        const QStringList files = pendingFiles;
+        endDeviceSend(!window || !window->isVisible());
+        showWindow(); // also with --background: the error must be seen
+        if (engine)
+        {
+            // Keep the files queued even if the window was closed meanwhile.
+            QMetaObject::invokeMethod(ensureWindow(), "queueFiles", Q_ARG(QVariant, QVariant(files)));
+            QMetaObject::invokeMethod(ensureWindow(), "showError", Q_ARG(QVariant, reason));
+        }
+    };
+    auto checkDevice = [&]
+    {
+        if (pendingDevice.isEmpty())
+        {
+            return;
+        }
+        if (core.connected())
+        {
+            core.startDiscovery(); // idempotent; retries when the core was not up yet
+        }
+        QList<DeviceRef> refs;
+        const DeviceModel *devices = core.devices();
+        for (int row = 0; row < devices->rowCount(); ++row)
+        {
+            const QModelIndex index = devices->index(row);
+            refs.append({devices->data(index, DeviceModel::IdRole).toString(), devices->data(index, DeviceModel::NameRole).toString()});
+        }
+        const DeviceMatch match = matchDevice(refs, pendingDevice);
+        if (match.kind == DeviceMatch::Kind::Ambiguous)
+        {
+            failDeviceSend(i18n("Several devices are named %1", pendingDevice));
+        }
+        else if (match.kind == DeviceMatch::Kind::None)
+        {
+            settleId.clear();
+            if (QDateTime::currentMSecsSinceEpoch() >= deviceDeadline)
+            {
+                failDeviceSend(i18n("No device named %1 found", pendingDevice));
+            }
+        }
+        else
+        {
+            const qint64 now = QDateTime::currentMSecsSinceEpoch();
+            if (match.id != settleId)
+            {
+                settleId = match.id;
+                settleSince = now;
+            }
+            if (now - settleSince < 3000 && now < deviceDeadline)
+            {
+                return;
+            }
+            if (core.transferBusy())
+            {
+                failDeviceSend(i18n("A transfer is in progress. You can send again when it ends"));
+                return;
+            }
+            const QStringList files = pendingFiles;
+            endDeviceSend(false); // the Send page's own handler follows the transfer
+            if (auto *window = ensureWindow())
+            {
+                QMetaObject::invokeMethod(window, "sendQueuedTo", Q_ARG(QVariant, match.id), Q_ARG(QVariant, QVariant(files)));
+            }
+        }
+    };
+    QObject::connect(&devicePoll, &QTimer::timeout, &app, checkDevice);
+    // A new request replaces a pending one.
+    auto startDeviceSend = [&](const QString &name, const QStringList &queued)
+    {
+        endDeviceSend(false);
+        QStringList files = queued;
+        if (files.isEmpty() && engine)
+        {
+            // Nothing new: use what is already queued on the Send page.
+            files = ensureWindow()->property("outgoingFiles").toStringList();
+        }
+        if (files.isEmpty())
+        {
+            failDeviceSend(i18n("No files to send"));
+            return;
+        }
+        pendingFiles = files;
+        pendingDevice = name;
+        deviceDeadline = QDateTime::currentMSecsSinceEpoch() + 30000;
+        core.startDiscovery();
+        devicePoll.start();
+        checkDevice();
+    };
+    QObject::connect(&service, &KDBusService::activateRequested, &app, [&](const QStringList &arguments, const QString &workingDirectory)
                      {
         QCommandLineParser other;
         setupParser(other);
         other.parse(arguments);
-        queueFiles(other.positionalArguments(), workingDirectory);
+        const QStringList queued = queueFiles(other.positionalArguments(), workingDirectory);
+        if (other.isSet(device))
+        {
+            if (!other.isSet(background))
+            {
+                showWindow();
+            }
+            startDeviceSend(other.value(device), queued);
+            return;
+        }
         showWindow(); });
-    queueFiles(parser.positionalArguments(), QDir::currentPath());
+    const QStringList queued = queueFiles(parser.positionalArguments(), QDir::currentPath());
     if (!parser.isSet(background))
     {
         showWindow();
+    }
+    if (parser.isSet(device))
+    {
+        startDeviceSend(parser.value(device), queued);
     }
 
     KStatusNotifierItem tray;

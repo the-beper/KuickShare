@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-26 15:11+0000\n"
+"POT-Creation-Date: 2026-10-26 15:22+0000\n"
 "PO-Revision-Date: 2026-10-25 22:10+0300\n"
 "Last-Translator: dosulu <eray.ulu@tutamail.com>\n"
 "Language-Team: Turkish\n"
@@ -48,61 +48,81 @@ msgstr "Otomatik başlatma girdisi güncellenemedi"
 msgid "Only files can be shared, folders are not supported"
 msgstr "Sadece dosyalar paylaşılabilir, klasörler desteklenmiyor"
 
-#: src/shell/main.cpp:48 src/shell/qml/AboutDialog.qml:158
+#: src/shell/main.cpp:50 src/shell/qml/AboutDialog.qml:158
 msgid "Quick Share client for KDE Plasma"
 msgstr "KDE Plasma için bir Quick Share istemcisi"
 
-#: src/shell/main.cpp:57
+#: src/shell/main.cpp:59
 msgid "Start hidden in the system tray"
 msgstr "Sistem tepsisinde gizli başlat"
 
-#: src/shell/main.cpp:58
+#: src/shell/main.cpp:60
 msgid "Open the given page: send, transfers, settings or help"
 msgstr "Belirtilen sayfayı aç: gönder, aktarımlar, ayarlar veya yardım"
 
-#: src/shell/main.cpp:59
+#: src/shell/main.cpp:61
+msgid "Send the files to the nearby device with this name"
+msgstr "Dosyaları bu ada sahip yakındaki cihaza gönder"
+
+#: src/shell/main.cpp:62
 msgid "Quit a running instance and take its place"
 msgstr "Çalışan bir örneği kapat ve onun yerini al"
 
-#: src/shell/main.cpp:66 src/shell/qml/SendPage.qml:147
+#: src/shell/main.cpp:70 src/shell/qml/SendPage.qml:150
 msgid "Files to send"
 msgstr "Gönderilecek dosyalar"
 
-#: src/shell/main.cpp:267
+#: src/shell/main.cpp:282
+msgid "Several devices are named %1"
+msgstr "Birden fazla cihazın adı %1"
+
+#: src/shell/main.cpp:289
+msgid "No device named %1 found"
+msgstr "%1 adlı cihaz bulunamadı"
+
+#: src/shell/main.cpp:306 src/shell/qml/SendPage.qml:517
+msgid "A transfer is in progress. You can send again when it ends"
+msgstr "Bir paylaşım sürüyor. Bittiğinde yeniden gönderebilirsiniz."
+
+#: src/shell/main.cpp:330
+msgid "No files to send"
+msgstr "Gönderilecek dosya yok"
+
+#: src/shell/main.cpp:400
 msgid "Open KuickShare"
 msgstr "KuickShare’i aç"
 
-#: src/shell/main.cpp:269
+#: src/shell/main.cpp:402
 msgid "Send files…"
 msgstr "Dosya gönder…"
 
-#: src/shell/main.cpp:270
+#: src/shell/main.cpp:403
 msgid "Send clipboard"
 msgstr "Panoyu gönder"
 
-#: src/shell/main.cpp:271 src/shell/qml/SettingsPage.qml:66
+#: src/shell/main.cpp:404 src/shell/qml/SettingsPage.qml:66
 msgid "Visible to nearby devices"
 msgstr "Yakındaki cihazlara görünür"
 
-#: src/shell/main.cpp:287
+#: src/shell/main.cpp:420
 msgid "Visible for %1 more minute (click to stop)"
 msgid_plural "Visible for %1 more minutes (click to stop)"
 msgstr[0] "%1 dakika daha görünür (durdurmak için tıklayın)"
 
-#: src/shell/main.cpp:288
+#: src/shell/main.cpp:421
 msgid "Visible for 10 minutes"
 msgstr "10 dakika görünür"
 
-#: src/shell/main.cpp:302 src/shell/qml/Main.qml:276
+#: src/shell/main.cpp:435 src/shell/qml/Main.qml:287
 #: src/shell/qml/SettingsPage.qml:16 src/shell/qml/ShortcutsDialog.qml:17
 msgid "Preferences"
 msgstr "Tercihler"
 
-#: src/shell/main.cpp:305 src/shell/qml/Main.qml:290
+#: src/shell/main.cpp:438 src/shell/qml/Main.qml:301
 msgid "Quit"
 msgstr "Çık"
 
-#: src/shell/qml/AboutDialog.qml:75 src/shell/qml/Main.qml:304
+#: src/shell/qml/AboutDialog.qml:75 src/shell/qml/Main.qml:315
 msgid "About"
 msgstr "Hakkında"
 
@@ -173,7 +193,7 @@ msgstr "KDE Frameworks %1"
 msgid "Kirigami, notifications, jobs and the other KDE libraries"
 msgstr "Kirigami, bildirimler, işler ve diğer KDE kütüphaneleri"
 
-#: src/shell/qml/HelpPage.qml:11 src/shell/qml/Main.qml:297
+#: src/shell/qml/HelpPage.qml:11 src/shell/qml/Main.qml:308
 #: src/shell/qml/ShortcutsDialog.qml:18 src/shell/qml/ShortcutsDialog.qml:19
 msgid "Help"
 msgstr "Yardım"
@@ -182,7 +202,7 @@ msgstr "Yardım"
 msgid "Getting started"
 msgstr "Başlarken"
 
-#: src/shell/qml/HelpPage.qml:30 src/shell/qml/Main.qml:235
+#: src/shell/qml/HelpPage.qml:30 src/shell/qml/Main.qml:246
 #: src/shell/qml/SendPage.qml:39 src/shell/qml/ShortcutsDialog.qml:14
 msgid "Send"
 msgstr "Gönder"
@@ -359,48 +379,48 @@ msgstr "Uygulama menüsünde ve Dolphin'in bağlam menüsünde görünecek"
 msgid "KuickShare"
 msgstr "KuickShare"
 
-#: src/shell/qml/Main.qml:113
+#: src/shell/qml/Main.qml:124
 msgid "Quit KuickShare?"
 msgstr "KuickShare'dan çıkılsın mı?"
 
-#: src/shell/qml/Main.qml:114
+#: src/shell/qml/Main.qml:125
 msgid "A transfer is in progress. Quitting stops it"
 msgstr "Bir paylaşım sürüyor. Çıkmak paylaşımı durduracak"
 
-#: src/shell/qml/Main.qml:158
+#: src/shell/qml/Main.qml:169
 msgid "Connected to %1"
 msgstr "%1 ağına bağlanıldı"
 
-#: src/shell/qml/Main.qml:165
+#: src/shell/qml/Main.qml:176
 msgid "Transfer completed"
 msgstr "Paylaşım tamamlandı"
 
-#: src/shell/qml/Main.qml:168
+#: src/shell/qml/Main.qml:179
 msgid "The transfer failed"
 msgstr "Paylaşım başarısız oldu"
 
-#: src/shell/qml/Main.qml:171
+#: src/shell/qml/Main.qml:182
 msgid "The transfer was declined"
 msgstr "Paylaşım reddedildi"
 
-#: src/shell/qml/Main.qml:174
+#: src/shell/qml/Main.qml:185
 msgid "The transfer was cancelled"
 msgstr "Paylaşım iptal edildi"
 
-#: src/shell/qml/Main.qml:242 src/shell/qml/ShortcutsDialog.qml:15
+#: src/shell/qml/Main.qml:253 src/shell/qml/ShortcutsDialog.qml:15
 #: src/shell/qml/TransfersPage.qml:15
 msgid "Transfers"
 msgstr "Paylaşımlar"
 
-#: src/shell/qml/Main.qml:260
+#: src/shell/qml/Main.qml:271
 msgid "More"
 msgstr "Daha fazla"
 
-#: src/shell/qml/Main.qml:283 src/shell/qml/ShortcutsDialog.qml:44
+#: src/shell/qml/Main.qml:294 src/shell/qml/ShortcutsDialog.qml:44
 msgid "Shortcuts"
 msgstr "Kısayollar"
 
-#: src/shell/qml/Main.qml:432
+#: src/shell/qml/Main.qml:443
 msgid ""
 "The sharing service is not running. Nothing can be sent or received until it "
 "is started"
@@ -408,15 +428,15 @@ msgstr ""
 "Paylaşım servisi şuan çalışmıyor. Başlatılana kadar hiçbirşey alınamaz ya da "
 "gönderilemez"
 
-#: src/shell/qml/Main.qml:435
+#: src/shell/qml/Main.qml:446
 msgid "Start service"
 msgstr "Servisi başlat"
 
-#: src/shell/qml/Main.qml:454
+#: src/shell/qml/Main.qml:465
 msgid "A new version of KuickShare is installed"
 msgstr "KuickShare’in yeni bir sürümü kuruldu"
 
-#: src/shell/qml/Main.qml:457
+#: src/shell/qml/Main.qml:468
 msgid "Restart"
 msgstr "Yeniden başlat"
 
@@ -474,137 +494,133 @@ msgstr "Bu bilgisayarlar arasındaki paylaşımlar onaysız kabul ediliyor."
 msgid "Pairing did not complete"
 msgstr "Eşleştirme tamamlanmadı"
 
-#: src/shell/qml/SendPage.qml:139 src/shell/qml/SettingsPage.qml:184
+#: src/shell/qml/SendPage.qml:142 src/shell/qml/SettingsPage.qml:184
 #: src/shell/qml/SettingsPage.qml:234
 msgid "Remove"
 msgstr "Kaldır"
 
-#: src/shell/qml/SendPage.qml:187 src/shell/qml/ShortcutsDialog.qml:21
+#: src/shell/qml/SendPage.qml:190 src/shell/qml/ShortcutsDialog.qml:21
 msgid "Choose files to send"
 msgstr "Göndermek için dosya seç"
 
-#: src/shell/qml/SendPage.qml:221
+#: src/shell/qml/SendPage.qml:224
 msgid "Starting…"
 msgstr "Başlıyor…"
 
-#: src/shell/qml/SendPage.qml:221
+#: src/shell/qml/SendPage.qml:224
 msgid "Hidden"
 msgstr "Gizli"
 
-#: src/shell/qml/SendPage.qml:221
+#: src/shell/qml/SendPage.qml:224
 msgid "Do Not Disturb"
 msgstr "Rahatsız etme"
 
-#: src/shell/qml/SendPage.qml:221
+#: src/shell/qml/SendPage.qml:224
 msgid "Ready"
 msgstr "Hazır"
 
-#: src/shell/qml/SendPage.qml:226
+#: src/shell/qml/SendPage.qml:229
 msgid "Turn on visibility in Preferences to receive files"
 msgstr "Dosya alabilmek için tercihlerden görünürlüğü açın"
 
-#: src/shell/qml/SendPage.qml:226
+#: src/shell/qml/SendPage.qml:229
 msgid "Hidden until Do Not Disturb ends"
 msgstr "Rahatsız etme bitene kadar gizli"
 
-#: src/shell/qml/SendPage.qml:226
+#: src/shell/qml/SendPage.qml:229
 msgid "Visible as \"%1\""
 msgstr "\"%1\" olarak görünür"
 
-#: src/shell/qml/SendPage.qml:260
+#: src/shell/qml/SendPage.qml:263
 msgid "Drop to share"
 msgstr "Paylaşmak için bırak"
 
-#: src/shell/qml/SendPage.qml:260
+#: src/shell/qml/SendPage.qml:263
 msgid "Drop files here"
 msgstr "Paylaşmak için dosyaları sürükle"
 
-#: src/shell/qml/SendPage.qml:265
+#: src/shell/qml/SendPage.qml:268
 msgid "or click to choose them"
 msgstr "ya da seçmek için tıkla"
 
-#: src/shell/qml/SendPage.qml:272
+#: src/shell/qml/SendPage.qml:275
 msgid "Paste from clipboard"
 msgstr "Panodan yapıştır"
 
-#: src/shell/qml/SendPage.qml:287 src/shell/qml/TransfersPage.qml:405
+#: src/shell/qml/SendPage.qml:290 src/shell/qml/TransfersPage.qml:405
 #: src/shell/transferwatcher.cpp:51 src/shell/transferwatcher.cpp:140
 msgid "%1 file"
 msgid_plural "%1 files"
 msgstr[0] "%1 dosya"
 
-#: src/shell/qml/SendPage.qml:296
+#: src/shell/qml/SendPage.qml:299
 msgid "Add"
 msgstr "Ekle"
 
-#: src/shell/qml/SendPage.qml:301 src/shell/qml/SendPage.qml:357
+#: src/shell/qml/SendPage.qml:304 src/shell/qml/SendPage.qml:360
 msgid "Clear"
 msgstr "Temizle"
 
-#: src/shell/qml/SendPage.qml:320
+#: src/shell/qml/SendPage.qml:323
 msgid "Show all %1 file"
 msgid_plural "Show all %1 files"
 msgstr[0] "Bütün %1 dosyayı göster"
 
-#: src/shell/qml/SendPage.qml:344
+#: src/shell/qml/SendPage.qml:347
 msgid "Text or link"
 msgstr "Metin yada link"
 
-#: src/shell/qml/SendPage.qml:363
+#: src/shell/qml/SendPage.qml:366
 msgid "Paste"
 msgstr "Yapıştır"
 
-#: src/shell/qml/SendPage.qml:391
+#: src/shell/qml/SendPage.qml:394
 msgid "Type or paste something to send…"
 msgstr "Göndermek için birşeyler yaz…"
 
-#: src/shell/qml/SendPage.qml:426
+#: src/shell/qml/SendPage.qml:429
 msgid "A string can only be sent as a link when it is the only content"
 msgstr "Bir metin yalnızca tek içerik olduğunda bağlantı olarak gönderilebilir"
 
-#: src/shell/qml/SendPage.qml:426
+#: src/shell/qml/SendPage.qml:429
 msgid "No valid link"
 msgstr "Geçerli link yok"
 
-#: src/shell/qml/SendPage.qml:432
+#: src/shell/qml/SendPage.qml:435
 msgid "Send as text"
 msgstr "Metin olarak gönder"
 
-#: src/shell/qml/SendPage.qml:465
+#: src/shell/qml/SendPage.qml:468
 msgid "Send to"
 msgstr "Alıcı"
 
-#: src/shell/qml/SendPage.qml:474
+#: src/shell/qml/SendPage.qml:477
 msgid "Search again"
 msgstr "Yeniden ara"
 
-#: src/shell/qml/SendPage.qml:477
+#: src/shell/qml/SendPage.qml:480
 msgid "Search for nearby phones over Bluetooth again"
 msgstr "Yakındaki cihazları yeniden Bluetooth ile ara"
 
-#: src/shell/qml/SendPage.qml:498
+#: src/shell/qml/SendPage.qml:501
 msgid "Looking for nearby devices…"
 msgstr "Yakındaki cihazlar aranıyor…"
 
-#: src/shell/qml/SendPage.qml:514
-msgid "A transfer is in progress. You can send again when it ends"
-msgstr "Bir paylaşım sürüyor. Bittiğinde yeniden gönderebilirsiniz."
-
-#: src/shell/qml/SendPage.qml:520
+#: src/shell/qml/SendPage.qml:523
 msgid "Choose or drop something to send, then pick a device"
 msgstr ""
 "Göndermek için bir dosyayı seç yada sürükle, ardından göndereceğin cihazı "
 "seç."
 
-#: src/shell/qml/SendPage.qml:568
+#: src/shell/qml/SendPage.qml:571
 msgid "Bluetooth device"
 msgstr "Bluetooth cihazı"
 
-#: src/shell/qml/SendPage.qml:581
+#: src/shell/qml/SendPage.qml:584
 msgid "Bluetooth"
 msgstr "Bluetooth"
 
-#: src/shell/qml/SendPage.qml:594
+#: src/shell/qml/SendPage.qml:597
 msgid "Paired"
 msgstr "Eşleştirilmiş"
 
