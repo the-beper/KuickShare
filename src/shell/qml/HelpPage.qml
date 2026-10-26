@@ -28,7 +28,7 @@ FormCard.FormCardPage {
         Entry {
             icon.name: "document-send"
             text: KI18n.i18n("Send")
-            description: KI18n.i18n("Choose or drop files, or type some text, on the Send page, then pick a device On the phone, open Quick Share.")
+            description: KI18n.i18n("Choose or drop files, or type some text, on the Send page, then pick a device. On the phone, open Quick Share.")
         }
         Entry {
             icon.name: "visibility"

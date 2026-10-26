@@ -130,11 +130,18 @@ fn short_code(handshake_hash: &[u8]) -> String {
 }
 
 fn load_or_create_identity(path: Option<&Path>) -> Result<Identity> {
-    if let Some(path) = path
-        && let Ok(text) = fs::read_to_string(path)
-    {
-        return serde_json::from_str(&text)
-            .with_context(|| format!("invalid identity file {}", path.display()));
+    if let Some(path) = path {
+        // Only a missing file means "first run": any other error must not replace the key.
+        match fs::read_to_string(path) {
+            Ok(text) => {
+                return serde_json::from_str(&text)
+                    .with_context(|| format!("invalid identity file {}", path.display()));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(e).with_context(|| format!("cannot read {}", path.display()));
+            }
+        }
     }
     let keypair = Builder::new(params()?).generate_keypair()?;
     let identity = Identity {
@@ -510,6 +517,8 @@ impl Trust {
             *slot = Some(reply);
         }
         let result = self.confirm_codes(session, answer).await;
+        // Only the flow that owns the slot clears it (`finish` is also called without owning it).
+        self.pending.lock().unwrap().take();
         match &result {
             Ok(peer) => self.finish(true, &peer.name, ""),
             Err(e) => self.finish(false, &session.remote_name, &format!("{e:#}")),
@@ -542,7 +551,6 @@ impl Trust {
     }
 
     fn finish(&self, ok: bool, peer: &str, message: &str) {
-        self.pending.lock().unwrap().take();
         let _ = self.events.send(TrustEvent::PairingFinished {
             ok,
             peer: peer.to_owned(),
@@ -621,6 +629,30 @@ mod tests {
             None,
             "an intent is used once"
         );
+    }
+
+    #[tokio::test]
+    async fn refused_pair_with_keeps_the_waiting_incoming_pairing() {
+        let (a, b) = (node("alice").await, node("bob").await);
+        // b does not accept pairing, so a's `pair` is refused before owning the slot.
+        let (reply, _answer) = oneshot::channel();
+        *a.trust.pending.lock().unwrap() = Some(reply);
+        assert!(a.trust.pair(b.addr).await.is_err());
+        assert!(a.trust.pending.lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn identity_read_error_does_not_regenerate_the_key() {
+        let dir = std::env::temp_dir().join(format!("kuick-a4-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        // A directory at the identity path: reading fails with an error other than NotFound.
+        let path = dir.join("identity.json");
+        fs::create_dir_all(&path).unwrap();
+        assert!(load_or_create_identity(Some(&path)).is_err());
+        assert!(path.is_dir());
+        let missing = dir.join("new/identity.json");
+        assert!(load_or_create_identity(Some(&missing)).is_ok());
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]

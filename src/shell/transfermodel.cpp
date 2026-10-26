@@ -90,6 +90,16 @@ bool TransferModel::hasActive() const
     return false;
 }
 
+bool TransferModel::hasLive() const
+{
+    for (const Entry &entry : m_entries) {
+        if (!isFinal(entry.info.value(QStringLiteral("state")).toString())) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void TransferModel::updateBusy()
 {
     bool busy = false;
@@ -180,12 +190,29 @@ quint64 TransferModel::beginPending(const QString &id, QVariantMap row)
     return ++m_pendingNumber[id];
 }
 
-void TransferModel::failPending(const QString &id, quint64 number)
+bool TransferModel::failPending(const QString &id, quint64 number)
 {
     if (m_pendingNumber.value(id) == number && info(id).value(QStringLiteral("state")).toString() == QLatin1String("Starting"))
     {
         update(id, {{QStringLiteral("state"), QStringLiteral("Disconnected")}});
+        return true;
     }
+    return false;
+}
+
+QStringList TransferModel::disconnectLive()
+{
+    // Only the newest row of an id can be live, so `update` reaches it.
+    QStringList ids;
+    for (const Entry &entry : std::as_const(m_entries)) {
+        if (!isFinal(entry.info.value(QStringLiteral("state")).toString())) {
+            ids << entry.id;
+        }
+    }
+    for (const QString &id : std::as_const(ids)) {
+        update(id, {{QStringLiteral("state"), QStringLiteral("Disconnected")}});
+    }
+    return ids;
 }
 
 bool TransferModel::cancelPending(const QString &id)
@@ -206,16 +233,25 @@ void TransferModel::addHistory(const QVariantMap &info)
     endInsertRows();
 }
 
-void TransferModel::remove(const QString &id)
+void TransferModel::remove(int row)
+{
+    if (row < 0 || row >= m_entries.size())
+    {
+        return;
+    }
+    beginRemoveRows({}, row, row);
+    m_entries.removeAt(row);
+    endRemoveRows();
+    updateBusy();
+}
+
+void TransferModel::removeHistory(qulonglong uid)
 {
     for (int row = 0; row < m_entries.size(); ++row)
     {
-        if (m_entries[row].id == id)
+        if (m_entries[row].info.value(QStringLiteral("history_uid")).toULongLong() == uid)
         {
-            beginRemoveRows({}, row, row);
-            m_entries.removeAt(row);
-            endRemoveRows();
-            updateBusy();
+            remove(row);
             return;
         }
     }

@@ -108,7 +108,7 @@ int main(int argc, char *argv[])
         {
             return true;
         }
-        if (updatePending && !engine && !core.transferActive())
+        if (updatePending && !engine && !core.transferLive())
         {
             return startReplacing(background);
         }

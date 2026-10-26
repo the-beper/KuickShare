@@ -317,7 +317,7 @@ Kirigami.ScrollablePage {
                     visible: page.files.length > page.maxListed
                     flat: true
                     icon.name: "view-list-details"
-                    text: KI18n.i18n("Show all %1 files", page.files.length)
+                    text: KI18n.i18np("Show all %1 file", "Show all %1 files", page.files.length)
                     Layout.alignment: Qt.AlignHCenter
                     onClicked: allFilesDialog.open()
                 }

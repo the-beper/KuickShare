@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-25 10:14+0000\n"
+"POT-Creation-Date: 2026-10-25 11:44+0000\n"
 "PO-Revision-Date: 2026-10-18 00:00+0000\n"
 "Last-Translator: the-beper <193650145+the-beper@users.noreply.github.com>\n"
 "Language-Team: Italian\n"
@@ -16,19 +16,23 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: src/shell/corebridge.cpp:524
+#: src/shell/corebridge.cpp:555
 msgid "Could not update Dolphin's context menu"
 msgstr "Impossibile aggiornare il menu contestuale di Dolphin"
 
-#: src/shell/corebridge.cpp:548
+#: src/shell/corebridge.cpp:579
 msgid "Could not update the application menu"
 msgstr "Impossibile aggiornare il menu delle applicazioni"
 
-#: src/shell/corebridge.cpp:559
+#: src/shell/corebridge.cpp:590
 msgid "Could not add KuickShare to the menus"
 msgstr "Impossibile aggiungere KuickShare ai menu"
 
-#: src/shell/corebridge.cpp:656
+#: src/shell/corebridge.cpp:647 src/shell/corebridge.cpp:654
+msgid "The sharing service did not accept the request"
+msgstr "Il servizio di condivisione non ha accettato la richiesta"
+
+#: src/shell/corebridge.cpp:710
 msgid ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
@@ -36,11 +40,11 @@ msgstr ""
 "Il Flatpak non ha accesso a %1. Consentilo con: flatpak override --user --"
 "filesystem=\"%1\" %2"
 
-#: src/shell/corebridge.cpp:703
+#: src/shell/corebridge.cpp:757
 msgid "Could not update the autostart entry"
 msgstr "Impossibile aggiornare la voce di avvio automatico"
 
-#: src/shell/corebridge.cpp:824
+#: src/shell/corebridge.cpp:883
 msgid "Only files can be shared, folders are not supported"
 msgstr "È possibile condividere solo file, le cartelle non sono supportate"
 
@@ -64,28 +68,28 @@ msgstr "Chiudi un'istanza in esecuzione e prendine il posto"
 msgid "Files to send"
 msgstr "File da inviare"
 
-#: src/shell/main.cpp:260
+#: src/shell/main.cpp:266
 msgid "Open KuickShare"
 msgstr "Apri KuickShare"
 
-#: src/shell/main.cpp:262
+#: src/shell/main.cpp:268
 msgid "Send files…"
 msgstr "Invia file…"
 
-#: src/shell/main.cpp:263
+#: src/shell/main.cpp:269
 msgid "Send clipboard"
 msgstr "Invia appunti"
 
-#: src/shell/main.cpp:264 src/shell/qml/SettingsPage.qml:66
+#: src/shell/main.cpp:270 src/shell/qml/SettingsPage.qml:66
 msgid "Visible to nearby devices"
 msgstr "Visibile ai dispositivi vicini"
 
-#: src/shell/main.cpp:271 src/shell/qml/Main.qml:273
+#: src/shell/main.cpp:277 src/shell/qml/Main.qml:273
 #: src/shell/qml/SettingsPage.qml:16 src/shell/qml/ShortcutsDialog.qml:17
 msgid "Preferences"
 msgstr "Preferenze"
 
-#: src/shell/main.cpp:274 src/shell/qml/Main.qml:287
+#: src/shell/main.cpp:280 src/shell/qml/Main.qml:287
 msgid "Quit"
 msgstr "Esci"
 
@@ -176,10 +180,8 @@ msgstr "Invia"
 #: src/shell/qml/HelpPage.qml:31
 msgid ""
 "Choose or drop files, or type some text, on the Send page, then pick a "
-"device On the phone, open Quick Share."
-msgstr ""
-"Nella pagina Invia scegli o trascina dei file, oppure scrivi del testo, poi "
-"seleziona un dispositivo. Sul telefono apri Quick Share."
+"device. On the phone, open Quick Share."
+msgstr "Nella pagina Invia scegli o trascina dei file, oppure scrivi del testo, poi seleziona un dispositivo. Sul telefono, apri Quick Share."
 
 #: src/shell/qml/HelpPage.qml:35
 msgid "Be found"
@@ -533,8 +535,10 @@ msgid "Clear"
 msgstr "Svuota"
 
 #: src/shell/qml/SendPage.qml:320
-msgid "Show all %1 files"
-msgstr "Mostra tutti i %1 file"
+msgid "Show all %1 file"
+msgid_plural "Show all %1 files"
+msgstr[0] "Mostra tutti i %1 file"
+msgstr[1] "Mostra tutti i %1 file"
 
 #: src/shell/qml/SendPage.qml:344
 msgid "Text or link"
@@ -896,7 +900,7 @@ msgstr "Chiudi la finestra"
 msgid "Quit KuickShare"
 msgstr "Esci da KuickShare"
 
-#: src/shell/qml/TransfersPage.qml:49 src/shell/qml/TransfersPage.qml:405
+#: src/shell/qml/TransfersPage.qml:49 src/shell/qml/TransfersPage.qml:410
 msgid "Clear history"
 msgstr "Svuota cronologia"
 
@@ -972,11 +976,11 @@ msgstr "Dimensione"
 msgid "Open link"
 msgstr "Apri collegamento"
 
-#: src/shell/qml/TransfersPage.qml:244 src/shell/qml/TransfersPage.qml:708
+#: src/shell/qml/TransfersPage.qml:244 src/shell/qml/TransfersPage.qml:717
 msgid "Copy"
 msgstr "Copia"
 
-#: src/shell/qml/TransfersPage.qml:249 src/shell/qml/TransfersPage.qml:712
+#: src/shell/qml/TransfersPage.qml:249 src/shell/qml/TransfersPage.qml:721
 msgid "Copied to clipboard"
 msgstr "Copiato negli appunti"
 
@@ -1030,11 +1034,15 @@ msgstr "Non accettato"
 msgid "Interrupted"
 msgstr "Interrotto"
 
-#: src/shell/qml/TransfersPage.qml:402
+#: src/shell/qml/TransfersPage.qml:381
+msgid "%1 · %2"
+msgstr "%1 · %2"
+
+#: src/shell/qml/TransfersPage.qml:407
 msgid "The history is large (%1) and may slow KuickShare down"
 msgstr "La cronologia è grande (%1) e potrebbe rallentare KuickShare"
 
-#: src/shell/qml/TransfersPage.qml:416
+#: src/shell/qml/TransfersPage.qml:422
 msgid ""
 "History is turned off: new transfers are not saved. You can turn it on in "
 "Preferences"
@@ -1042,19 +1050,19 @@ msgstr ""
 "La cronologia è disattivata: i nuovi trasferimenti non vengono salvati. Puoi "
 "attivarla nelle Preferenze"
 
-#: src/shell/qml/TransfersPage.qml:426
+#: src/shell/qml/TransfersPage.qml:432
 msgid "No matching transfers"
 msgstr "Nessun trasferimento corrispondente"
 
-#: src/shell/qml/TransfersPage.qml:426
+#: src/shell/qml/TransfersPage.qml:432
 msgid "No transfers yet"
 msgstr "Nessun trasferimento"
 
-#: src/shell/qml/TransfersPage.qml:426
+#: src/shell/qml/TransfersPage.qml:432
 msgid "Starting the sharing service…"
 msgstr "Avvio del servizio di condivisione…"
 
-#: src/shell/qml/TransfersPage.qml:427
+#: src/shell/qml/TransfersPage.qml:433
 msgid ""
 "Sent and received transfers are listed here. Make sure this computer is "
 "visible in Preferences to receive."
@@ -1062,7 +1070,7 @@ msgstr ""
 "I trasferimenti inviati e ricevuti sono elencati qui. Per ricevere, "
 "assicurati che questo computer sia visibile nelle Preferenze."
 
-#: src/shell/qml/TransfersPage.qml:427
+#: src/shell/qml/TransfersPage.qml:433
 msgid ""
 "Transfers are only listed while the app is open, because the history is "
 "turned off."
@@ -1070,43 +1078,43 @@ msgstr ""
 "I trasferimenti sono elencati solo mentre l'applicazione è aperta, perché la "
 "cronologia è disattivata."
 
-#: src/shell/qml/TransfersPage.qml:585
+#: src/shell/qml/TransfersPage.qml:593
 msgid "Unknown device"
 msgstr "Dispositivo sconosciuto"
 
-#: src/shell/qml/TransfersPage.qml:610
+#: src/shell/qml/TransfersPage.qml:618
 msgid "Trusted"
 msgstr "Attendibile"
 
-#: src/shell/qml/TransfersPage.qml:619
+#: src/shell/qml/TransfersPage.qml:627
 msgid "%1%"
 msgstr "%1%"
 
-#: src/shell/qml/TransfersPage.qml:626
+#: src/shell/qml/TransfersPage.qml:634
 msgid "Cancel"
 msgstr "Annulla"
 
-#: src/shell/qml/TransfersPage.qml:633
+#: src/shell/qml/TransfersPage.qml:641
 msgid "Remove from list"
 msgstr "Rimuovi dall'elenco"
 
-#: src/shell/qml/TransfersPage.qml:643
+#: src/shell/qml/TransfersPage.qml:651
 msgid "Wants to share with you · PIN %1"
 msgstr "Vuole condividere con te · PIN %1"
 
-#: src/shell/qml/TransfersPage.qml:652
+#: src/shell/qml/TransfersPage.qml:660
 msgid "More details"
 msgstr "Altri dettagli"
 
-#: src/shell/qml/TransfersPage.qml:690 src/shell/transferwatcher.cpp:206
+#: src/shell/qml/TransfersPage.qml:699 src/shell/transferwatcher.cpp:206
 msgid "Accept"
 msgstr "Accetta"
 
-#: src/shell/qml/TransfersPage.qml:696 src/shell/transferwatcher.cpp:221
+#: src/shell/qml/TransfersPage.qml:705 src/shell/transferwatcher.cpp:221
 msgid "Decline"
 msgstr "Rifiuta"
 
-#: src/shell/qml/TransfersPage.qml:702 src/shell/transferwatcher.cpp:269
+#: src/shell/qml/TransfersPage.qml:711 src/shell/transferwatcher.cpp:269
 msgid "Open folder"
 msgstr "Apri cartella"
 

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-25 10:14+0000\n"
+"POT-Creation-Date: 2026-10-25 11:44+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -18,29 +18,33 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
-#: src/shell/corebridge.cpp:524
+#: src/shell/corebridge.cpp:555
 msgid "Could not update Dolphin's context menu"
 msgstr ""
 
-#: src/shell/corebridge.cpp:548
+#: src/shell/corebridge.cpp:579
 msgid "Could not update the application menu"
 msgstr ""
 
-#: src/shell/corebridge.cpp:559
+#: src/shell/corebridge.cpp:590
 msgid "Could not add KuickShare to the menus"
 msgstr ""
 
-#: src/shell/corebridge.cpp:656
+#: src/shell/corebridge.cpp:647 src/shell/corebridge.cpp:654
+msgid "The sharing service did not accept the request"
+msgstr ""
+
+#: src/shell/corebridge.cpp:710
 msgid ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
 msgstr ""
 
-#: src/shell/corebridge.cpp:703
+#: src/shell/corebridge.cpp:757
 msgid "Could not update the autostart entry"
 msgstr ""
 
-#: src/shell/corebridge.cpp:824
+#: src/shell/corebridge.cpp:883
 msgid "Only files can be shared, folders are not supported"
 msgstr ""
 
@@ -64,28 +68,28 @@ msgstr ""
 msgid "Files to send"
 msgstr ""
 
-#: src/shell/main.cpp:260
+#: src/shell/main.cpp:266
 msgid "Open KuickShare"
 msgstr ""
 
-#: src/shell/main.cpp:262
+#: src/shell/main.cpp:268
 msgid "Send files…"
 msgstr ""
 
-#: src/shell/main.cpp:263
+#: src/shell/main.cpp:269
 msgid "Send clipboard"
 msgstr ""
 
-#: src/shell/main.cpp:264 src/shell/qml/SettingsPage.qml:66
+#: src/shell/main.cpp:270 src/shell/qml/SettingsPage.qml:66
 msgid "Visible to nearby devices"
 msgstr ""
 
-#: src/shell/main.cpp:271 src/shell/qml/Main.qml:273
+#: src/shell/main.cpp:277 src/shell/qml/Main.qml:273
 #: src/shell/qml/SettingsPage.qml:16 src/shell/qml/ShortcutsDialog.qml:17
 msgid "Preferences"
 msgstr ""
 
-#: src/shell/main.cpp:274 src/shell/qml/Main.qml:287
+#: src/shell/main.cpp:280 src/shell/qml/Main.qml:287
 msgid "Quit"
 msgstr ""
 
@@ -175,7 +179,7 @@ msgstr ""
 #: src/shell/qml/HelpPage.qml:31
 msgid ""
 "Choose or drop files, or type some text, on the Send page, then pick a "
-"device On the phone, open Quick Share."
+"device. On the phone, open Quick Share."
 msgstr ""
 
 #: src/shell/qml/HelpPage.qml:35
@@ -492,8 +496,10 @@ msgid "Clear"
 msgstr ""
 
 #: src/shell/qml/SendPage.qml:320
-msgid "Show all %1 files"
-msgstr ""
+msgid "Show all %1 file"
+msgid_plural "Show all %1 files"
+msgstr[0] ""
+msgstr[1] ""
 
 #: src/shell/qml/SendPage.qml:344
 msgid "Text or link"
@@ -830,7 +836,7 @@ msgstr ""
 msgid "Quit KuickShare"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:49 src/shell/qml/TransfersPage.qml:405
+#: src/shell/qml/TransfersPage.qml:49 src/shell/qml/TransfersPage.qml:410
 msgid "Clear history"
 msgstr ""
 
@@ -904,11 +910,11 @@ msgstr ""
 msgid "Open link"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:244 src/shell/qml/TransfersPage.qml:708
+#: src/shell/qml/TransfersPage.qml:244 src/shell/qml/TransfersPage.qml:717
 msgid "Copy"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:249 src/shell/qml/TransfersPage.qml:712
+#: src/shell/qml/TransfersPage.qml:249 src/shell/qml/TransfersPage.qml:721
 msgid "Copied to clipboard"
 msgstr ""
 
@@ -962,77 +968,81 @@ msgstr ""
 msgid "Interrupted"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:402
+#: src/shell/qml/TransfersPage.qml:381
+msgid "%1 · %2"
+msgstr ""
+
+#: src/shell/qml/TransfersPage.qml:407
 msgid "The history is large (%1) and may slow KuickShare down"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:416
+#: src/shell/qml/TransfersPage.qml:422
 msgid ""
 "History is turned off: new transfers are not saved. You can turn it on in "
 "Preferences"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:426
+#: src/shell/qml/TransfersPage.qml:432
 msgid "No matching transfers"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:426
+#: src/shell/qml/TransfersPage.qml:432
 msgid "No transfers yet"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:426
+#: src/shell/qml/TransfersPage.qml:432
 msgid "Starting the sharing service…"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:427
+#: src/shell/qml/TransfersPage.qml:433
 msgid ""
 "Sent and received transfers are listed here. Make sure this computer is "
 "visible in Preferences to receive."
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:427
+#: src/shell/qml/TransfersPage.qml:433
 msgid ""
 "Transfers are only listed while the app is open, because the history is "
 "turned off."
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:585
+#: src/shell/qml/TransfersPage.qml:593
 msgid "Unknown device"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:610
+#: src/shell/qml/TransfersPage.qml:618
 msgid "Trusted"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:619
+#: src/shell/qml/TransfersPage.qml:627
 msgid "%1%"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:626
+#: src/shell/qml/TransfersPage.qml:634
 msgid "Cancel"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:633
+#: src/shell/qml/TransfersPage.qml:641
 msgid "Remove from list"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:643
+#: src/shell/qml/TransfersPage.qml:651
 msgid "Wants to share with you · PIN %1"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:652
+#: src/shell/qml/TransfersPage.qml:660
 msgid "More details"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:690 src/shell/transferwatcher.cpp:206
+#: src/shell/qml/TransfersPage.qml:699 src/shell/transferwatcher.cpp:206
 msgid "Accept"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:696 src/shell/transferwatcher.cpp:221
+#: src/shell/qml/TransfersPage.qml:705 src/shell/transferwatcher.cpp:221
 msgid "Decline"
 msgstr ""
 
-#: src/shell/qml/TransfersPage.qml:702 src/shell/transferwatcher.cpp:269
+#: src/shell/qml/TransfersPage.qml:711 src/shell/transferwatcher.cpp:269
 msgid "Open folder"
 msgstr ""
 

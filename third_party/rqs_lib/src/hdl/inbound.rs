@@ -1,6 +1,6 @@
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::os::unix::fs::FileExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
@@ -949,49 +949,15 @@ impl InboundRequest {
                     "file".to_owned()
                 });
 
-                let mut dest = get_download_dir();
-                dest.push(&name);
-
+                let dest = free_path(&get_download_dir(), &name, |p| {
+                    p.exists()
+                        || self
+                            .state
+                            .transferred_files
+                            .values()
+                            .any(|f| f.file_url == p)
+                });
                 info!("Destination: {:?}", dest);
-                if dest.exists() {
-                    let mut counter = 1;
-                    dest.pop();
-
-                    loop {
-                        // How name conflict resolution happens in most software,
-                        // lorem.txt
-                        // lorem (1).txt
-                        // ...
-                        let incremented_file_path = {
-                            let file_path = PathBuf::from(&name);
-
-                            let incremented_file_stem = format!(
-                                "{} ({counter})",
-                                file_path
-                                    .file_stem()
-                                    .and_then(|it| it.to_str())
-                                    .expect("Must be UTF-8 since Path is derived from String"),
-                            );
-
-                            let incremented_file_path =
-                                file_path.with_file_name(incremented_file_stem);
-
-                            file_path
-                                .extension()
-                                .map(|it| incremented_file_path.with_extension(it))
-                                .unwrap_or_else(|| incremented_file_path)
-                        };
-
-                        dest.push(incremented_file_path);
-                        if !dest.exists() {
-                            break;
-                        }
-                        dest.pop();
-                        counter += 1;
-                    }
-
-                    info!("New destination: {:?}", dest);
-                }
 
                 saved_paths.push(dest.to_string_lossy().into_owned());
                 let info = InternalFileInfo {
@@ -1177,9 +1143,36 @@ impl InboundRequest {
         let ids: Vec<i64> = self.state.transferred_files.keys().cloned().collect();
 
         for id in ids {
+            let taken: Vec<PathBuf> = self
+                .state
+                .transferred_files
+                .values()
+                .map(|f| f.file_url.clone())
+                .collect();
             let mfi = self.state.transferred_files.get_mut(&id).unwrap();
 
-            let file = File::create(&mfi.file_url)?;
+            // `create_new`: never truncate a file another transfer created since the offer.
+            let file = loop {
+                match OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&mfi.file_url)
+                {
+                    Ok(f) => break f,
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        let dir = mfi.file_url.parent().unwrap_or(Path::new(".")).to_owned();
+                        let name = mfi
+                            .file_url
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("file")
+                            .to_owned();
+                        mfi.file_url =
+                            free_path(&dir, &name, |p| p.exists() || taken.iter().any(|t| t == p));
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            };
             info!("Created file: {:?}", &file);
             mfi.file = Some(file);
         }
@@ -1671,6 +1664,24 @@ impl InboundRequest {
     }
 }
 
+/// `dir/name`, or `dir/stem (N).ext` with the first N >= 1 for which `taken` is false.
+fn free_path(dir: &Path, name: &str, taken: impl Fn(&Path) -> bool) -> PathBuf {
+    let first = dir.join(name);
+    if !taken(&first) {
+        return first;
+    }
+    let p = Path::new(name);
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(name);
+    let ext = p.extension().and_then(|e| e.to_str());
+    (1..)
+        .map(|n| match ext {
+            Some(e) => dir.join(format!("{stem} ({n}).{e}")),
+            None => dir.join(format!("{stem} ({n})")),
+        })
+        .find(|c| !taken(c))
+        .expect("unbounded range")
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -1682,6 +1693,31 @@ mod tests {
 
     use super::*;
     use crate::upgrade::tests::FakeLink;
+
+    #[test]
+    fn free_path_numbers_around_taken_names() {
+        let dir = Path::new("/d");
+        let taken = |p: &Path| {
+            ["/d/a.txt", "/d/a (1).txt", "/d/b"]
+                .iter()
+                .any(|t| p == Path::new(t))
+        };
+        assert_eq!(free_path(dir, "c.txt", taken), Path::new("/d/c.txt"));
+        assert_eq!(free_path(dir, "a.txt", taken), Path::new("/d/a (2).txt"));
+        assert_eq!(free_path(dir, "b", taken), Path::new("/d/b (1)"));
+    }
+
+    #[test]
+    fn create_new_does_not_truncate_existing_file() {
+        let dir = std::env::temp_dir().join(format!("rqs-a1-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("x.txt");
+        std::fs::write(&f, b"keep").unwrap();
+        let err = OpenOptions::new().write(true).create_new(true).open(&f);
+        assert_eq!(err.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&f).unwrap(), b"keep");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     /// While the hotspot is being brought up in the background, the old channel is still read.
     #[tokio::test]

@@ -95,7 +95,7 @@ All properties are read-write. Persisted ones are saved to `~/.config/kuickshare
 
 | Property | Type | Default | Persisted | Effect and errors |
 |---|---|---|---|---|
-| `DeviceName` | `s` | machine hostname (`Unknown device` if unreadable) | yes | Name shown to other devices. Trimmed; empty restores the default. Restarts sharing; fails during a transfer. A value equal to the current one does nothing |
+| `DeviceName` | `s` | machine hostname (`Unknown device` if unreadable) | yes | Name shown to other devices. Trimmed and cut to 64 bytes (at a character boundary); empty restores the default. Restarts sharing; fails during a transfer. A value equal to the current one does nothing |
 | `DownloadDir` | `s` | `""` (the library default, the XDG download directory) | yes | Trimmed; created if missing (fails if it cannot be). Applied immediately, no restart |
 | `StaticPort` | `u` | `0` (random port at each start) | yes | `0` or 1024-65535, else an error. Restarts sharing; fails during a transfer, or if the port cannot be bound (settings go back to the previous value) |
 | `Visible` | `b` | `true` | yes | Visible to nearby devices. The effective state is `Visible and not Suspended` |
@@ -108,7 +108,7 @@ All properties are read-write. Persisted ones are saved to `~/.config/kuickshare
 | `TrustedDevicesEnabled` | `b` | `true` | yes | Whether the [always-accepted list](#always-accepted-devices) is honoured |
 | `WifiUpgrade` | `b` | `false` | yes | Let transfers move to a temporary Wi-Fi hotspot (see [Wi-Fi upgrade](wifi-direct.md)); needs NetworkManager |
 
-Whether `PropertiesChanged` is emitted for changes made by `ResetSettings` was not checked (unverified); read the properties again after calling it.
+`ResetSettings` emits `PropertiesChanged` for every property it resets *(not run against a real client)*.
 
 ## Signals
 

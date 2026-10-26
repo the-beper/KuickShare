@@ -186,16 +186,85 @@ private Q_SLOTS:
         QVERIFY(model.hasActive());
     }
 
-    void removeDeletesOneRowAndIgnoresUnknownIds()
+    void removeDeletesOneRowAndIgnoresBadRows()
     {
         TransferModel model;
         model.update(QStringLiteral("a"), event(QStringLiteral("Finished"), QStringLiteral("Pixel")));
         model.update(QStringLiteral("b"), event(QStringLiteral("Finished"), QStringLiteral("Tab")));
-        model.remove(QStringLiteral("nope"));
+        model.remove(5);
+        model.remove(-1);
         QCOMPARE(model.rowCount(), 2);
-        model.remove(QStringLiteral("a"));
+        model.remove(1); // "a", the older row
         QCOMPARE(model.rowCount(), 1);
         QCOMPARE(model.data(model.index(0), TransferModel::DeviceRole).toString(), QStringLiteral("Tab"));
+    }
+
+    void removeTakesTheRowEvenWhenIdsRepeat()
+    {
+        TransferModel model;
+        model.update(QStringLiteral("a"), event(QStringLiteral("Finished"), QStringLiteral("first")));
+        model.update(QStringLiteral("a"), event(QStringLiteral("Starting"), QStringLiteral("second")));
+        model.update(QStringLiteral("a"), event(QStringLiteral("Finished")));
+        QCOMPARE(model.rowCount(), 2);
+        model.remove(1); // the older one
+        QCOMPARE(model.rowCount(), 1);
+        QCOMPARE(model.data(model.index(0), TransferModel::DeviceRole).toString(), QStringLiteral("second"));
+    }
+
+    void removeHistoryFindsTheRowByUid()
+    {
+        TransferModel model;
+        model.addHistory({{QStringLiteral("state"), QStringLiteral("Finished")}, {QStringLiteral("history_uid"), 7}});
+        model.addHistory({{QStringLiteral("state"), QStringLiteral("Finished")}, {QStringLiteral("history_uid"), 9}});
+        model.removeHistory(8);
+        QCOMPARE(model.rowCount(), 2);
+        model.removeHistory(7);
+        QCOMPARE(model.rowCount(), 1);
+        QCOMPARE(model.data(model.index(0), TransferModel::HistoryUidRole).toInt(), 9);
+    }
+
+    void disconnectLiveEndsEveryNonFinalRow()
+    {
+        TransferModel model;
+        QSignalSpy ended(&model, &TransferModel::transferEnded);
+        model.update(QStringLiteral("old"), event(QStringLiteral("Finished")));
+        model.update(QStringLiteral("old"), event(QStringLiteral("SendingFiles"))); // a newer transfer, same id
+        model.update(QStringLiteral("in"), {{QStringLiteral("kind"), QStringLiteral("inbound")}, {QStringLiteral("state"), QStringLiteral("WaitingForUserConsent")}});
+        model.beginPending(QStringLiteral("p"), {});
+        QVERIFY(model.hasActive());
+        QVERIFY(model.hasLive());
+        QVERIFY(model.busy());
+        ended.clear(); // the first Finished update already ended a row
+        QStringList ids = model.disconnectLive();
+        ids.sort();
+        QCOMPARE(ids, (QStringList{QStringLiteral("in"), QStringLiteral("old"), QStringLiteral("p")}));
+        QCOMPARE(model.rowCount(), 4);
+        for (int row = 0; row < model.rowCount(); ++row) {
+            QVERIFY(TransferModel::isFinal(stateAt(model, row)));
+        }
+        QCOMPARE(ended.count(), 3);
+        QVERIFY(!model.hasActive());
+        QVERIFY(!model.hasLive());
+        QVERIFY(!model.busy());
+        QVERIFY(model.disconnectLive().isEmpty());
+    }
+
+    void hasLiveCountsAnApprovalRequest()
+    {
+        TransferModel model;
+        QVERIFY(!model.hasLive());
+        model.update(QStringLiteral("in"), {{QStringLiteral("kind"), QStringLiteral("inbound")}, {QStringLiteral("state"), QStringLiteral("WaitingForUserConsent")}});
+        QVERIFY(!model.hasActive());
+        QVERIFY(model.hasLive());
+    }
+
+    void failPendingSaysWhetherItEndedTheRow()
+    {
+        TransferModel model;
+        const quint64 number = model.beginPending(QStringLiteral("a"), {});
+        QVERIFY(!model.failPending(QStringLiteral("a"), number + 1));
+        QVERIFY(model.failPending(QStringLiteral("a"), number));
+        QVERIFY(!model.failPending(QStringLiteral("a"), number)); // already ended
     }
 
     void secondFinalStateIsIgnored()

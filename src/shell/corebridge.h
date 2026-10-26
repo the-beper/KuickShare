@@ -107,7 +107,8 @@ public:
     /// AppImage only: writes or removes the application menu entry (no first-start question is asked afterwards).
     void setMenuEntry(bool enabled);
     void setHistoryKeepDays(int days);
-    Q_INVOKABLE void removeTransfer(const QString &id);
+    /// `row` is a row of the unfiltered transfer model.
+    Q_INVOKABLE void removeTransfer(int row);
     void setSuspended(bool suspended);
 
     Q_INVOKABLE void accept(const QString &id) { call(QStringLiteral("Accept"), {id}); }
@@ -139,8 +140,8 @@ public:
 
     /// While open, other KuickShare computers can start a pairing with this one.
     Q_INVOKABLE void setPairing(bool open) { call(QStringLiteral("SetPairing"), {open}); }
-    Q_INVOKABLE void pairWith(const QString &deviceId) { call(QStringLiteral("PairWith"), {deviceId}); }
-    Q_INVOKABLE void confirmPairing(bool accept) { call(QStringLiteral("ConfirmPairing"), {accept}); }
+    Q_INVOKABLE void pairWith(const QString &deviceId);
+    Q_INVOKABLE void confirmPairing(bool accept);
     Q_INVOKABLE void unpair(const QString &fingerprint) { call(QStringLiteral("Unpair"), {fingerprint}); }
     /// Always accept the sender of this transfer (matched by name and MAC address).
     Q_INVOKABLE void allowDevice(const QString &transferId);
@@ -149,6 +150,8 @@ public:
     Q_INVOKABLE void clearHistory();
     Q_INVOKABLE void startService();
     Q_INVOKABLE bool transferActive() const;
+    /// Any transfer not finished, even one waiting for approval: an update must not restart the app meanwhile.
+    bool transferLive() const;
     /// Asks main.cpp to start the installed version in place of this one.
     Q_INVOKABLE void restartForUpdate() { emit restartRequested(); }
     /// Puts every setting back to its default (history, paired and trusted devices stay).
@@ -231,6 +234,7 @@ private:
     QTimer m_discoveryStopTimer;
     QHash<QString, int> m_outgoingFileCounts;
     bool m_discoveryRunning = false;
+    bool m_discoveryResume = false; // discovery was on when the core went away
     bool m_connected = false;
     bool m_serviceStarting = false;
     bool m_updateInstalled = false;

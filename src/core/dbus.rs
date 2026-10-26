@@ -271,13 +271,25 @@ impl Service {
 
     /// Puts every setting back to its default (the trusted devices list stays). Fails while a
     /// transfer is in progress.
-    async fn reset_settings(&self) -> fdo::Result<()> {
-        self.core
-            .lock()
-            .await
-            .reset_settings()
-            .await
-            .map_err(failed)
+    async fn reset_settings(
+        &self,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        // The lock is released here: the getters behind `*_changed` take it again.
+        let result = self.core.lock().await.reset_settings().await;
+        result.map_err(failed)?;
+        let _ = self.device_name_changed(&emitter).await;
+        let _ = self.download_dir_changed(&emitter).await;
+        let _ = self.static_port_changed(&emitter).await;
+        let _ = self.visible_changed(&emitter).await;
+        let _ = self.history_enabled_changed(&emitter).await;
+        let _ = self.history_keep_days_changed(&emitter).await;
+        let _ = self.trusted_devices_enabled_changed(&emitter).await;
+        let _ = self.wifi_upgrade_changed(&emitter).await;
+        let _ = self.tray_icon_changed(&emitter).await;
+        let _ = self.dolphin_integration_changed(&emitter).await;
+        let _ = self.hide_when_dnd_changed(&emitter).await;
+        Ok(())
     }
 
     /// Whether the shell shows its tray icon.

@@ -376,6 +376,11 @@ Kirigami.ScrollablePage {
         return text.length > 0 ? text : preview;
     }
 
+    // Two parts of one line; a translation can change the separator or the order.
+    function joined(first, second) {
+        return KI18n.i18n("%1 · %2", first, second);
+    }
+
     function when(seconds) {
         return seconds > 0 ? Qt.locale().toString(new Date(seconds * 1000), Locale.ShortFormat) : "";
     }
@@ -408,6 +413,7 @@ Kirigami.ScrollablePage {
                     }
                 ]
                 Layout.fillWidth: true
+                Layout.topMargin: Kirigami.Units.largeSpacing
             }
 
             MessageBox {
@@ -444,6 +450,7 @@ Kirigami.ScrollablePage {
             required property real time
             required property string trusted
             required property string alwaysAccepted
+            required property int index
 
             // A vertical ListView positions its items itself and ignores side margins, so the card
             // is inset inside this full-width cell.
@@ -535,6 +542,7 @@ Kirigami.ScrollablePage {
                 readonly property real time: cell.time
                 readonly property string trusted: cell.trusted
                 readonly property string alwaysAccepted: cell.alwaysAccepted
+                readonly property int index: cell.index
 
                 readonly property bool awaitingConsent: kind === "inbound" && transferState === "WaitingForUserConsent"
                 readonly property bool active: transferState !== "Finished" && transferState !== "Cancelled" && transferState !== "Rejected" && transferState !== "Disconnected"
@@ -631,7 +639,7 @@ Kirigami.ScrollablePage {
                                     icon.name: "edit-delete-remove"
                                     display: QQC2.AbstractButton.IconOnly
                                     text: KI18n.i18n("Remove from list")
-                                    onClicked: page.core.removeTransfer(item.transferId)
+                                    onClicked: page.core.removeTransfer(page.filter.sourceRow(item.index))
                                 }
                             }
 
@@ -640,9 +648,9 @@ Kirigami.ScrollablePage {
                                 Layout.fillWidth: true
 
                                 QQC2.Label {
-                                    readonly property string status: item.awaitingConsent && item.pin.length > 0 ? KI18n.i18n("Wants to share with you · PIN %1", item.pin) : item.inProgress ? page.stateText(item.transferState, item.kind, item.ackBytes, item.viaBluetooth).replace("…", "") + " · " + page.core.formatSize(item.totalBytes) : page.stateText(item.transferState, item.kind, item.ackBytes, item.viaBluetooth)
+                                    readonly property string status: item.awaitingConsent && item.pin.length > 0 ? KI18n.i18n("Wants to share with you · PIN %1", item.pin) : item.inProgress ? page.joined(page.stateText(item.transferState, item.kind, item.ackBytes, item.viaBluetooth).replace(/…|\.\.\./, ""), page.core.formatSize(item.totalBytes)) : page.stateText(item.transferState, item.kind, item.ackBytes, item.viaBluetooth)
                                     readonly property string stamp: page.when(item.time)
-                                    text: stamp.length > 0 && !item.active ? status + " · " + stamp : status
+                                    text: stamp.length > 0 && !item.active ? page.joined(status, stamp) : status
                                     opacity: 0.7
                                     elide: Text.ElideRight
                                     Layout.fillWidth: true
@@ -664,7 +672,8 @@ Kirigami.ScrollablePage {
                                     // The size is already in the status line while a transfer runs.
                                     // One line: the first one, with "…" when the text goes on (otherwise it is only elided if it does not fit).
                                     readonly property var lines: item.content.split("\n").map(l => l.trim()).filter(l => l.length > 0)
-                                    text: (lines.length > 0 ? lines[0] : "") + (lines.length > 1 ? "…" : "") + (item.totalBytes > 0 && item.files.length > 0 && !item.inProgress ? " · " + page.core.formatSize(item.totalBytes) : "")
+                                    readonly property string first: (lines.length > 0 ? lines[0] : "") + (lines.length > 1 ? "…" : "")
+                                    text: item.totalBytes > 0 && item.files.length > 0 && !item.inProgress ? page.joined(first, page.core.formatSize(item.totalBytes)) : first
                                     textFormat: Text.PlainText
                                     wrapMode: Text.NoWrap
                                     elide: item.files.length > 0 ? Text.ElideMiddle : Text.ElideRight

@@ -149,9 +149,15 @@ bool CoreBridge::transferActive() const
     return m_transfers.hasActive();
 }
 
+bool CoreBridge::transferLive() const
+{
+    return m_transfers.hasLive();
+}
+
 void CoreBridge::resetSettings()
 {
     callAsync(methodCall(iface, QStringLiteral("ResetSettings")), [this] {
+        m_devices.clear(); // sharing restarted: the old cards are gone
         // What the app keeps itself: no autostart, and the Dolphin entry on, as in a fresh install.
         Autostart::setEnabled(false);
         m_autostart = Autostart::isEnabled();
@@ -249,13 +255,24 @@ void CoreBridge::onServiceRegistered()
     loadHistorySize();
     loadTrustedDevices();
     loadAllowedDevices();
+    if (m_discoveryResume)
+    {
+        m_discoveryResume = false;
+        startDiscovery();
+    }
 }
 
 void CoreBridge::onServiceUnregistered()
 {
     m_connected = false;
+    m_discoveryResume = m_discoveryRunning;
     m_discoveryRunning = false;
     m_devices.clear();
+    // The core will not report these any more.
+    for (const QString &id : m_transfers.disconnectLive())
+    {
+        emit transferChanged(id);
+    }
     emit connectedChanged();
 }
 
@@ -302,6 +319,9 @@ void CoreBridge::refreshProperties()
         m_deviceName = props.value(QStringLiteral("DeviceName")).toString();
         m_downloadDir = props.value(QStringLiteral("DownloadDir")).toString();
         m_staticPort = props.value(QStringLiteral("StaticPort")).toInt();
+        const bool suspended = props.value(QStringLiteral("Suspended"), m_suspended).toBool();
+        const bool suspendedDiffers = suspended != m_suspended;
+        m_suspended = suspended;
         const bool hide = props.value(QStringLiteral("HideWhenDnd"), m_hideWhenDnd).toBool();
         const bool hideChanged = hide != m_hideWhenDnd;
         m_hideWhenDnd = hide;
@@ -337,6 +357,9 @@ void CoreBridge::refreshProperties()
         emit deviceNameChanged();
         emit downloadDirChanged();
         emit staticPortChanged();
+        if (suspendedDiffers) {
+            emit suspendedChanged();
+        }
         if (hideChanged) {
             emit hideWhenDndChanged();
         }
@@ -364,8 +387,16 @@ void CoreBridge::setRemoteProperty(const QString &name, const QVariant &value)
 {
     auto msg = methodCall(propsIface, QStringLiteral("Set"));
     msg << iface << name << QVariant::fromValue(QDBusVariant(value));
-    callAsync(msg, [this]
-              { refreshProperties(); });
+    // Name and port restart sharing, which forgets the devices found so far.
+    const bool restarts = name == QLatin1String("DeviceName") || name == QLatin1String("StaticPort");
+    callAsync(msg, [this, restarts]
+              {
+                  if (restarts)
+                  {
+                      m_devices.clear();
+                  }
+                  refreshProperties();
+              });
 }
 
 void CoreBridge::loadHistory()
@@ -584,20 +615,43 @@ void CoreBridge::setHistoryKeepDays(int days)
     setRemoteProperty(QStringLiteral("HistoryKeepDays"), QVariant::fromValue(quint32(days)));
 }
 
-void CoreBridge::removeTransfer(const QString &id)
+void CoreBridge::removeTransfer(int row)
 {
-    const qulonglong uid = m_transfers.info(id).value(QStringLiteral("history_uid")).toULongLong();
-    if (uid > 0)
+    if (row < 0 || row >= m_transfers.rowCount())
     {
-        call(QStringLiteral("RemoveHistory"), {QVariant::fromValue(quint64(uid))});
+        return;
     }
-    m_transfers.remove(id);
+    const qulonglong uid = m_transfers.data(m_transfers.index(row), TransferModel::HistoryUidRole).toULongLong();
+    if (uid == 0)
+    {
+        m_transfers.remove(row); // a live row: nothing saved yet
+        return;
+    }
+    auto msg = methodCall(iface, QStringLiteral("RemoveHistory"));
+    msg << QVariant::fromValue(quint64(uid));
+    callAsync(msg, [this, uid] { m_transfers.removeHistory(uid); });
 }
 
 void CoreBridge::clearHistory()
 {
-    m_transfers.clearFinished();
-    callAsync(methodCall(iface, QStringLiteral("ClearHistory")), [this] { loadHistorySize(); });
+    callAsync(methodCall(iface, QStringLiteral("ClearHistory")), [this] {
+        m_transfers.clearFinished();
+        loadHistorySize();
+    });
+}
+
+void CoreBridge::pairWith(const QString &deviceId)
+{
+    auto msg = methodCall(iface, QStringLiteral("PairWith"));
+    msg << deviceId;
+    callAsync(msg, {}, [this] { emit pairingFinished(false, QString(), i18n("The sharing service did not accept the request")); });
+}
+
+void CoreBridge::confirmPairing(bool accept)
+{
+    auto msg = methodCall(iface, QStringLiteral("ConfirmPairing"));
+    msg << accept;
+    callAsync(msg, {}, [this] { emit pairingFinished(false, QString(), i18n("The sharing service did not accept the request")); });
 }
 
 void CoreBridge::loadHistorySize()
@@ -713,7 +767,7 @@ void CoreBridge::startDiscovery()
     {
         m_discoveryRunning = true;
         m_devices.clear();
-        call(QStringLiteral("StartDiscovery"), {});
+        callAsync(methodCall(iface, QStringLiteral("StartDiscovery")), {}, [this] { m_discoveryRunning = false; });
     }
 }
 
@@ -763,7 +817,12 @@ void CoreBridge::startSend(const QString &deviceId, QVariantMap row, const QStri
               });
     // The core's own watchdog (30 s over the LAN, 40 s over Bluetooth) fires first: this only keeps a row from staying at "Connecting…" for good.
     QTimer::singleShot(45'000, this, [this, deviceId, number]
-                       { m_transfers.failPending(deviceId, number); });
+                       {
+                           if (m_transfers.failPending(deviceId, number))
+                           {
+                               emit transferChanged(deviceId);
+                           }
+                       });
 }
 
 void CoreBridge::sendText(const QString &deviceId, const QString &text, bool isUrl)

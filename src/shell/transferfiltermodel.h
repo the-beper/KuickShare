@@ -31,6 +31,8 @@ public:
     void setStatus(const QString &status);
     void setText(const QString &text);
     Q_INVOKABLE void clearFilters();
+    /// Row of the unfiltered model for a row of this one.
+    Q_INVOKABLE int sourceRow(int row) const { return mapToSource(index(row, 0)).row(); }
 
 signals:
     void directionChanged();

@@ -315,14 +315,17 @@ impl Core {
     }
 
     pub fn device_name(&self) -> String {
-        self.settings
-            .device_name
-            .clone()
-            .unwrap_or_else(settings::default_device_name)
+        cap_device_name(
+            &self
+                .settings
+                .device_name
+                .clone()
+                .unwrap_or_else(settings::default_device_name),
+        )
     }
 
     pub async fn set_device_name(&mut self, name: &str) -> Result<()> {
-        let name = Some(name.trim().to_owned()).filter(|n| !n.is_empty());
+        let name = Some(cap_device_name(name.trim())).filter(|n| !n.is_empty());
         if name == self.settings.device_name {
             return Ok(());
         }
@@ -345,9 +348,9 @@ impl Core {
         self.ensure_idle()?;
         let previous = self.settings.clone();
         self.settings.static_port = port;
-        self.restart_or_revert(previous).await.map_err(|_| {
+        self.restart_or_revert(previous).await.map_err(|e| {
             anyhow!(
-                "Port {} can't be used, another program is probably using it",
+                "Port {} can't be used (another program may be using it): {e:#}",
                 port.unwrap_or_default()
             )
         })
@@ -537,7 +540,7 @@ impl Core {
             .ip
             .as_ref()
             .is_some_and(|ip| self.trusted_ips.lock().unwrap().contains(ip));
-        if trusted && let Ok(addr) = self.control_addr(endpoint_id) {
+        if trusted && let Ok(addr) = self.control_addr(&endpoint.id) {
             let announced =
                 tokio::time::timeout(Duration::from_secs(2), self.trust.announce(addr)).await;
             if !matches!(announced, Ok(Ok(()))) {
@@ -556,10 +559,13 @@ impl Core {
         };
         // Safety net: without any event in time, tell the user. The library reports a failed
         // scan, dial, connect or handshake itself, so this only covers a hang.
-        let watch = self
-            .conn
-            .as_ref()
-            .map(|conn| (conn.clone(), engine.rqs.message_sender.subscribe()));
+        let watch = self.conn.as_ref().map(|conn| {
+            (
+                conn.clone(),
+                engine.rqs.message_sender.subscribe(),
+                engine.rqs.message_sender.clone(),
+            )
+        });
         let send_info = SendInfo {
             id: endpoint.id.clone(),
             name: name.clone(),
@@ -580,7 +586,7 @@ impl Core {
             self.redirects.lock().unwrap().remove(endpoint_id);
             return Err(e).context("service stopped while sending");
         }
-        if let Some((conn, events)) = watch {
+        if let Some((conn, events, bus)) = watch {
             let within = if ble {
                 BLE_START_TIMEOUT
             } else {
@@ -589,6 +595,7 @@ impl Core {
             tokio::spawn(report_silent_send(
                 conn,
                 events,
+                bus,
                 (endpoint.id, endpoint_id.to_owned()),
                 name,
                 within,
@@ -606,11 +613,11 @@ impl Core {
     /// is gone and no Bluetooth entry is known, a Bluetooth scan window is started and given
     /// `BLE_LOOKUP_TIMEOUT` to see it (see `look_up_bluetooth`). The `Core` lock is held by the
     /// caller meanwhile: for a Bluetooth pick at most `LAN_LOOKUP_TIMEOUT` (1.5 s) plus
-    /// `PROBE_TIMEOUT` (1.5 s) per probed candidate; for a LAN pick at most `PROBE_TIMEOUT`
-    /// (1.5 s) plus `BLE_LOOKUP_TIMEOUT` (3 s).
+    /// two `PROBE_TIMEOUT` (1.5 s each) per probed candidate; for a LAN pick at most two
+    /// `PROBE_TIMEOUT` plus `BLE_LOOKUP_TIMEOUT` (3 s).
     async fn choose_route(&mut self, picked: EndpointInfo) -> Result<EndpointInfo> {
         if picked.ble.is_none() {
-            if probe(&lan_addr(&picked)).await {
+            if probe_twice(&lan_addr(&picked)).await {
                 return Ok(picked);
             }
             self.endpoints.lock().unwrap().remove(&picked.id);
@@ -645,7 +652,7 @@ impl Core {
         }
         let name = picked.name.as_deref().unwrap_or_default();
         match lan {
-            Some(lan) if probe(&lan_addr(&lan)).await => {
+            Some(lan) if probe_twice(&lan_addr(&lan)).await => {
                 tracing::info!(
                     "{} answers on the LAN, sending to {} (same name)",
                     picked.id,
@@ -866,6 +873,18 @@ impl Core {
     }
 }
 
+/// Longest device name in bytes: it goes into a one-byte length field of the mDNS record.
+const MAX_DEVICE_NAME_BYTES: usize = 64;
+
+/// `name` cut at a char boundary to at most `MAX_DEVICE_NAME_BYTES` bytes.
+fn cap_device_name(name: &str) -> String {
+    let mut end = name.len().min(MAX_DEVICE_NAME_BYTES);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    name[..end].trim_end().to_owned()
+}
+
 /// Removes the devices found over the LAN (everything but `ble:` ids) and returns their ids.
 fn take_lan_endpoints(endpoints: &mut HashMap<String, EndpointInfo>) -> Vec<String> {
     let lan: Vec<String> = endpoints
@@ -1003,6 +1022,11 @@ async fn retry_lan(core: Weak<Mutex<Core>>, ble: EndpointInfo) {
     }
 }
 
+/// `probe`, tried once more when it fails (a lost SYN is not a gone phone).
+async fn probe_twice(addr: &str) -> bool {
+    probe(addr).await || probe(addr).await
+}
+
 /// True when `addr` accepts a TCP connection within `PROBE_TIMEOUT`.
 async fn probe(addr: &str) -> bool {
     matches!(
@@ -1037,6 +1061,7 @@ const LAN_START_TIMEOUT: Duration = Duration::from_secs(40);
 async fn report_silent_send(
     conn: Connection,
     mut events: broadcast::Receiver<ChannelMessage>,
+    bus: broadcast::Sender<ChannelMessage>,
     ids: (String, String),
     device: String,
     within: Duration,
@@ -1046,6 +1071,14 @@ async fn report_silent_send(
         return;
     }
     tracing::info!("no answer from {sent_as}: reporting the send as failed");
+    // Stop the library's transfer too, or it would go on and a retry would offer the files twice.
+    // No effect while it is still scanning or dialling (no request exists yet to receive it).
+    let _ = bus.send(ChannelMessage {
+        id: sent_as,
+        msg: Message::Lib {
+            action: TransferAction::TransferCancel,
+        },
+    });
     dbus::emit_failed_transfer(&conn, &shown_as, &device).await;
 }
 
@@ -1105,6 +1138,16 @@ fn visibility(visible: bool) -> Visibility {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_name_is_capped_at_a_char_boundary() {
+        assert_eq!(cap_device_name("laptop"), "laptop");
+        let long = "a".repeat(200);
+        assert_eq!(cap_device_name(&long).len(), MAX_DEVICE_NAME_BYTES);
+        let wide = "é".repeat(100); // 2 bytes each
+        let capped = cap_device_name(&wide);
+        assert!(capped.len() <= MAX_DEVICE_NAME_BYTES && capped.chars().all(|c| c == 'é'));
+    }
 
     fn transfer(last_event: i64) -> TransferEvent {
         let mut transfer = TransferEvent::default();
