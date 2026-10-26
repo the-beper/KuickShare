@@ -14,6 +14,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Check the tag matches Cargo.toml, CMakeLists.txt and the metainfo
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          test "$(sed -n 's/^version = "\(.*\)"/\1/p;/^\[dependencies\]/q' Cargo.toml | head -1)" = "$v"
+          test "$(sed -n 's/^project(kuickshare VERSION \([0-9.]*\).*/\1/p' src/shell/CMakeLists.txt)" = "$v"
+          grep -q "<release version=\"$v\"" data/io.github.the_beper.KuickShare.metainfo.xml
+
       - name: Install Rust (stable)
         run: rustup toolchain install stable --profile minimal && rustup default stable
 

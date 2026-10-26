@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.github.the_beper.KuickShare</id>
   <name>KuickShare</name>
-  <summary>Share files with nearby devices using Quick Share</summary>
+  <summary>Share files, text and links with nearby devices using Quick Share</summary>
   <developer id="io.github.the_beper">
     <name>the-beper</name>
   </developer>
@@ -20,6 +20,37 @@
       <li>Transfer history and trusted devices</li>
     </ul>
   </description>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Send files to a nearby device</caption>
+      <image type="source">https://raw.githubusercontent.com/the-beper/KuickShare/main/docs/screenshots/send-files.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Pick the device to send to</caption>
+      <image type="source">https://raw.githubusercontent.com/the-beper/KuickShare/main/docs/screenshots/send.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Transfer history</caption>
+      <image type="source">https://raw.githubusercontent.com/the-beper/KuickShare/main/docs/screenshots/transfers.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Preferences</caption>
+      <image type="source">https://raw.githubusercontent.com/the-beper/KuickShare/main/docs/screenshots/preferences.png</image>
+    </screenshot>
+  </screenshots>
+  <keywords>
+    <keyword>Quick Share</keyword>
+    <keyword>Nearby Share</keyword>
+    <keyword>Android</keyword>
+    <keyword>file transfer</keyword>
+    <keyword>send files</keyword>
+    <keyword>Bluetooth</keyword>
+    <keyword>Wi-Fi Direct</keyword>
+  </keywords>
+  <branding>
+    <color type="primary" scheme_preference="light">#52b9ee</color>
+    <color type="primary" scheme_preference="dark">#2a82c2</color>
+  </branding>
   <launchable type="desktop-id">io.github.the_beper.KuickShare.desktop</launchable>
   <provides>
     <binary>kuickshare</binary>
@@ -33,7 +64,7 @@
   <content_rating type="oars-1.1"/>
   <requires>
     <display_length compare="ge">360</display_length>
-    <internet>always</internet>
+    <internet>offline-only</internet>
   </requires>
   <recommends>
     <control>pointing</control>

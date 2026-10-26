@@ -45,7 +45,7 @@ KDE Connect would be the natural choice, but its data transfer has been unreliab
 
 **Desktop integration**
 - Tray icon, start at login, Do Not Disturb aware.
-- English and Italian interface.
+- English, Italian, Dutch and Turkish interface.
 
 **Experimental, off by default**
 - Send to and receive from a phone that shares no network with the computer, over Bluetooth and a temporary Wi-Fi link. See [Wi-Fi upgrade](docs/wifi-direct.md).
@@ -61,7 +61,7 @@ Three packages, all for KDE Plasma 6:
 |---|---|---|
 | Flatpak | Any distribution | Add the repository and install (below); updates arrive through the software center |
 | AppImage | Any distribution | Download [`KuickShare-x86_64.AppImage`](https://github.com/the-beper/KuickShare/releases/latest/download/KuickShare-x86_64.AppImage) (stable link to the latest release), make it executable and run it. It brings its own libraries and installs nothing; use it with an AppImage manager such as [Gear Lever](https://github.com/mijorus/gearlever), [AM / AppMan](https://github.com/ivan-hc/AM) or [soar](https://github.com/pkgforge/soar) |
-| Tarball | Fedora and distributions with Qt 6 and KDE Frameworks 6 | Download `KuickShare-<version>-x86_64.tar.gz`, extract it and run `install.sh`: it installs into `~/.local` and uses the system libraries |
+| Tarball | Fedora and distributions with Qt 6 and KDE Frameworks 6 | Download `KuickShare-x86_64.tar.gz`, extract it and run `install.sh`: it installs into `~/.local` and uses the system libraries |
 
 ```sh
 flatpak remote-add --if-not-exists kuickshare https://the-beper.github.io/KuickShare/kuickshare.flatpakrepo

@@ -815,7 +815,7 @@ void CoreBridge::startSend(const QString &deviceId, QVariantMap row, const QStri
                       emit sendRefused(deviceId);
                   }
               });
-    // The core's own watchdog (30 s over the LAN, 40 s over Bluetooth) fires first: this only keeps a row from staying at "Connecting…" for good.
+    // The core's own watchdog (40 s over the LAN and over Bluetooth) fires first: this only keeps a row from staying at "Connecting…" for good.
     QTimer::singleShot(45'000, this, [this, deviceId, number]
                        {
                            if (m_transfers.failPending(deviceId, number))

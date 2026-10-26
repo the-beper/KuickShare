@@ -48,7 +48,7 @@ gdbus call --address $ADDR --dest io.github.the_beper.KuickShare \
     --object-path /io/github/the_beper/KuickShare --method io.github.the_beper.KuickShare1.History
 ```
 
-The private bus isolates D-Bus and files only: the daemon still advertises on the LAN through mDNS and listens on TCP 47891 (see [Pairing](#pairing-and-the-trust-port)). The commands above were not run as written (unverified).
+The private bus isolates D-Bus and files only: the daemon still advertises on the LAN through mDNS and listens on the trust port (see [Pairing](#pairing-and-the-trust-port)). The commands above were not run as written (unverified).
 
 ## Methods
 
@@ -125,7 +125,7 @@ A restart of sharing (name, port, reset) forgets the discovered devices without 
 
 ### TransferUpdated
 
-`info` is a fixed set of 13 keys. Later events of the same transfer often carry less than earlier ones (no device, no file names, zero sizes), so clients should keep the last non-empty value of each key.
+`info` is a fixed set of 14 keys. Later events of the same transfer often carry less than earlier ones (no device, no file names, zero sizes), so clients should keep the last non-empty value of each key.
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -146,7 +146,7 @@ A restart of sharing (name, port, reset) forgets the discovered devices without 
 
 ### DeviceFound
 
-`info` has 6 string keys. The same device is usually reported twice: first as announced, then again after the core has checked whether it runs KuickShare.
+`info` has 7 keys: six strings and the boolean `pairing`. The same device is usually reported twice: first as announced, then again after the core has checked whether it runs KuickShare.
 
 | Key | Meaning |
 |---|---|
@@ -172,7 +172,7 @@ A restart of sharing (name, port, reset) forgets the discovered devices without 
 | `ReceivingFiles`, `SendingFiles` | no | Data is moving |
 | `Initial`, `ReceivedConnectionRequest`, `SentUkeyServerInit`, `SentUkeyClientInit`, `SentUkeyClientFinish`, `SentPairedKeyEncryption`, `ReceivedUkeyClientFinish`, `SentConnectionResponse`, `SentPairedKeyResult`, `SentIntroduction`, `ReceivedPairedKeyResult` | no | Handshake steps of the protocol |
 
-A Bluetooth send whose scan or dial fails produces no event from the library: after 25 seconds without one the core emits `Disconnected` for that id (outbound, no history entry).
+The library itself emits `Disconnected` for a send that fails before the transfer starts *(inferred from the library code, not reproduced)*. If a send hangs and no event comes for 40 seconds (`BLE_START_TIMEOUT`, `LAN_START_TIMEOUT` in `src/core/app.rs`), the core emits `Disconnected` for that id (outbound, no history entry).
 
 Only the first final state of a transfer is recorded in the history. `Finished` can be followed by `Disconnected`; that second event has `history_uid` 0.
 
@@ -247,7 +247,7 @@ An incoming transfer is accepted without asking only if `TrustedDevicesEnabled` 
 
 | Topic | Behaviour |
 |---|---|
-| Consent timeout | An incoming transfer nobody answers within 300 seconds is declined |
+| Consent timeout | An incoming transfer nobody answers is declined ([consent timeout](architecture.md#consent-and-the-guard)) |
 | Unsafe file names | An inbound transfer with an empty name, `.`, `..`, a name over 255 bytes, or a name with `/`, `\`, control characters or invisible text-direction characters is declined before anything can accept it, whatever the trust rules say. No error reaches the caller; the transfer ends like a decline |
 | Settings that restart sharing | `DeviceName`, `StaticPort` and `ResetSettings` stop and rebuild the service; discovered devices are forgotten, discovery resumes if it was on. They fail with `Wait for the current transfer to finish before changing this setting` while a transfer is in flight |
 | Stale transfers | A transfer with no event for 600 seconds counts as over when checking the previous point, so a lost final event cannot block those settings for ever. Such a transfer never reaches the history |
@@ -257,15 +257,14 @@ An incoming transfer is accepted without asking only if `TrustedDevicesEnabled` 
 
 ### Pairing and the trust port
 
-Pairing and paired-computer checks use a separate TCP port, 47891 (fixed), Noise XX channel. If it cannot be bound, the core logs a warning and keeps working without paired computers.
+Pairing and paired-computer checks use a separate fixed TCP port (see [architecture.md](architecture.md#paired-computers)), Noise XX channel. If it cannot be bound, the core logs a warning and keeps working without paired computers.
 
 | Rule | Value |
 |---|---|
 | One pairing at a time | A second attempt while one is waiting is refused with `Another pairing is in progress` and no `PairingFinished` is emitted for it |
-| Code confirmation | `Nobody confirmed the code in time` after 120 seconds |
-| Pairing window | 300 seconds after `SetPairing(true)`; the other computer must also have a non-empty name |
-| Announcement of a transfer | Valid for 60 seconds and consumed by the first transfer from the same IP |
-| Rate limits per address | 30 connections per minute, 4 open at once; 32 open in total from all addresses |
+| Code confirmation | `Nobody confirmed the code in time` when the time runs out |
+| Pairing window | Opened by `SetPairing(true)`; the other computer must also have a non-empty name |
+| Times and limits | See [Limits on the trust port](architecture.md#limits-on-the-trust-port) |
 
 ## How the shell uses it
 

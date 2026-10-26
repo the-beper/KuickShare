@@ -30,6 +30,7 @@ qmllint-qt6 -I /usr/lib64/qt6/qml src/shell/qml/*.qml
 
 step "Metainfo and desktop file"
 xmllint --noout data/*.metainfo.xml
+appstreamcli validate --no-net data/*.metainfo.xml
 desktop-file-validate data/io.github.the_beper.KuickShare.desktop
 
 step "Catalogs"

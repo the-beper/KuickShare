@@ -14,7 +14,7 @@ KuickShare has two programs. `kuickshare` is the window, tray icon and notificat
 ## Requirements
 
 - KDE Plasma 6. The AppImage and the Flatpak bring their own libraries (the Flatpak needs Flatpak and [Flathub](https://flathub.org/setup)). The tarball uses the system's Qt 6 (6.9 or newer) and KDE Frameworks 6: on Fedora, `kf6-kirigami`, `kf6-kirigami-addons` and `qt6-qtdeclarative`. The installer checks for them and prints the `dnf install` (or `pacman`) line if one is missing.
-- The computer and the phone on the same Wi-Fi network. Bluetooth is used to find devices, never to move data. Without a shared network, see the experimental [Wi-Fi upgrade](wifi-direct.md).
+- The computer and the phone on the same Wi-Fi network. Bluetooth finds devices and carries data only with the experimental [Wi-Fi upgrade](wifi-direct.md) on (the start of a transfer, slowly, until the Wi-Fi link takes over). Without a shared network, enable that upgrade.
 - A Google account is not needed and cannot be used.
 
 ## Installing, updating and uninstalling
@@ -39,10 +39,12 @@ The sandbox is deliberately open where the integration needs it:
 | Permission | Why |
 |---|---|
 | Network | Quick Share and the pairing port |
-| `org.bluez` (system bus) | Finding devices over Bluetooth |
+| `org.bluez` (system bus) and Bluetooth sockets | Finding devices over Bluetooth, and the Bluetooth channel of a send |
+| `org.freedesktop.NetworkManager`, `org.fedoraproject.FirewallD1` (system bus) | The [Wi-Fi upgrade](wifi-direct.md) (off unless enabled) |
+| `org.kde.kuickshare` (own name) | Single-instance service of the window |
 | `org.kde.JobViewServer`, `org.freedesktop.Notifications`, `org.kde.StatusNotifierWatcher` | Job progress, Do Not Disturb, tray icon |
 | Downloads folder | Received files. Another download folder is refused with a message until you grant it: `flatpak override --user --filesystem=/path io.github.the_beper.KuickShare` |
-| `~/.local/share/kio/servicemenus` and `~/.config/autostart` (write) | The app writes the Dolphin entry and the autostart entry there, since Flatpak cannot export them |
+| `~/.local/share/kio/servicemenus` and `~/.config/autostart` (create) | The app writes the Dolphin entry and the autostart entry there, since Flatpak cannot export them |
 
 The Dolphin and autostart entries:
 
@@ -141,7 +143,7 @@ The Send page takes files, or text, or a link. Choose what to send, then click a
 
 On the phone, open Quick Share and set it to receive from **Everyone** first. See [Troubleshooting](#troubleshooting).
 
-Before sending to a device found on the network, KuickShare checks for up to 1.5 s that it answers. If the phone is gone (for example its Wi-Fi went off, which it does not announce), its entry disappears and the send goes over Bluetooth to the phone with the same name and device type, when the Wi-Fi upgrade is on and exactly one matches (if none is known yet, it scans Bluetooth for up to 3 s); otherwise it stops with "The device is not reachable". The other way round, a phone listed over Bluetooth that answers on the network is reached over the network; if the network list has no such phone yet, the send restarts the network search and waits up to 1.5 s for it before staying on Bluetooth. A phone that is first seen only over Bluetooth makes the network search restart every 5 s (up to 4 times) until it shows up on the network. The transfer row keeps the entry you clicked. **Cancel** is available from the moment you press a device ("Looking for the device…", "Connecting…", "Waiting for the other device to accept").
+Before sending to a device found on the network, KuickShare checks briefly that it answers. If the phone is gone (for example its Wi-Fi went off, which it does not announce), its entry disappears and, with the Wi-Fi upgrade on and exactly one match by name and device type, the send goes over Bluetooth; otherwise it stops with "The device is not reachable". The other way round, a phone listed over Bluetooth that answers on the network is reached over the network. The route rules and timings are in [wifi-direct.md](wifi-direct.md#behaviour). The transfer row keeps the entry you clicked. **Cancel** is available from the moment you press a device ("Looking for the device…", "Connecting…", "Waiting for the other device to accept").
 
 ### Files
 
@@ -151,11 +153,11 @@ There are five ways to add files, and they combine:
 
 - Click the drop area, or press `Ctrl+O`, or use **Send files...** in the tray menu.
 - Drop files on the drop area, or anywhere on the window. The window accepts a drop on any page and switches to Send.
-- Press `Ctrl+V` on the Send page. File paths copied in Dolphin are added as files. An image on the clipboard without text, such as a screenshot, is saved as a PNG in `~/.cache/kuickshare/clipboard/` (unverified: the exact directory, it is the application cache directory of the app) and added.
+- Press `Ctrl+V` on the Send page. File paths copied in Dolphin are added as files. An image on the clipboard without text, such as a screenshot, is saved as a PNG in `~/.cache/kuickshare/clipboard/` and added.
 - Use **Paste from clipboard** in the drop area, or **Send clipboard** in the tray menu.
 - Pass them on the command line, or use the Dolphin entry below.
 
-Only regular files are queued; folders given on the command line are ignored (unverified for folders dropped on the window). The list shows the first five files and a "Show all" link for the rest. **Clear** empties the list, **Add** adds more.
+Only regular files are queued; folders, given on the command line or dropped on the window, are ignored. The list shows the first five files and a "Show all" link for the rest. **Clear** empties the list, **Add** adds more.
 
 ### Text and links
 
@@ -191,7 +193,7 @@ A request nobody answers is declined after 5 minutes.
 
 Files go to the download folder, `~/Downloads` unless you chose another one in Preferences. Progress and a cancel button appear in Plasma's job tracker. When it finishes you get a "Files received" notification with **Open folder**. Text arrives as a "Text received" notification with **Copy**, and **Open link** when the text is a single `http://` or `https://` address.
 
-A sender can propose file names that would write outside the download folder. KuickShare declines such a transfer before asking you. A name is refused if it is empty, is `.` or `..`, is longer than 255 bytes, or contains a `/`, a `\`, a control character, or an invisible character such as a zero-width space or a right-to-left override. The decision is logged; no notification is shown (unverified: the shell may still show the transfer as declined or interrupted).
+A sender can propose file names that would write outside the download folder. KuickShare declines such a transfer before asking you. A name is refused if it is empty, is `.` or `..`, is longer than 255 bytes, or contains a `/`, a `\`, a control character, or an invisible character such as a zero-width space or a right-to-left override. The decision is logged and no notification is shown; how the Transfers page then shows the row was not checked (unverified).
 
 Sending to the phone produces the same notifications in the other direction. If the phone declines before any data moved, you see "Transfer not accepted"; a lost connection gives "Transfer interrupted".
 
@@ -280,7 +282,7 @@ Closing the dialog before confirming cancels the pairing.
 
 The computers must reach each other on TCP port **47891**; open it in the firewall if one is active. Paired computers are listed in Preferences with a short fingerprint and a **Remove** button. Removing one only forgets it on this computer; remove it on the other computer too.
 
-Once paired, a transfer from the other computer is accepted without a notification when it arrives from the same IP address within 60 seconds of the sender's announcement. The match is by address, so pair only computers you own.
+Once paired, a transfer from the other computer is accepted without a notification when it arrives from the same IP address shortly after the other computer announced it (limits in [architecture.md](architecture.md#limits-on-the-trust-port)). The match is by address, so pair only computers you own.
 
 ## Trusted devices
 
@@ -320,7 +322,7 @@ Open it with `Ctrl+,`, from the menu, or from the tray. Changes apply at once an
 
 When "Hide during Do Not Disturb" is on and Plasma's Do Not Disturb is active, KuickShare hides this computer from nearby devices. The Send page shows "Do Not Disturb" and "Hidden until Do Not Disturb ends". The visibility preference itself is not changed, so the computer reappears when Do Not Disturb ends. The state is read from the notification service and re-read if the Plasma shell restarts.
 
-Whether a transfer already running is affected when Do Not Disturb starts was not checked (unverified).
+KuickShare only changes the advertised visibility and cancels nothing; whether the library drops a transfer already running was not checked (unverified).
 
 ## Keyboard shortcuts
 
@@ -355,7 +357,7 @@ Also listed in the app under More, Shortcuts.
 
 **A trusted phone is asked about again.** It joined another network and has a new MAC, or its name changed. Accept and trust it again.
 
-**A phone stays in the list after its Wi-Fi went off, or sending ends with "The device is not reachable".** The phone left the network without saying so. Pressing it removes the entry. Turn its Wi-Fi on, or open Quick Share on it so it appears again. Over the network a send waits at most 8 s to connect and 20 s for the handshake, then reports the failure.
+**A phone stays in the list after its Wi-Fi went off, or sending ends with "The device is not reachable".** The phone left the network without saying so. Pressing it removes the entry. Turn its Wi-Fi on, or open Quick Share on it so it appears again. Over the network a send gives up after a short wait ([timings](wifi-direct.md#timings-and-timeouts)) and reports the failure.
 
 **Transfer not accepted.** The phone declined, timed out, or could not receive (for instance, a full disk).
 
@@ -368,6 +370,6 @@ Also listed in the app under More, Shortcuts.
 | Identity key (mode 600) | `~/.local/share/kuickshare/identity.json` |
 | Paired computers | `~/.local/share/kuickshare/peers.json` |
 | The same, in the Flatpak | `~/.var/app/io.github.the_beper.KuickShare/config/kuickshare/` and `.../data/kuickshare/` |
-| Logs | No log file. The service writes to the standard error of the window process, so they show in a terminal when you run `kuickshare` there. Where the desktop session keeps them otherwise is unverified |
+| Logs | No log file. The service writes to the standard output of the window process, so they show in a terminal when you run `kuickshare` there. Where the desktop session keeps them otherwise is unverified |
 
-A settings file or an identity or peers file that cannot be parsed is moved to a `.bak` copy next to it (unverified for the last two: only the call site was seen) and defaults are used. An unreadable history file is ignored and logged. The log level can be raised for one run: `RUST_LOG=debug kuickshare`, since the service inherits the environment (unverified).
+A settings or peers file that cannot be parsed is moved to a `.bak` copy next to it and defaults are used. An unparsable identity file stops the service from starting; it is never replaced. An unparsable history file is ignored and logged. The log level can be raised for one run: `RUST_LOG=debug kuickshare`, since the service inherits the environment.

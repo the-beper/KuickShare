@@ -5,10 +5,8 @@ on:
     paths-ignore:
       - "**/*.md"
       - "docs/**"
-      - "screenshots/**"
       - "LICENSE"
       - "THIRD_PARTY.md"
-      - "data/*.metainfo.xml"
       - ".github/ISSUE_TEMPLATE/**"
       - ".github/pull_request_template.md"
       - ".gitignore"
@@ -16,10 +14,8 @@ on:
     paths-ignore:
       - "**/*.md"
       - "docs/**"
-      - "screenshots/**"
       - "LICENSE"
       - "THIRD_PARTY.md"
-      - "data/*.metainfo.xml"
       - ".github/ISSUE_TEMPLATE/**"
       - ".github/pull_request_template.md"
       - ".gitignore"

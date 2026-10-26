@@ -67,8 +67,8 @@ The list is generated from `cargo metadata` (`Cargo.lock`), restricted to normal
 | dirs | 7.0.0 | MIT OR Apache-2.0 |
 | futures-util | 0.3.34 | MIT OR Apache-2.0 |
 | hex | 0.4.3 | MIT OR Apache-2.0 |
-| rand | 0.9.5 | MIT OR Apache-2.0 |
-| rqs_lib | 0.11.5 | GPL-3.0 (repository LICENSE; the crate has no license field) |
+| rand | 0.10.3 | MIT OR Apache-2.0 |
+| rqs_lib | 0.11.5 | GPL-3.0-only |
 | serde | 1.0.229 | MIT OR Apache-2.0 |
 | serde_json | 1.0.154 | MIT OR Apache-2.0 |
 | sha2 | 0.11.1 | MIT OR Apache-2.0 |

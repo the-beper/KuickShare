@@ -18,7 +18,7 @@ Two processes talk over the session D-Bus (`io.github.the_beper.KuickShare`, int
 
 | Process | Source | Language | Job |
 | --- | --- | --- | --- |
-| `kuickshared` (core) | `src/core/` | Rust, tokio, zbus | Quick Share protocol through `rqs_lib` (git rev pinned in `Cargo.toml`), discovery, trust channel, settings, history |
+| `kuickshared` (core) | `src/core/` | Rust, tokio, zbus | Quick Share protocol through `rqs_lib` (vendored path dependency, see [THIRD_PARTY.md](../THIRD_PARTY.md)), discovery, trust channel, settings, history |
 | `kuickshare` (shell) | `src/shell/` | C++20, Qt 6, KF 6, Kirigami | Window, tray, notifications, progress jobs, Dolphin entry, Do Not Disturb |
 
 The shell creates its window and QML engine only while the window is shown and destroys them on hide, so a hidden shell holds just the tray and the core connection. The split keeps the protocol code in Rust, where the library lives, and the desktop integration in Qt/KF6, where the bindings are mature. It also lets the core run and be tested without any UI (see [Testing](#testing)). The shell holds no protocol state: after a reconnect it reloads everything from the core.
@@ -110,7 +110,7 @@ sequenceDiagram
     P->>L: connection request, file names, size
     L->>C: event WaitingForUserConsent
     C->>C: unsafe file name? then decline
-    C->>C: start 300 s consent timer
+    C->>C: start consent timer
     C->>C: intent from paired peer, or allowed name+MAC? then accept
     C->>S: signal TransferUpdated
     S->>U: notification: Accept / Accept and trust / Decline
@@ -168,7 +168,7 @@ sequenceDiagram
     L->>P: TCP connect, files continue there (plain frames)
 ```
 
-If the move fails, the transfer stays on the Bluetooth channel (about 5 KB/s). The core reports a send that never starts within 25 s as a failed transfer.
+If the move fails, the transfer stays on the Bluetooth channel (about 5 KB/s). The core reports a send that never starts within 40 s as a failed transfer (see [dbus-api.md](dbus-api.md#transfer-states)).
 
 ## Transfer lifecycle
 
@@ -176,7 +176,7 @@ The state names come from `rqs_lib` and are passed through unchanged as strings.
 
 | State | Meaning for KuickShare |
 | --- | --- |
-| `WaitingForUserConsent` (inbound) | Starts the 300 s timer; the only state where auto-accept is evaluated |
+| `WaitingForUserConsent` (inbound) | Starts the consent timer; the only state where auto-accept is evaluated |
 | `SendingFiles`, `ReceivingFiles` | Counts as active for the shell (progress job, Do Not Disturb, blocking settings) |
 | `Finished`, `Cancelled`, `Rejected`, `Disconnected` | Final. The transfer leaves the active set and is written to the history |
 
@@ -220,18 +220,18 @@ The trust channel is a Noise XX handshake (`Noise_XX_25519_ChaChaPoly_BLAKE2s`, 
 | Request | Effect |
 | --- | --- |
 | Probe | Answered for anyone. Says whether the caller's key is paired and whether the pairing window is open. Used during discovery to label cards "KuickShare" or "trusted" and to enable the card in the pairing dialog. That the window is open is therefore visible to anyone on the LAN, who could see it by trying to pair anyway |
-| Intent | Accepted only from a paired key. Stores the peer's name for its IP for 60 s, once |
-| Pair | Accepted only while the user has opened the pairing window (5 min) and the peer sent a non-empty name |
+| Intent | Accepted only from a paired key. Stores the peer's name for its IP for the intent lifetime ([limits](#limits-on-the-trust-port)), once |
+| Pair | Accepted only while the user has opened the pairing window and the peer sent a non-empty name |
 
 Pairing:
 
 1. Both sides derive an 8-digit code (shown as `1234 5678`) from the first 4 bytes of the Noise handshake hash. A man in the middle would have to find a key pair that gives the same code on both sides; the source comment says 6 digits could be searched in under a minute and 8 digits cannot in the time the user has (estimate by the author, unverified).
-2. Each user compares the codes and confirms or cancels, within 120 s.
+2. Each user compares the codes and confirms or cancels within the confirmation time ([limits](#limits-on-the-trust-port)).
 3. Each side sends its answer. Only if both said yes does each store the other's public key in `peers.json`.
 
 Only one pairing may run at a time, so another host cannot take over the code on screen. Two computers count as trusted for sending only if each has the other's key; the probe checks both directions.
 
-Receiving: when an inbound transfer asks for consent, the core looks for an intent from the same source IP less than 60 s old. If there is one, it accepts. The match is by IP address, not by key, so the transfer itself is not authenticated to the Noise identity (see [SECURITY.md](../SECURITY.md)).
+Receiving: when an inbound transfer asks for consent, the core looks for a still valid intent from the same source IP. If there is one, it accepts. The match is by IP address, not by key, so the transfer itself is not authenticated to the Noise identity (see [SECURITY.md](../SECURITY.md)).
 
 Sending: the core announces only to computers it saw as `trusted` in a probe.
 
@@ -294,14 +294,14 @@ Assumes the attacker is on the same LAN, or a malicious app runs as the same use
 | --- | --- | --- |
 | Sender uses a path in a file name to write outside the download folder | Name guard declines the transfer | Names that are valid but misleading (long, unusual Unicode) still pass |
 | Sender hides the real extension with direction characters | Guard rejects them in file names; the shell neutralises markup in names | The shell does not strip direction characters from device names |
-| Unknown sender floods the user with requests | Each request needs consent and expires after 300 s | No limit on the number of requests (unverified for the library) |
+| Unknown sender floods the user with requests | Each request needs consent and expires after the consent timeout | No limit on the number of requests (unverified for the library) |
 | Partial files, no disk space check, any size | None in KuickShare | Documented in [SECURITY.md](../SECURITY.md) |
 | Man in the middle during pairing | Noise XX plus an 8-digit code compared by both users | The user confirms without comparing |
-| Stranger starts a pairing | Pairing window must be opened by the user, expires in 5 min, one at a time, needs both confirmations | While open, anyone on the LAN can make a code appear; the user must decline |
+| Stranger starts a pairing | Pairing window must be opened by the user, expires, one at a time, needs both confirmations | While open, anyone on the LAN can make a code appear; the user must decline |
 | Copy of name and MAC of a trusted device | MAC from the ARP table, same link only, option can be turned off | A LAN attacker can set both and is accepted silently |
-| Hijack of the intent window of a paired computer | Intent needs a paired key, lasts 60 s, used once | Matched by source IP, so a host that can take that IP and reach the Quick Share port in that time is accepted |
+| Hijack of the intent window of a paired computer | Intent needs a paired key, short-lived, used once | Matched by source IP, so a host that can take that IP and reach the Quick Share port in that time is accepted |
 | Flood of the trust port | Per-address rate limit, per-address and global caps, 10 s timeouts | Many addresses can fill the 32 slots and delay probes and pairing; transfers by consent still work |
-| mDNS advert makes the core connect to an outside host | Probe only to local addresses | Any local address can be probed (a TCP connect to 47891) |
+| mDNS advert makes the core connect to an outside host | Probe only to local addresses | Any local address can be probed (a TCP connect to the trust port) |
 | Theft of the identity key | File mode 0600, written through a private temp file | Not encrypted; another process of the same user can read it |
 | Other process on the session bus calls the API (accept, trust, send) | None seen in the interface code: no check of the caller | Same trust boundary as the user's session |
 | Huge metadata bloats the history | Caps on files and text per entry | Entry count is bounded only by age |

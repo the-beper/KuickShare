@@ -3,7 +3,7 @@ FROM registry.fedoraproject.org/fedora:45
 RUN dnf install -y --setopt=install_weak_deps=False \
         gcc gcc-c++ make cmake ninja-build pkgconf-pkg-config git \
         dbus-devel dbus-daemon protobuf-compiler squashfs-tools curl \
-        libxml2 desktop-file-utils gettext \
+        libxml2 desktop-file-utils appstream gettext \
         qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtsvg-devel \
         extra-cmake-modules \
         kf6-kirigami-devel kf6-kstatusnotifieritem-devel kf6-knotifications-devel \
