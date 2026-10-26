@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-26 14:59+0000\n"
+"POT-Creation-Date: 2026-10-26 15:05+0000\n"
 "PO-Revision-Date: 2026-10-18 00:00+0000\n"
 "Last-Translator: the-beper <193650145+the-beper@users.noreply.github.com>\n"
 "Language-Team: Italian\n"
@@ -16,23 +16,23 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: src/shell/corebridge.cpp:566
+#: src/shell/corebridge.cpp:567
 msgid "Could not update Dolphin's context menu"
 msgstr "Impossibile aggiornare il menu contestuale di Dolphin"
 
-#: src/shell/corebridge.cpp:590
+#: src/shell/corebridge.cpp:591
 msgid "Could not update the application menu"
 msgstr "Impossibile aggiornare il menu delle applicazioni"
 
-#: src/shell/corebridge.cpp:601
+#: src/shell/corebridge.cpp:602
 msgid "Could not add KuickShare to the menus"
 msgstr "Impossibile aggiungere KuickShare ai menu"
 
-#: src/shell/corebridge.cpp:658 src/shell/corebridge.cpp:665
+#: src/shell/corebridge.cpp:659 src/shell/corebridge.cpp:666
 msgid "The sharing service did not accept the request"
 msgstr "Il servizio di condivisione non ha accettato la richiesta"
 
-#: src/shell/corebridge.cpp:742
+#: src/shell/corebridge.cpp:756
 msgid ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
@@ -40,11 +40,11 @@ msgstr ""
 "Il Flatpak non ha accesso a %1. Consentilo con: flatpak override --user --"
 "filesystem=\"%1\" %2"
 
-#: src/shell/corebridge.cpp:789
+#: src/shell/corebridge.cpp:803
 msgid "Could not update the autostart entry"
 msgstr "Impossibile aggiornare la voce di avvio automatico"
 
-#: src/shell/corebridge.cpp:915
+#: src/shell/corebridge.cpp:929
 msgid "Only files can be shared, folders are not supported"
 msgstr "È possibile condividere solo file, le cartelle non sono supportate"
 
@@ -531,7 +531,7 @@ msgstr "oppure fai clic per sceglierli"
 msgid "Paste from clipboard"
 msgstr "Incolla dagli appunti"
 
-#: src/shell/qml/SendPage.qml:287 src/shell/qml/TransfersPage.qml:374
+#: src/shell/qml/SendPage.qml:287 src/shell/qml/TransfersPage.qml:392
 #: src/shell/transferwatcher.cpp:51 src/shell/transferwatcher.cpp:140
 msgid "%1 file"
 msgid_plural "%1 files"
@@ -912,7 +912,7 @@ msgstr "Chiudi la finestra"
 msgid "Quit KuickShare"
 msgstr "Esci da KuickShare"
 
-#: src/shell/qml/TransfersPage.qml:49 src/shell/qml/TransfersPage.qml:410
+#: src/shell/qml/TransfersPage.qml:49 src/shell/qml/TransfersPage.qml:439
 msgid "Clear history"
 msgstr "Svuota cronologia"
 
@@ -920,11 +920,11 @@ msgstr "Svuota cronologia"
 msgid "All transfers"
 msgstr "Tutti i trasferimenti"
 
-#: src/shell/qml/TransfersPage.qml:69 src/shell/qml/TransfersPage.qml:359
+#: src/shell/qml/TransfersPage.qml:69 src/shell/qml/TransfersPage.qml:377
 msgid "Received"
 msgstr "Ricevuto"
 
-#: src/shell/qml/TransfersPage.qml:70 src/shell/qml/TransfersPage.qml:359
+#: src/shell/qml/TransfersPage.qml:70 src/shell/qml/TransfersPage.qml:377
 msgid "Sent"
 msgstr "Inviato"
 
@@ -972,89 +972,111 @@ msgstr ""
 msgid "Files you received are not touched"
 msgstr "I file ricevuti non vengono toccati"
 
-#: src/shell/qml/TransfersPage.qml:188
+#: src/shell/qml/TransfersPage.qml:191
 msgid "Transfer details"
 msgstr "Dettagli del trasferimento"
 
-#: src/shell/qml/TransfersPage.qml:211
+#: src/shell/qml/TransfersPage.qml:214
 msgid "Result"
 msgstr "Risultato"
 
-#: src/shell/qml/TransfersPage.qml:211
+#: src/shell/qml/TransfersPage.qml:214
 msgid "Size"
 msgstr "Dimensione"
 
-#: src/shell/qml/TransfersPage.qml:237 src/shell/transferwatcher.cpp:248
+#: src/shell/qml/TransfersPage.qml:240 src/shell/transferwatcher.cpp:248
 msgid "Open link"
 msgstr "Apri collegamento"
 
-#: src/shell/qml/TransfersPage.qml:244 src/shell/qml/TransfersPage.qml:717
+#: src/shell/qml/TransfersPage.qml:247 src/shell/qml/TransfersPage.qml:763
 msgid "Copy"
 msgstr "Copia"
 
-#: src/shell/qml/TransfersPage.qml:249 src/shell/qml/TransfersPage.qml:721
+#: src/shell/qml/TransfersPage.qml:252 src/shell/qml/TransfersPage.qml:767
 msgid "Copied to clipboard"
 msgstr "Copiato negli appunti"
 
-#: src/shell/qml/TransfersPage.qml:348 src/shell/transferwatcher.cpp:52
+#: src/shell/qml/TransfersPage.qml:289 src/shell/qml/TransfersPage.qml:322
+msgid "Open"
+msgstr "Apri"
+
+#: src/shell/qml/TransfersPage.qml:366 src/shell/transferwatcher.cpp:52
 msgid "Looking for the device…"
 msgstr "Ricerca del dispositivo…"
 
-#: src/shell/qml/TransfersPage.qml:348 src/shell/qml/TransfersPage.qml:354
-#: src/shell/qml/TransfersPage.qml:368 src/shell/transferwatcher.cpp:52
+#: src/shell/qml/TransfersPage.qml:366 src/shell/qml/TransfersPage.qml:372
+#: src/shell/qml/TransfersPage.qml:386 src/shell/transferwatcher.cpp:52
 #: src/shell/transferwatcher.cpp:111
 msgid "Connecting…"
 msgstr "Connessione in corso…"
 
-#: src/shell/qml/TransfersPage.qml:350
+#: src/shell/qml/TransfersPage.qml:368
 msgid "Waiting for your approval"
 msgstr "In attesa della tua approvazione"
 
-#: src/shell/qml/TransfersPage.qml:352
+#: src/shell/qml/TransfersPage.qml:370
 msgid "Receiving…"
 msgstr "Ricezione in corso…"
 
-#: src/shell/qml/TransfersPage.qml:354 src/shell/transferwatcher.cpp:111
+#: src/shell/qml/TransfersPage.qml:372 src/shell/transferwatcher.cpp:111
 msgid "Waiting for the other device to accept"
 msgstr "In attesa che l’altro dispositivo accetti"
 
-#: src/shell/qml/TransfersPage.qml:357 src/shell/transferwatcher.cpp:127
+#: src/shell/qml/TransfersPage.qml:375 src/shell/transferwatcher.cpp:127
 msgid "Switching to Wi-Fi…"
 msgstr "Passaggio al Wi-Fi…"
 
-#: src/shell/qml/TransfersPage.qml:357
+#: src/shell/qml/TransfersPage.qml:375
 msgid "Sending…"
 msgstr "Invio in corso…"
 
-#: src/shell/qml/TransfersPage.qml:361
+#: src/shell/qml/TransfersPage.qml:379
 msgid "Cancelled"
 msgstr "Annullato"
 
-#: src/shell/qml/TransfersPage.qml:363
+#: src/shell/qml/TransfersPage.qml:381
 msgid "Declined"
 msgstr "Rifiutato"
 
-#: src/shell/qml/TransfersPage.qml:363
+#: src/shell/qml/TransfersPage.qml:381
 msgid "You declined"
 msgstr "Hai rifiutato"
 
-#: src/shell/qml/TransfersPage.qml:366
+#: src/shell/qml/TransfersPage.qml:384
 msgid "Not accepted"
 msgstr "Non accettato"
 
-#: src/shell/qml/TransfersPage.qml:366
+#: src/shell/qml/TransfersPage.qml:384
 msgid "Interrupted"
 msgstr "Interrotto"
 
-#: src/shell/qml/TransfersPage.qml:381
+#: src/shell/qml/TransfersPage.qml:399
 msgid "%1 · %2"
 msgstr "%1 · %2"
 
-#: src/shell/qml/TransfersPage.qml:407
+#: src/shell/qml/TransfersPage.qml:405
+msgid "%1 second left"
+msgid_plural "%1 seconds left"
+msgstr[0] "%1 secondo rimanente"
+msgstr[1] "%1 secondi rimanenti"
+
+#: src/shell/qml/TransfersPage.qml:408
+msgid "%1 minute left"
+msgid_plural "%1 minutes left"
+msgstr[0] "%1 minuto rimanente"
+msgstr[1] "%1 minuti rimanenti"
+
+#: src/shell/qml/TransfersPage.qml:410
+msgid "%1 hour left"
+msgid_plural "%1 hours left"
+msgstr[0] "%1 ora rimanente"
+msgstr[1] "%1 ore rimanenti"
+
+#: src/shell/qml/TransfersPage.qml:436
 msgid "The history is large (%1) and may slow KuickShare down"
 msgstr "La cronologia è grande (%1) e potrebbe rallentare KuickShare"
 
-#: src/shell/qml/TransfersPage.qml:422
+#: src/shell/qml/TransfersPage.qml:451
 msgid ""
 "History is turned off: new transfers are not saved. You can turn it on in "
 "Preferences"
@@ -1062,19 +1084,19 @@ msgstr ""
 "La cronologia è disattivata: i nuovi trasferimenti non vengono salvati. Puoi "
 "attivarla nelle Preferenze"
 
-#: src/shell/qml/TransfersPage.qml:432
+#: src/shell/qml/TransfersPage.qml:461
 msgid "No matching transfers"
 msgstr "Nessun trasferimento corrispondente"
 
-#: src/shell/qml/TransfersPage.qml:432
+#: src/shell/qml/TransfersPage.qml:461
 msgid "No transfers yet"
 msgstr "Nessun trasferimento"
 
-#: src/shell/qml/TransfersPage.qml:432
+#: src/shell/qml/TransfersPage.qml:461
 msgid "Starting the sharing service…"
 msgstr "Avvio del servizio di condivisione…"
 
-#: src/shell/qml/TransfersPage.qml:433
+#: src/shell/qml/TransfersPage.qml:462
 msgid ""
 "Sent and received transfers are listed here. Make sure this computer is "
 "visible in Preferences to receive."
@@ -1082,7 +1104,7 @@ msgstr ""
 "I trasferimenti inviati e ricevuti sono elencati qui. Per ricevere, "
 "assicurati che questo computer sia visibile nelle Preferenze."
 
-#: src/shell/qml/TransfersPage.qml:433
+#: src/shell/qml/TransfersPage.qml:462
 msgid ""
 "Transfers are only listed while the app is open, because the history is "
 "turned off."
@@ -1090,43 +1112,47 @@ msgstr ""
 "I trasferimenti sono elencati solo mentre l'applicazione è aperta, perché la "
 "cronologia è disattivata."
 
-#: src/shell/qml/TransfersPage.qml:593
+#: src/shell/qml/TransfersPage.qml:589
+msgid "%1/s"
+msgstr "%1/s"
+
+#: src/shell/qml/TransfersPage.qml:639
 msgid "Unknown device"
 msgstr "Dispositivo sconosciuto"
 
-#: src/shell/qml/TransfersPage.qml:618
+#: src/shell/qml/TransfersPage.qml:664
 msgid "Trusted"
 msgstr "Attendibile"
 
-#: src/shell/qml/TransfersPage.qml:627
+#: src/shell/qml/TransfersPage.qml:673
 msgid "%1%"
 msgstr "%1%"
 
-#: src/shell/qml/TransfersPage.qml:634
+#: src/shell/qml/TransfersPage.qml:680
 msgid "Cancel"
 msgstr "Annulla"
 
-#: src/shell/qml/TransfersPage.qml:641
+#: src/shell/qml/TransfersPage.qml:687
 msgid "Remove from list"
 msgstr "Rimuovi dall'elenco"
 
-#: src/shell/qml/TransfersPage.qml:651
+#: src/shell/qml/TransfersPage.qml:697
 msgid "Wants to share with you · PIN %1"
 msgstr "Vuole condividere con te · PIN %1"
 
-#: src/shell/qml/TransfersPage.qml:660
+#: src/shell/qml/TransfersPage.qml:706
 msgid "More details"
 msgstr "Altri dettagli"
 
-#: src/shell/qml/TransfersPage.qml:699 src/shell/transferwatcher.cpp:206
+#: src/shell/qml/TransfersPage.qml:745 src/shell/transferwatcher.cpp:206
 msgid "Accept"
 msgstr "Accetta"
 
-#: src/shell/qml/TransfersPage.qml:705 src/shell/transferwatcher.cpp:221
+#: src/shell/qml/TransfersPage.qml:751 src/shell/transferwatcher.cpp:221
 msgid "Decline"
 msgstr "Rifiuta"
 
-#: src/shell/qml/TransfersPage.qml:711 src/shell/transferwatcher.cpp:269
+#: src/shell/qml/TransfersPage.qml:757 src/shell/transferwatcher.cpp:269
 msgid "Open folder"
 msgstr "Apri cartella"
 

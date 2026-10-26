@@ -170,6 +170,10 @@ public:
     Q_INVOKABLE void openDownloadFolder() const;
     Q_INVOKABLE void copyToClipboard(const QString &text) const;
     Q_INVOKABLE void openLink(const QString &url) const;
+    /// True when `path` may be opened: a plain, non-executable file inside the download folder.
+    Q_INVOKABLE bool fileExists(const QString &path) const;
+    /// Opens a local file with the default application.
+    Q_INVOKABLE void openFile(const QString &path) const;
 
 Q_SIGNALS:
     void connectedChanged();

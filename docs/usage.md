@@ -241,7 +241,7 @@ With **Settings → Wi-Fi Direct → Receive and send without a shared network**
 
 ![The Transfers page](screenshots/transfers.png)
 
-The Transfers page lists transfers newest first, running ones included. A card shows the device, the state, the size and the date. Buttons depend on the state:
+The Transfers page lists transfers newest first, running ones included. A card shows the device, the state, the size and the date. While a transfer runs, the state line also shows the speed and the time left once there is an estimate. Buttons depend on the state:
 
 | Button | When |
 |---|---|
@@ -249,7 +249,7 @@ The Transfers page lists transfers newest first, running ones included. A card s
 | Cancel | A transfer is running |
 | Open folder | A received file transfer finished |
 | Copy | A text or link was received or sent |
-| More details | Always on finished entries: result, size, file names or text |
+| More details | Always on finished entries: result, size, file names or text. For files received in this session (the saved history does not keep where files went), each file still in the download folder has an **Open** button; executables and launcher files never do |
 | Remove from list | Finished entries |
 
 At the top, a search field and two menus narrow the list: the search matches the device name, received text and file names; the menus pick the direction (all, received, sent) and the status (any, in progress, completed, not completed, which covers cancelled, declined and interrupted transfers). The filters are not saved and do not change the history. With no match the page says so; **Reset filters**, next to the menus, brings the whole list back (it is greyed out while no filter is set).

@@ -1,6 +1,9 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QElapsedTimer>
+#include <QTimer>
+#include <functional>
 #include <QHash>
 #include <QList>
 #include <QStringList>
@@ -29,15 +32,20 @@ public:
         TrustedRole,
         AlwaysAcceptedRole,
         HistoryUidRole,
+        SpeedRole,
+        EtaSecondsRole,
+        SavedPathsRole,
     };
 
-    using QAbstractListModel::QAbstractListModel;
+    explicit TransferModel(QObject *parent = nullptr);
 
     int rowCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
 
     void update(const QString &id, const QVariantMap &info);
+    /// Replaces the millisecond clock used for speed sampling (tests feed their own).
+    void setClock(std::function<qint64()> clock) { m_now = std::move(clock); }
     /// Adds the row of a send that the core has not reported yet (state "Starting") and returns its
     /// number; the first `update` for the id takes the row over.
     quint64 beginPending(const QString &id, QVariantMap row);
@@ -79,7 +87,19 @@ private:
     {
         QString id;
         QVariantMap info;
+        // Transfer speed in bytes per second, smoothed; 0 until two samples are far enough apart.
+        double speed = 0;
+        qint64 sampleMs = -1;
+        qint64 lastEventMs = 0;
+        qulonglong sampleBytes = 0;
     };
+    static void sampleSpeed(Entry &entry, qint64 nowMs);
+    void refreshSpeedTimer();
+    bool speedStale(const Entry &entry) const;
+    QElapsedTimer m_elapsed = [] { QElapsedTimer t; t.start(); return t; }();
+    std::function<qint64()> m_now = [this] { return m_elapsed.elapsed(); };
+    // While a row is in progress: re-reads speed and ETA, which go stale when no event arrives.
+    QTimer m_speedTimer;
     QList<Entry> m_entries;
     bool m_busy = false;
     QHash<QString, quint64> m_pendingNumber;

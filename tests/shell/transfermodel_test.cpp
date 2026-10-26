@@ -275,6 +275,144 @@ private Q_SLOTS:
         QCOMPARE(model.rowCount(), 1);
         QCOMPARE(stateAt(model, 0), QStringLiteral("Finished"));
     }
+
+    static QVariantMap progress(qulonglong acked, qulonglong total = 10000)
+    {
+        return {{QStringLiteral("state"), QStringLiteral("ReceivingFiles")},
+                {QStringLiteral("total_bytes"), total},
+                {QStringLiteral("ack_bytes"), acked}};
+    }
+    static double speedAt(const TransferModel &model, int row = 0)
+    {
+        return model.data(model.index(row), TransferModel::SpeedRole).toDouble();
+    }
+    static int etaAt(const TransferModel &model, int row = 0)
+    {
+        return model.data(model.index(row), TransferModel::EtaSecondsRole).toInt();
+    }
+    // A model whose clock is `now`, in milliseconds.
+    static void useClock(TransferModel &model, qint64 &now)
+    {
+        model.setClock([&now] { return now; });
+    }
+
+    void speedAndEtaFollowTheBytesPerSecond()
+    {
+        TransferModel model;
+        qint64 now = 1000;
+        useClock(model, now);
+        const QString id = QStringLiteral("a");
+        model.update(id, progress(0));
+        // No estimate yet: speed 0, ETA hidden.
+        QCOMPARE(speedAt(model), 0.0);
+        QCOMPARE(etaAt(model), -1);
+        now = 1200;
+        model.update(id, progress(100)); // under 500 ms since the baseline: no sample
+        QCOMPARE(speedAt(model), 0.0);
+        now = 2000;
+        model.update(id, progress(1000)); // 1000 B in 1 s
+        QCOMPARE(speedAt(model), 1000.0);
+        QCOMPARE(etaAt(model), 9);
+        now = 3000;
+        model.update(id, progress(1500)); // 500 B/s, smoothed with 1000 -> 750
+        QCOMPARE(speedAt(model), 750.0);
+    }
+
+    void speedGoesStaleWithoutEvents()
+    {
+        TransferModel model;
+        qint64 now = 0;
+        useClock(model, now);
+        model.update(QStringLiteral("a"), progress(0));
+        now = 1000;
+        model.update(QStringLiteral("a"), progress(1000));
+        now = 3500; // 2.5 s of silence: still shown
+        QCOMPARE(speedAt(model), 1000.0);
+        now = 4100; // over 3 s: unknown
+        QCOMPARE(speedAt(model), 0.0);
+        QCOMPARE(etaAt(model), -1);
+        now = 4200;
+        model.update(QStringLiteral("a"), progress(2000)); // an event revives it, smoothed with the old speed
+        QCOMPARE(speedAt(model), 656.25); // (1000 + 1000 B / 3.2 s) / 2
+    }
+
+    void repeatedIdStartsFromAFreshBaseline()
+    {
+        TransferModel model;
+        qint64 now = 0;
+        useClock(model, now);
+        model.update(QStringLiteral("a"), progress(0));
+        now = 1000;
+        model.update(QStringLiteral("a"), progress(5000));
+        now = 2000;
+        model.update(QStringLiteral("a"), event(QStringLiteral("Finished")));
+        now = 100000;
+        model.update(QStringLiteral("a"), progress(0)); // same id, new transfer
+        QCOMPARE(model.rowCount(), 2);
+        QCOMPARE(speedAt(model), 0.0);
+        now = 101000;
+        model.update(QStringLiteral("a"), progress(2000));
+        QCOMPARE(speedAt(model), 2000.0); // not mixed with the first transfer
+    }
+
+    void ackAboveTotalGivesZeroEta()
+    {
+        TransferModel model;
+        qint64 now = 0;
+        useClock(model, now);
+        model.update(QStringLiteral("a"), progress(0, 1000));
+        now = 1000;
+        model.update(QStringLiteral("a"), progress(1500, 1000));
+        QCOMPARE(etaAt(model), 0);
+    }
+
+    void stateChangeResetsSampling()
+    {
+        TransferModel model;
+        qint64 now = 0;
+        useClock(model, now);
+        model.update(QStringLiteral("a"), progress(0));
+        now = 1000;
+        model.update(QStringLiteral("a"), progress(1000));
+        QCOMPARE(speedAt(model), 1000.0);
+        now = 1500;
+        model.update(QStringLiteral("a"), event(QStringLiteral("WaitingForUserConsent")));
+        QCOMPARE(speedAt(model), 0.0);
+        now = 2000;
+        model.update(QStringLiteral("a"), progress(1000)); // new baseline
+        QCOMPARE(speedAt(model), 0.0);
+        now = 3000;
+        model.update(QStringLiteral("a"), progress(1500));
+        QCOMPARE(speedAt(model), 500.0);
+    }
+
+    void noSpeedWithoutTotalOrAfterTheEnd()
+    {
+        TransferModel model;
+        qint64 now = 0;
+        useClock(model, now);
+        model.update(QStringLiteral("a"), progress(0, 0));
+        now = 2000;
+        model.update(QStringLiteral("a"), progress(500, 0));
+        QCOMPARE(model.data(model.index(0), TransferModel::SpeedRole).toDouble(), 0.0);
+        QCOMPARE(model.data(model.index(0), TransferModel::EtaSecondsRole).toInt(), -1);
+
+        now = 0;
+        model.update(QStringLiteral("b"), progress(0));
+        now = 1000;
+        model.update(QStringLiteral("b"), progress(1000));
+        now = 2000;
+        model.update(QStringLiteral("b"), event(QStringLiteral("Finished")));
+        QCOMPARE(model.data(model.index(0), TransferModel::SpeedRole).toDouble(), 0.0);
+        QCOMPARE(model.data(model.index(0), TransferModel::EtaSecondsRole).toInt(), -1);
+    }
+
+    void savedPathsAreSplitPerLine()
+    {
+        TransferModel model;
+        model.update(QStringLiteral("a"), {{QStringLiteral("state"), QStringLiteral("Finished")}, {QStringLiteral("saved_paths"), QStringLiteral("/d/a.txt\n/d/b (1).txt")}});
+        QCOMPARE(model.data(model.index(0), TransferModel::SavedPathsRole).toStringList(), (QStringList{QStringLiteral("/d/a.txt"), QStringLiteral("/d/b (1).txt")}));
+    }
 };
 
 QTEST_APPLESS_MAIN(TransferModelTest)

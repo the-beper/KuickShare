@@ -157,6 +157,7 @@ Kirigami.ScrollablePage {
             ack_bytes: item.ackBytes,
             total_bytes: item.totalBytes,
             files: item.files.join("\n"),
+            saved_paths: item.savedPaths.join("\n"),
             text: item.shownText
         });
     }
@@ -174,9 +175,11 @@ Kirigami.ScrollablePage {
         const text = info.text && info.text.length > 0 ? info.text : (info.preview ?? "");
         detailResult = stateText(info.state, info.kind, info.ack_bytes, id.startsWith("ble:"));
         detailSize = info.total_bytes > 0 ? core.formatSize(info.total_bytes) : "";
-        detailFiles = files.map(path => {
+        // Received files that are still on disk get an Open button; the saved name can differ from the offered one.
+        const saved = info.kind === "inbound" && info.state === "Finished" && info.saved_paths ? info.saved_paths.split("\n").filter(f => f.length > 0) : [];
+        detailFiles = (saved.length > 0 ? saved : files).map(path => {
             const name = path.substring(path.lastIndexOf("/") + 1);
-            return {name: name, icon: core.iconForName(name)};
+            return {name: name, icon: core.iconForName(name), path: saved.length > 0 && core.fileExists(path) ? path : ""};
         });
         detailText = files.length === 0 ? text : "";
         detailIsLink = files.length === 0 && /^https?:\/\/\S+$/i.test(text.trim());
@@ -270,13 +273,21 @@ Kirigami.ScrollablePage {
                         id: filesColumn
 
                         // One row: the text line plus the space around it.
-                        readonly property real rowHeight: Math.max(fileMetrics.height, Kirigami.Units.iconSizes.smallMedium) + Kirigami.Units.largeSpacing * 2 + spacing
+                        readonly property real rowHeight: Math.max(fileMetrics.height, Kirigami.Units.iconSizes.smallMedium, openProbe.implicitHeight) + Kirigami.Units.largeSpacing * 2 + spacing
 
                         width: filesScroll.availableWidth
                         spacing: 0
 
                         FontMetrics {
                             id: fileMetrics
+                        }
+
+                        // Only measures the Open button, which the taller rows contain.
+                        QQC2.Button {
+                            id: openProbe
+                            visible: false
+                            text: KI18n.i18n("Open")
+                            icon.name: "document-open"
                         }
 
                         Repeater {
@@ -300,10 +311,17 @@ Kirigami.ScrollablePage {
                                 }
                                 QQC2.Label {
                                     text: fileItem.modelData.name
+                                    textFormat: Text.PlainText
                                     elide: Text.ElideMiddle
                                     verticalAlignment: Text.AlignVCenter
                                     Layout.alignment: Qt.AlignVCenter
                                     Layout.fillWidth: true
+                                }
+                                QQC2.Button {
+                                    visible: fileItem.modelData.path.length > 0
+                                    text: KI18n.i18n("Open")
+                                    icon.name: "document-open"
+                                    onClicked: page.core.openFile(fileItem.modelData.path)
                                 }
                             }
                         }
@@ -381,6 +399,17 @@ Kirigami.ScrollablePage {
         return KI18n.i18n("%1 · %2", first, second);
     }
 
+    // "2 minutes left"; rounded up so the last seconds never read "0 minutes".
+    function etaText(seconds) {
+        if (seconds < 60) {
+            return KI18n.i18np("%1 second left", "%1 seconds left", Math.max(1, seconds));
+        }
+        if (seconds < 3600) {
+            return KI18n.i18np("%1 minute left", "%1 minutes left", Math.ceil(seconds / 60));
+        }
+        return KI18n.i18np("%1 hour left", "%1 hours left", Math.ceil(seconds / 3600));
+    }
+
     function when(seconds) {
         return seconds > 0 ? Qt.locale().toString(new Date(seconds * 1000), Locale.ShortFormat) : "";
     }
@@ -444,6 +473,9 @@ Kirigami.ScrollablePage {
             required property string preview
             required property real totalBytes
             required property real ackBytes
+            required property real speed
+            required property real etaSeconds
+            required property var savedPaths
             required property var files
             required property string bodyText
             required property string payloadKind
@@ -536,6 +568,9 @@ Kirigami.ScrollablePage {
                 readonly property string preview: cell.preview
                 readonly property real totalBytes: cell.totalBytes
                 readonly property real ackBytes: cell.ackBytes
+                readonly property real speed: cell.speed
+                readonly property real etaSeconds: cell.etaSeconds
+                readonly property var savedPaths: cell.savedPaths
                 readonly property var files: cell.files
                 readonly property string bodyText: cell.bodyText
                 readonly property string payloadKind: cell.payloadKind
@@ -547,6 +582,17 @@ Kirigami.ScrollablePage {
                 readonly property bool awaitingConsent: kind === "inbound" && transferState === "WaitingForUserConsent"
                 readonly property bool active: transferState !== "Finished" && transferState !== "Cancelled" && transferState !== "Rejected" && transferState !== "Disconnected"
                 readonly property bool inProgress: active && !awaitingConsent && totalBytes > 0
+                // "Receiving · 12 MB · 4.2 MB/s · 2 minutes left": speed and time appear once there is an estimate.
+                readonly property string progressText: {
+                    let text = page.joined(page.stateText(transferState, kind, ackBytes, viaBluetooth).replace(/…|\.\.\./, ""), page.core.formatSize(totalBytes));
+                    if (speed > 0) {
+                        text = page.joined(text, KI18n.i18n("%1/s", page.core.formatSize(speed)));
+                        if (etaSeconds >= 0) {
+                            text = page.joined(text, page.etaText(etaSeconds));
+                        }
+                    }
+                    return text;
+                }
                 // An outbound send can be cancelled while it looks for the device or connects.
                 readonly property bool cancellable: inProgress || (kind === "outbound" && active)
                 readonly property bool receivedFiles: kind === "inbound" && transferState === "Finished" && files.length > 0
@@ -648,7 +694,7 @@ Kirigami.ScrollablePage {
                                 Layout.fillWidth: true
 
                                 QQC2.Label {
-                                    readonly property string status: item.awaitingConsent && item.pin.length > 0 ? KI18n.i18n("Wants to share with you · PIN %1", item.pin) : item.inProgress ? page.joined(page.stateText(item.transferState, item.kind, item.ackBytes, item.viaBluetooth).replace(/…|\.\.\./, ""), page.core.formatSize(item.totalBytes)) : page.stateText(item.transferState, item.kind, item.ackBytes, item.viaBluetooth)
+                                    readonly property string status: item.awaitingConsent && item.pin.length > 0 ? KI18n.i18n("Wants to share with you · PIN %1", item.pin) : item.inProgress ? item.progressText : page.stateText(item.transferState, item.kind, item.ackBytes, item.viaBluetooth)
                                     readonly property string stamp: page.when(item.time)
                                     text: stamp.length > 0 && !item.active ? page.joined(status, stamp) : status
                                     opacity: 0.7

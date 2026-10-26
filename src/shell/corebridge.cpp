@@ -27,6 +27,7 @@
 #include <KLocalizedString>
 
 #include "autostart.h"
+#include "openablefile.h"
 #include <kcoreaddons.h>
 #include "dolphinmenu.h"
 #include "integration.h"
@@ -692,6 +693,19 @@ void CoreBridge::copyToClipboard(const QString &text) const
 void CoreBridge::openLink(const QString &url) const
 {
     QDesktopServices::openUrl(QUrl(url.trimmed()));
+}
+
+bool CoreBridge::fileExists(const QString &path) const
+{
+    const QString dir = m_downloadDir.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) : m_downloadDir;
+    return isOpenableReceivedFile(path, dir);
+}
+
+void CoreBridge::openFile(const QString &path) const
+{
+    if (fileExists(path)) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    }
 }
 
 void CoreBridge::setVisible(bool visible)

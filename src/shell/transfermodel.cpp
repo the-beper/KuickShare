@@ -2,6 +2,19 @@
 
 #include <QDateTime>
 
+TransferModel::TransferModel(QObject *parent)
+    : QAbstractListModel(parent)
+{
+    m_speedTimer.setInterval(1000);
+    connect(&m_speedTimer, &QTimer::timeout, this, [this] {
+        for (int row = 0; row < m_entries.size(); ++row) {
+            if (m_entries.at(row).sampleMs >= 0) {
+                emit dataChanged(index(row), index(row), {SpeedRole, EtaSecondsRole});
+            }
+        }
+    });
+}
+
 int TransferModel::rowCount(const QModelIndex &parent) const
 {
     return parent.isValid() ? 0 : m_entries.size();
@@ -49,6 +62,20 @@ QVariant TransferModel::data(const QModelIndex &index, int role) const
         return entry.info.value(QStringLiteral("always_accepted"));
     case HistoryUidRole:
         return entry.info.value(QStringLiteral("history_uid"));
+    case SpeedRole:
+        return isFinal(entry.info.value(QStringLiteral("state")).toString()) || speedStale(entry) ? 0.0 : entry.speed;
+    case EtaSecondsRole:
+    {
+        // -1 while unknown: finished, no size, or no speed estimate yet.
+        const qulonglong total = entry.info.value(QStringLiteral("total_bytes")).toULongLong();
+        const qulonglong acked = entry.info.value(QStringLiteral("ack_bytes")).toULongLong();
+        if (isFinal(entry.info.value(QStringLiteral("state")).toString()) || total == 0 || entry.speed <= 0 || speedStale(entry)) {
+            return -1;
+        }
+        return acked >= total ? 0 : qlonglong(double(total - acked) / entry.speed + 0.5);
+    }
+    case SavedPathsRole:
+        return entry.info.value(QStringLiteral("saved_paths")).toString().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
     }
     return {};
 }
@@ -71,6 +98,9 @@ QHash<int, QByteArray> TransferModel::roleNames() const
         {TrustedRole, "trusted"},
         {AlwaysAcceptedRole, "alwaysAccepted"},
         {HistoryUidRole, "historyUid"},
+        {SpeedRole, "speed"},
+        {EtaSecondsRole, "etaSeconds"},
+        {SavedPathsRole, "savedPaths"},
     };
 }
 
@@ -132,8 +162,51 @@ QVariantMap TransferModel::info(const QString &id) const
     return {};
 }
 
+void TransferModel::sampleSpeed(Entry &entry, qint64 nowMs)
+{
+    const QString state = entry.info.value(QStringLiteral("state")).toString();
+    const qulonglong acked = entry.info.value(QStringLiteral("ack_bytes")).toULongLong();
+    if ((state != QLatin1String("SendingFiles") && state != QLatin1String("ReceivingFiles")) || entry.info.value(QStringLiteral("total_bytes")).toULongLong() == 0) {
+        entry.sampleMs = -1;
+        entry.speed = 0;
+        return;
+    }
+    // Bytes since the last sample, at most twice a second, lightly smoothed (as in TransferWatcher).
+    if (entry.sampleMs < 0) {
+        entry.sampleMs = nowMs;
+        entry.sampleBytes = acked;
+    } else if (nowMs - entry.sampleMs >= 500) {
+        const double instant = acked >= entry.sampleBytes ? double(acked - entry.sampleBytes) * 1000.0 / double(nowMs - entry.sampleMs) : 0.0;
+        entry.speed = entry.speed == 0 ? instant : 0.5 * entry.speed + 0.5 * instant;
+        entry.sampleMs = nowMs;
+        entry.sampleBytes = acked;
+    }
+}
+
+bool TransferModel::speedStale(const Entry &entry) const
+{
+    return m_now() - entry.lastEventMs > 3000;
+}
+
+void TransferModel::refreshSpeedTimer()
+{
+    bool sampling = false;
+    for (const Entry &entry : std::as_const(m_entries)) {
+        if (entry.sampleMs >= 0) {
+            sampling = true;
+            break;
+        }
+    }
+    if (sampling && !m_speedTimer.isActive()) {
+        m_speedTimer.start();
+    } else if (!sampling) {
+        m_speedTimer.stop();
+    }
+}
+
 void TransferModel::update(const QString &id, const QVariantMap &info)
 {
+    const qint64 nowMs = m_now();
     for (int row = 0; row < m_entries.size(); ++row)
     {
         if (m_entries[row].id != id)
@@ -162,6 +235,9 @@ void TransferModel::update(const QString &id, const QVariantMap &info)
         }
         // The state is always authoritative, even when empty.
         m_entries[row].info.insert(QStringLiteral("state"), info.value(QStringLiteral("state")));
+        m_entries[row].lastEventMs = nowMs;
+        sampleSpeed(m_entries[row], nowMs);
+        refreshSpeedTimer();
         emit dataChanged(index(row), index(row));
         updateBusy();
         if (isFinal(info.value(QStringLiteral("state")).toString()))
@@ -174,6 +250,9 @@ void TransferModel::update(const QString &id, const QVariantMap &info)
     first.insert(QStringLiteral("time"), QDateTime::currentSecsSinceEpoch());
     beginInsertRows({}, 0, 0);
     m_entries.prepend({id, first});
+    m_entries.first().lastEventMs = nowMs;
+    sampleSpeed(m_entries.first(), nowMs);
+    refreshSpeedTimer();
     endInsertRows();
     updateBusy();
     if (isFinal(first.value(QStringLiteral("state")).toString()))
