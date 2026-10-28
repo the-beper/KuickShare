@@ -71,6 +71,14 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.4.1" date="2026-10-28">
+      <description>
+        <p>Fixes the tray menu.</p>
+        <ul>
+          <li>Preferences from the tray menu opens the settings when the window is closed, instead of the Send page.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.4.0" date="2026-10-26">
       <description>
         <p>Join a Wi-Fi network from a phone, temporary visibility, folders, and command-line sending to a named device.</p>

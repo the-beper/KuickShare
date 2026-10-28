@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(kuickshare VERSION 1.4.0 LANGUAGES CXX)
+project(kuickshare VERSION 1.4.1 LANGUAGES CXX)
 add_compile_definitions(KUICKSHARE_VERSION="${PROJECT_VERSION}")
 
 find_package(ECM REQUIRED NO_MODULE)
