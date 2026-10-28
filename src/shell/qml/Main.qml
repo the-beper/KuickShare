@@ -497,7 +497,12 @@ Kirigami.ApplicationWindow {
     }
 
     Component.onCompleted: {
-        Qt.callLater(show, startPage);
+        // A page shown right after creation (tray actions) wins over the start page.
+        Qt.callLater(() => {
+            if (currentPage === "") {
+                show(startPage);
+            }
+        });
         if (askIntegration && core.connected) {
             askIntegration = false;
             integrationDialog.open();
