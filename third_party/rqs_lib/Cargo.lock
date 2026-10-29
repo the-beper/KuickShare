@@ -1147,7 +1147,6 @@ dependencies = [
  "prost-build",
  "rand",
  "rustix",
- "serde",
  "sha2",
  "tokio",
  "tokio-util",
