@@ -71,6 +71,21 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.5.0" date="2026-10-29">
+      <description>
+        <p>Safer receiving, a check of what transfers without a shared network need, and a more responsive app while sending.</p>
+        <ul>
+          <li>Check system requirements, in the Wi-Fi Direct settings, shows whether sending, receiving and joining a network can work on this computer and what is missing. The diagnostic report it copies contains no network names, addresses or device names. Turning the option on is refused when neither direction can work.</li>
+          <li>Receiving through the computer's hotspot opens only the transfer port in firewalld. When that is not allowed, the transfer stays on Bluetooth and KuickShare asks before opening the hotspot without a firewall rule, for this session only. Before, every port was opened without asking.</li>
+          <li>Trusted devices were recognised by name and network address, which another device on the same network can copy. The list is emptied once with this update and a notice says so; trust a device again from its next transfer.</li>
+          <li>Received files never overwrite an existing file, are written only after you accept, are removed when a transfer is cancelled or fails, and count as received only when complete. An offer with too many files, or larger than the free space, is refused with the reason.</li>
+          <li>Connections that stall or flood the computer are timed out and limited, so receiving keeps working.</li>
+          <li>An answer goes to the transfer it was given for: an old notification can no longer accept a newer transfer.</li>
+          <li>Cancel works while a send is still looking for the device, and the app no longer waits during that search. Quitting restores the previous Wi-Fi connection in time.</li>
+          <li>Settings, history and pairings are saved safely and are readable only by you; a file that cannot be read is kept aside instead of being overwritten.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.4.1" date="2026-10-28">
       <description>
         <p>Fixes the tray menu.</p>
