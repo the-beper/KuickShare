@@ -33,6 +33,7 @@ KuickShare is GPL-3.0-or-later (see [LICENSE](LICENSE)). It builds on the projec
 | Per-chunk logs lowered to `trace` | `src/hdl/inbound.rs`, `src/hdl/outbound.rs` |
 | `sys_metrics` (AGPL-3.0) replaced by reading `/proc/sys/kernel/hostname`; `get_if_addrs` replaced by `if-addrs` | `src/utils.rs`, `src/lib.rs`, `Cargo.toml` |
 | `mdns-sd` from crates.io (0.21), and `if-addrs` 0.15 to match it, instead of the `unsolicited` branch of a fork: the periodic announcement is a second `register` call, the advertised addresses are IPv4 only through `disable_interface(IfKind::IPv6)` on the advertising daemon, probing is off (`set_requires_probe(false)`), and the host name carries the `.local.` suffix that 0.21 requires | `Cargo.toml`, `src/hdl/mdns.rs` |
+| Dependencies trimmed: `serde` dropped (unused), `bluer` built with only the `bluetoothd` and `l2cap` features, `directories` replaced by `dirs` (as in the core). The aarch64-only `dbus` dependency with `vendored` stays: it only makes libdbus build from source for bluer there *(inferred: upstream gives no reason)* | `Cargo.toml`, `src/utils.rs` |
 | `license = "GPL-3.0-only"` added to the manifest (upstream declares none, cargo-deny warned) | `Cargo.toml` |
 | Formatting only (and an unused test import) | `src/hdl/mdns_discovery.rs`, `src/hdl/blea.rs` (comment), `src/hdl/outbound.rs`, `src/hdl/ble_scan.rs`, `src/hdl/ble_send/gatt_dial.rs`, `src/manager.rs` |
 
@@ -132,7 +133,6 @@ The list is generated from `cargo metadata` (`Cargo.lock`), restricted to normal
 | der | 0.7.10 | Apache-2.0 OR MIT |
 | digest | 0.10.7 | MIT OR Apache-2.0 |
 | digest | 0.11.3 | MIT OR Apache-2.0 |
-| directories | 6.0.0 | MIT OR Apache-2.0 |
 | dirs-sys | 0.5.0 | MIT OR Apache-2.0 |
 | displaydoc | 0.2.7 | MIT OR Apache-2.0 |
 | ecdsa | 0.16.9 | Apache-2.0 OR MIT |
