@@ -54,6 +54,10 @@ tar -tf "$tarfile" > "$tmp/commits.list"
 if grep -Evq '^(repo(/|$)|refs\.txt$)' "$tmp/commits.list" || grep -Eq '(^/|(^|/)\.\.(/|$))' "$tmp/commits.list"; then
     bad_input "the commits archive has files other than repo/ and refs.txt"
 fi
+# Only plain files and directories: a symlink or hard link in a build job's artifact could point anywhere once extracted.
+if tar -tvf "$tarfile" | cut -c1 | grep -qv '[-d]'; then
+    bad_input "the commits archive has a member that is not a plain file or a directory (link, device)"
+fi
 mkdir "$tmp/commits"
 tar -xf "$tarfile" -C "$tmp/commits" --no-same-owner
 refs=$tmp/commits/refs.txt
@@ -109,7 +113,8 @@ while IFS=$tab read -r ref commit parent; do
     if current=$(ostree --repo="$repo" rev-parse "$ref" 2> /dev/null); then :; else current=-; fi
     [ "$current" = "$parent" ] || stale "$ref is at $current in the published repository, the new commit $commit has parent $parent"
 done < "$refs"
-ostree --repo="$repo" pull-local "$tmp/commits/repo" "$@"
+# --untrusted: the objects come from a build job, so ostree checks every object against its checksum.
+ostree --repo="$repo" pull-local --untrusted "$tmp/commits/repo" "$@"
 for ref in "$@"; do
     want=$(awk -F'\t' -v r="$ref" '$1 == r { print $2 }' "$refs")
     [ "$(ostree --repo="$repo" rev-parse "$ref")" = "$want" ] || fail "$ref is not at the exported commit after the pull"

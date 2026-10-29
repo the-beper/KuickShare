@@ -88,6 +88,7 @@ def main():
         else:
             print(read_ref(repo, spec))
     elif command == "pull-local":
+        rest = [r for r in rest if not r.startswith("--")]
         src, refs = rest[0], rest[1:]
         for ref in refs:
             commit = read_ref(src, ref)

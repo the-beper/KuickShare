@@ -460,6 +460,18 @@ run "$rel/sign-flatpak-repo.sh" "$w/commits/flatpak-commits.tar" "$w/signed"
 drop_secret
 check "sign refuses commits that are not the ones the build job reported" rc_is 1
 check "(no keyring is left)" no_leftovers
+mkdir "$w/evil"
+tar -xf "$w/commits/flatpak-commits.tar" -C "$w/evil"
+ln -s /etc/passwd "$w/evil/repo/objects/link"
+tar -C "$w/evil" -cf "$w/commits-evil.tar" repo refs.txt
+EXPECT_COMMITS_SHA256=$(sha256_of "$w/commits-evil.tar")
+export EXPECT_COMMITS_SHA256
+use_secret a
+run "$rel/sign-flatpak-repo.sh" "$w/commits-evil.tar" "$w/signed"
+drop_secret
+check "sign refuses a commits archive with a symlink" rc_is 2
+check "(the message says plain files)" out_has "not a plain file"
+check "(no keyring is left)" no_leftovers
 EXPECT_COMMITS_SHA256=$(sha256_of "$w/commits/flatpak-commits.tar")
 export EXPECT_COMMITS_SHA256
 run "$rel/sign-flatpak-repo.sh" "$w/commits/flatpak-commits.tar" "$w/signed"
