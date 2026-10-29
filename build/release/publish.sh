@@ -20,8 +20,6 @@
 #   SITE_TAR             the site archive from the sign job, EXPECT_SITE_SHA256 its SHA-256
 #   SITE_BASE_SHA        the gh-pages commit the site was built on ("-" when there was none)
 #   SITE_URL             where Pages serves the site
-#   REFS_FILE            (optional) refs.txt of the sign job, for the release notes
-#   RUN_URL              (optional) the URL of this run, for the release notes
 #   REPO_REMOTE          (optional) git remote of the repository, default https://github.com/$GITHUB_REPOSITORY.git
 #   PAGES_WAIT_SECS, PAGES_POLL_INTERVAL   (optional) how long and how often to look at Pages, default 600 and 15
 #   KUICKSHARE_ROOT      (optional) the checkout the files are checked against
@@ -141,12 +139,8 @@ check_release() {
 # ---- 2. the release and its assets ----
 info=$(lookup)
 if [ "$info" = none ]; then
-    ostree_commit=
-    if [ -n "${REFS_FILE:-}" ] && [ -f "$REFS_FILE" ]; then
-        ostree_commit=$(awk -F'\t' '$1 ~ /^app\// { print $2; exit }' "$REFS_FILE")
-    fi
     python3 -I "$tools/build/release/release-notes.py" "$root/data/io.github.the_beper.KuickShare.metainfo.xml" "$version" \
-        --commit "$GITHUB_SHA" --run-url "${RUN_URL:-}" --ostree-commit "$ostree_commit" > "$tmp/notes.md"
+        --repo "$repo" > "$tmp/notes.md"
     gh release create "$tag" --repo "$repo" --draft --verify-tag --title "$tag" --notes-file "$tmp/notes.md"
     info=$(lookup)
     [ "$info" != none ] || fail "the release was created but cannot be found"

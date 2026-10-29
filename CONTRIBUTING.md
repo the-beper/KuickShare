@@ -155,7 +155,7 @@ The maintainer's `.claude/` setup has a `translator` agent that fills the new en
 
 ### Making a release
 
-1. Set the new version in `Cargo.toml`, `src/shell/CMakeLists.txt` and the `<releases>` block of `data/io.github.the_beper.KuickShare.metainfo.xml`, where the release notes go in the `<description>` of the new `<release>`.
+1. Set the new version in `Cargo.toml`, `src/shell/CMakeLists.txt` and the `<releases>` block of `data/io.github.the_beper.KuickShare.metainfo.xml`, where the release notes go in the `<description>` of the new `<release>`: the `<li>` items become the "What's Changed" list of the GitHub release (keep them short, one change each), followed by the "Full Changelog" link to the previous `<release>`'s tag. The introductory `<p>` is only for software centers.
 2. Push the commit to `main` and wait until the CI run on it is green (its `required` check).
 3. Tag that commit `vX.Y.Z`, matching the version, and push only the tag.
 4. Approve the `release-signing` environment when the run asks for it.

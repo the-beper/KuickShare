@@ -167,6 +167,11 @@ make_world() { # <number>: a fresh project, origin and published repository, and
         </ul>
       </description>
     </release>
+    <release version="1.2.2" date="2025-12-01">
+      <description>
+        <p>Older.</p>
+      </description>
+    </release>
   </releases>
 </component>
 XML
@@ -268,9 +273,7 @@ job_publish() {
     SITE_TAR=$w/signed/site.tar
     EXPECT_SITE_SHA256=$(sha256_of "$w/signed/site.tar")
     SITE_BASE_SHA=$base_sha
-    REFS_FILE=$w/signed/refs.txt
-    RUN_URL=https://example.invalid/runs/1
-    export ASSETS_DIR EXPECT_SUMS_SHA256 SITE_TAR EXPECT_SITE_SHA256 SITE_BASE_SHA REFS_FILE RUN_URL
+    export ASSETS_DIR EXPECT_SUMS_SHA256 SITE_TAR EXPECT_SITE_SHA256 SITE_BASE_SHA
     run "$rel/publish.sh"
 }
 full_release() { # a release that goes right through, up to and including publish
@@ -291,7 +294,8 @@ echo "1..$total"
 full_release 1
 check "publish exits 0" rc_is 0
 check "the release is published, has five assets and is the latest" state_is "published 5 latest"
-check "the release notes come from the metainfo and name the commit" file_has "$FAKE_GH_STATE" "Built from commit"
+check "the release notes list the metainfo items" file_has "$FAKE_GH_STATE" "What's Changed\\\\n\\\\n- First change with \`code\`."
+check "the release notes link the changelog to the previous tag" file_has "$FAKE_GH_STATE" "Full Changelog\\*\\*: https://github.com/example/KuickShare/compare/v1.2.2\\.\\.\\.v1.2.3"
 check "the AppImage was uploaded once" same "$(gh_count 'upload KuickShare-x86_64.AppImage')" 1
 check "gh-pages is the new site" same "$(pages_file repo/summary)" "$(tar -xOf "$w/signed/site.tar" ./repo/summary)"
 check "the old gh-pages is kept as gh-pages-previous" same "$(git -C "$origin" rev-parse refs/heads/gh-pages-previous)" "$base_sha"

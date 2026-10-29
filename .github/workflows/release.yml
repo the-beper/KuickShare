@@ -365,11 +365,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ASSETS_DIR: release-assets
           EXPECT_SUMS_SHA256: ${{ needs.verify.outputs.sums_sha256 }}
           SITE_TAR: flatpak-site/site.tar
           EXPECT_SITE_SHA256: ${{ needs.sign-flatpak.outputs.site_sha256 }}
           SITE_BASE_SHA: ${{ needs.sign-flatpak.outputs.base_sha }}
-          REFS_FILE: flatpak-site/refs.txt
         run: build/release/publish.sh
