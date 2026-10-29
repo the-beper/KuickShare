@@ -10,7 +10,8 @@
 #      client's update must fail and leave the installed commit alone. Then S2 itself: the update must succeed, reach the new
 #      commit, whose parent is the installed one, and fetch a static delta.
 # The application is the one the build made: pass its repository (default dist/flatpak-repo, as build-flatpak.sh leaves it).
-# Runs in the Flatpak image (flatpak, ostree, gpg, git, python3, curl); needs no D-Bus and no bwrap.
+# Runs where flatpak, ostree, gpg, git, python3 and curl are installed; CI runs it on plain ubuntu-24.04 with the apt packages the release's
+# signing job installs. Needs no D-Bus and no bwrap.
 # Usage: build/flatpak/test-repo-update.sh [<built repository>]
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)

@@ -290,7 +290,9 @@ jobs:
   # The secret is given to one step only. No --privileged: signing and checking as a client need no sandbox.
   sign-flatpak:
     needs: [validate, ci-gate, verify, build-flatpak]
-    runs-on: ubuntu-latest
+    # Pinned, not -latest: the flatpak and ostree versions that regenerate the repository are those of this image, and CI's
+    # repo-update job proves client updates on the very same one.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release-signing
     permissions:

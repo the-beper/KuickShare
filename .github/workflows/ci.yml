@@ -200,10 +200,49 @@ jobs:
           chmod 700 /run/user/0
           XDG_RUNTIME_DIR=/run/user/0 dbus-run-session -- build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
 
-      # An installed client must still update to a repository finished by the release's separate signing job: ephemeral keys,
-      # a local web server, the repository this job just built.
+      # The repository this job built, for the update proof below (a tar: empty directories and modes matter to OSTree).
+      - name: Pack the repository
+        run: tar -C dist -cf dist/flatpak-repo.tar flatpak-repo
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flatpak-repo
+          path: dist/flatpak-repo.tar
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+  # An installed client must still update to a repository finished the way a release does it. This runs on the same plain,
+  # pinned runner image as the release's signing job, with the same apt packages, so the proof is about the tool versions the
+  # releases really use. Ephemeral keys, a local web server, no secret.
+  repo-update:
+    needs: [changes, flatpak]
+    if: needs.changes.outputs.packaging == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install flatpak and ostree
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak ostree appstream
+          flatpak --version
+          ostree --version | head -n 2
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: flatpak-repo
+          path: built
+
       - name: Repository update test
-        run: build/flatpak/test-repo-update.sh dist/flatpak-repo
+        run: |
+          tar -xf built/flatpak-repo.tar -C built
+          build/flatpak/test-repo-update.sh built/flatpak-repo
 
   deny:
     needs: changes
@@ -224,7 +263,7 @@ jobs:
   # cancellation fails it.
   required:
     if: always()
-    needs: [changes, lint, check, appimage, tarball, flatpak, deny]
+    needs: [changes, lint, check, appimage, tarball, flatpak, repo-update, deny]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -247,6 +286,7 @@ jobs:
               "tarball": "packaging",
               "appimage": "packaging",
               "flatpak": "packaging",
+              "repo-update": "packaging",
           }
 
           changes = needs.get("changes", {})
