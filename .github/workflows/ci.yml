@@ -199,6 +199,11 @@ jobs:
           mkdir -p -m 700 /run/user/0
           XDG_RUNTIME_DIR=/run/user/0 dbus-run-session -- build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
 
+      # An installed client must still update to a repository finished by the release's separate signing job: ephemeral keys,
+      # a local web server, the repository this job just built.
+      - name: Repository update test
+        run: build/flatpak/test-repo-update.sh dist/flatpak-repo
+
   deny:
     needs: changes
     if: needs.changes.outputs.code == 'true'
