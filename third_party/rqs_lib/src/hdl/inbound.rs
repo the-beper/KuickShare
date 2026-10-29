@@ -66,6 +66,9 @@ pub struct InboundRequest {
     sender: Sender<ChannelMessage>,
     receiver: Receiver<ChannelMessage>,
     upgrade: UpgradeState,
+    /// Tests only: where files go, instead of the process-wide download directory.
+    #[cfg(test)]
+    download_dir: Option<PathBuf>,
 }
 
 impl InboundRequest {
@@ -98,7 +101,17 @@ impl InboundRequest {
             sender,
             receiver,
             upgrade: UpgradeState::new(crate::wifi_link()),
+            #[cfg(test)]
+            download_dir: None,
         }
+    }
+
+    fn dest_dir(&self) -> PathBuf {
+        #[cfg(test)]
+        if let Some(dir) = &self.download_dir {
+            return dir.clone();
+        }
+        get_download_dir()
     }
 
     /// Offer to disable encryption on the upgraded channel (never done outside tests).
@@ -941,6 +954,7 @@ impl InboundRequest {
             let mut files_name = Vec::with_capacity(introduction.file_metadata.len());
             let mut saved_paths = Vec::with_capacity(introduction.file_metadata.len());
             let mut total_bytes: u64 = 0;
+            let dest_dir = self.dest_dir();
 
             for file in &introduction.file_metadata {
                 info!("File name: {}", file.name());
@@ -949,7 +963,7 @@ impl InboundRequest {
                     "file".to_owned()
                 });
 
-                let dest = free_path(&get_download_dir(), &name, |p| {
+                let dest = free_path(&dest_dir, &name, |p| {
                     p.exists()
                         || self
                             .state
@@ -1682,6 +1696,63 @@ fn free_path(dir: &Path, name: &str, taken: impl Fn(&Path) -> bool) -> PathBuf {
         .expect("unbounded range")
 }
 
+/// Test-only capture of `log` output, per thread (each test runs on its own thread), so a
+/// test can check what a code path writes to the log at any level.
+#[cfg(test)]
+pub mod capture_log {
+    use std::sync::{Mutex, Once};
+    use std::thread::ThreadId;
+
+    static LINES: Mutex<Vec<(ThreadId, String)>> = Mutex::new(Vec::new());
+
+    struct Capture;
+
+    impl log::Log for Capture {
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record) {
+            LINES
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((
+                    std::thread::current().id(),
+                    format!("{} {}", record.level(), record.args()),
+                ));
+        }
+
+        fn flush(&self) {}
+    }
+
+    /// Installs the capturing logger at TRACE (once per process).
+    pub fn install() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            log::set_logger(&Capture).expect("another logger is already installed");
+            log::set_max_level(log::LevelFilter::Trace);
+        });
+    }
+
+    /// A position in the captured lines; pass it to `since`.
+    pub fn mark() -> usize {
+        LINES.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    /// The lines logged by the calling thread after `mark`.
+    pub fn since(mark: usize) -> Vec<String> {
+        let me = std::thread::current().id();
+        LINES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .skip(mark)
+            .filter(|(t, _)| *t == me)
+            .map(|(_, l)| l.clone())
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -1804,5 +1875,494 @@ mod tests {
         crate::upgrade::tests::write_plain_keep_alive(&mut peer).await;
         let err = req.handle().await.unwrap_err();
         assert!(err.to_string().contains("only sent keep-alives"), "{err}");
+    }
+
+    // ---- Inbound file safety: repro tests (written before the fix; most fail on purpose) ----
+
+    use tokio::io::DuplexStream;
+    use tokio::sync::broadcast::error::TryRecvError;
+
+    use crate::hdl::capture_log;
+
+    /// A directory under the system temp dir, removed on drop.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let p = std::env::temp_dir().join(format!("rqs-p0a-{}-{tag}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&p);
+            std::fs::create_dir_all(&p).unwrap();
+            Self(p)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const INTRO_ID: i64 = 9_000_001;
+
+    /// An inbound session over a duplex pipe, in plain-frame mode and already past the
+    /// handshake, saving into its own directory. The test plays the phone.
+    struct Session {
+        req: InboundRequest,
+        peer: Option<DuplexStream>,
+        bus: broadcast::Sender<ChannelMessage>,
+        rx: broadcast::Receiver<ChannelMessage>,
+    }
+
+    impl Session {
+        fn new(dir: &Path) -> Self {
+            let (peer, ours) = tokio::io::duplex(8 * 1024 * 1024);
+            let (bus, rx) = broadcast::channel(4096);
+            let mut req =
+                InboundRequest::new_over(MigratableStream::Duplex(ours), "peer".into(), bus.clone());
+            req.plain_frames = true;
+            // No Wi-Fi link: another test may have set the global one.
+            req.upgrade = UpgradeState::new(None);
+            req.state.state = TransferState::ReceivedPairedKeyResult;
+            req.download_dir = Some(dir.to_owned());
+            Self {
+                req,
+                peer: Some(peer),
+                bus,
+                rx,
+            }
+        }
+
+        /// The peer sends one frame and the session handles exactly that frame.
+        async fn feed(&mut self, frame: &OfflineFrame) -> Result<(), anyhow::Error> {
+            let data = frame.encode_to_vec();
+            self.peer
+                .as_mut()
+                .expect("peer is closed")
+                .write_all(&data)
+                .await
+                .unwrap();
+            self.req._handle((data.len() as u32).to_be_bytes()).await
+        }
+
+        async fn offer(
+            &mut self,
+            files: Vec<sharing_nearby::FileMetadata>,
+            texts: Vec<sharing_nearby::TextMetadata>,
+        ) -> Result<(), anyhow::Error> {
+            let body = introduction(files, texts);
+            let frame = payload_frame(
+                payload_header::PayloadType::Bytes,
+                INTRO_ID,
+                body.len() as i64,
+                0,
+                1,
+                &body,
+            );
+            self.feed(&frame).await
+        }
+
+        async fn file_chunk(
+            &mut self,
+            id: i64,
+            total: i64,
+            offset: i64,
+            flags: i32,
+            body: &[u8],
+        ) -> Result<(), anyhow::Error> {
+            let frame = payload_frame(
+                payload_header::PayloadType::File,
+                id,
+                total,
+                offset,
+                flags,
+                body,
+            );
+            self.feed(&frame).await
+        }
+
+        /// What the core would send on the bus; handles every message queued for the session.
+        async fn deliver(&mut self, action: TransferAction) -> Result<(), anyhow::Error> {
+            let _ = self.bus.send(ChannelMessage {
+                id: "peer".into(),
+                msg: channel::Message::Lib { action },
+            });
+            while !self.req.receiver.is_empty() {
+                self.req.handle().await?;
+            }
+            Ok(())
+        }
+
+        /// A user cancel; the peer closes when the session shuts down its side.
+        async fn cancel(&mut self) -> Result<(), anyhow::Error> {
+            let mut peer = self.peer.take().expect("peer is closed");
+            let closer = async move {
+                let mut sink = Vec::new();
+                let _ = peer.read_to_end(&mut sink).await;
+            };
+            let (result, ()) = tokio::join!(self.deliver(TransferAction::TransferCancel), closer);
+            result
+        }
+
+        /// The peer vanishes; returns the error that ends the session.
+        async fn disconnect(&mut self) -> anyhow::Error {
+            drop(self.peer.take());
+            loop {
+                if let Err(e) = self.req.handle().await {
+                    return e;
+                }
+            }
+        }
+
+        fn events(&mut self) -> Vec<MessageClient> {
+            let mut out = Vec::new();
+            loop {
+                match self.rx.try_recv() {
+                    Ok(m) => {
+                        if let channel::Message::Client(c) = m.msg {
+                            out.push(c);
+                        }
+                    }
+                    Err(TryRecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+            out
+        }
+
+        fn finished(&mut self) -> bool {
+            self.events()
+                .iter()
+                .any(|e| e.state == Some(TransferState::Finished))
+        }
+    }
+
+    fn payload_frame(
+        kind: payload_header::PayloadType,
+        id: i64,
+        total: i64,
+        offset: i64,
+        flags: i32,
+        body: &[u8],
+    ) -> OfflineFrame {
+        OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(
+                    location_nearby_connections::v1_frame::FrameType::PayloadTransfer.into(),
+                ),
+                payload_transfer: Some(PayloadTransferFrame {
+                    packet_type: Some(PacketType::Data.into()),
+                    payload_header: Some(PayloadHeader {
+                        id: Some(id),
+                        r#type: Some(kind.into()),
+                        total_size: Some(total),
+                        is_sensitive: Some(false),
+                        ..Default::default()
+                    }),
+                    payload_chunk: Some(PayloadChunk {
+                        offset: Some(offset),
+                        flags: Some(flags),
+                        body: Some(body.to_vec()),
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        }
+    }
+
+    fn introduction(
+        files: Vec<sharing_nearby::FileMetadata>,
+        texts: Vec<sharing_nearby::TextMetadata>,
+    ) -> Vec<u8> {
+        sharing_nearby::Frame {
+            version: Some(sharing_nearby::frame::Version::V1.into()),
+            v1: Some(sharing_nearby::V1Frame {
+                r#type: Some(sharing_nearby::v1_frame::FrameType::Introduction.into()),
+                introduction: Some(sharing_nearby::IntroductionFrame {
+                    file_metadata: files,
+                    text_metadata: texts,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        }
+        .encode_to_vec()
+    }
+
+    fn file_meta(name: &str, id: i64, size: i64) -> sharing_nearby::FileMetadata {
+        sharing_nearby::FileMetadata {
+            name: Some(name.into()),
+            payload_id: Some(id),
+            size: Some(size),
+            mime_type: Some("text/plain".into()),
+            ..Default::default()
+        }
+    }
+
+    fn text_meta(id: i64, size: i64) -> sharing_nearby::TextMetadata {
+        sharing_nearby::TextMetadata {
+            text_title: Some("note".into()),
+            r#type: Some(text_metadata::Type::Text.into()),
+            payload_id: Some(id),
+            size: Some(size),
+            ..Default::default()
+        }
+    }
+
+    fn dir_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// D1: a user cancel while receiving must not leave the half file behind.
+    #[tokio::test]
+    async fn cancel_removes_partial_file() {
+        let tmp = TempDir::new("cancel");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 10)], vec![]).await.unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        s.file_chunk(1, 10, 0, 0, b"12345").await.unwrap();
+        let path = tmp.0.join("a.txt");
+        assert_eq!(std::fs::read(&path).unwrap(), b"12345", "precondition");
+
+        assert!(s.cancel().await.is_err(), "a cancel ends the session");
+        assert!(!path.exists(), "the partial file is still there after a cancel");
+    }
+
+    /// D1: the peer vanishing mid-file must not leave the half file behind.
+    #[tokio::test]
+    async fn disconnect_removes_partial_file() {
+        let tmp = TempDir::new("disconnect");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 10)], vec![]).await.unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        s.file_chunk(1, 10, 0, 0, b"12345").await.unwrap();
+        let path = tmp.0.join("a.txt");
+        assert!(path.exists(), "precondition");
+
+        let _ = s.disconnect().await;
+        assert!(!path.exists(), "the partial file is still there after an EOF");
+    }
+
+    /// D2: 10 bytes of a declared 1000 plus the last-chunk flag is not a finished transfer.
+    #[tokio::test]
+    async fn short_file_is_not_finished() {
+        let tmp = TempDir::new("short");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 1000)], vec![]).await.unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        s.file_chunk(1, 1000, 0, 0, b"0123456789").await.unwrap();
+        let _ = s.file_chunk(1, 1000, 10, 1, b"").await;
+        assert!(!s.finished(), "a 10 byte file declared as 1000 reached Finished");
+    }
+
+    /// A chunk past the declared size is refused (it is today) and the partial file goes too.
+    #[tokio::test]
+    async fn chunk_beyond_declared_size_is_refused_and_removed() {
+        let tmp = TempDir::new("beyond");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![]).await.unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        s.file_chunk(1, 4, 0, 0, b"ab").await.unwrap();
+        let refused = s.file_chunk(1, 4, 2, 0, b"cdefgh").await;
+        assert!(refused.is_err(), "a chunk past the declared size was taken");
+        assert!(
+            !tmp.0.join("a.txt").exists(),
+            "the partial file is still there after the refusal"
+        );
+    }
+
+    /// D5: file data before the user accepted is an error, not a panic.
+    #[tokio::test]
+    async fn file_chunk_before_consent_is_an_error() {
+        let tmp = TempDir::new("noconsent");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 10)], vec![]).await.unwrap();
+        let r = s.file_chunk(1, 10, 0, 0, b"x").await;
+        assert!(r.is_err(), "file data before consent was taken");
+        assert!(dir_names(&tmp.0).is_empty(), "a file appeared before consent");
+    }
+
+    /// D4: a text whose bytes arrive before the user accepted must not be reported as received.
+    #[tokio::test]
+    async fn text_before_consent_is_not_finished() {
+        let tmp = TempDir::new("text");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![], vec![text_meta(77, 5)]).await.unwrap();
+        assert_eq!(s.req.state.state, TransferState::WaitingForUserConsent);
+        let frame = payload_frame(payload_header::PayloadType::Bytes, 77, 5, 0, 1, b"hello");
+        let _ = s.feed(&frame).await;
+        assert!(!s.finished(), "a text reached Finished without consent");
+    }
+
+    /// D6: a negative `total_size` is refused, it must not panic.
+    #[tokio::test]
+    async fn negative_bytes_total_size_is_refused() {
+        let tmp = TempDir::new("negative");
+        let mut s = Session::new(&tmp.0);
+        let frame = payload_frame(payload_header::PayloadType::Bytes, 5, -1, 0, 0, b"x");
+        assert!(s.feed(&frame).await.is_err());
+    }
+
+    /// D7: chunks past the declared `total_size` must not keep growing the buffer.
+    #[tokio::test]
+    async fn bytes_payload_cannot_outgrow_total_size() {
+        let tmp = TempDir::new("outgrow");
+        let mut s = Session::new(&tmp.0);
+        let first = payload_frame(payload_header::PayloadType::Bytes, 5, 10, 0, 0, &[1; 8]);
+        s.feed(&first).await.unwrap();
+        let second = payload_frame(payload_header::PayloadType::Bytes, 5, 10, 8, 0, &[2; 8]);
+        let refused = s.feed(&second).await;
+        let held = s.req.state.payload_buffers.get(&5).map_or(0, Vec::len);
+        assert!(refused.is_err(), "16 bytes were taken for a payload of 10");
+        assert!(held <= 10, "the buffer holds {held} bytes for a payload of 10");
+    }
+
+    /// D10: a second ConsentAccept while receiving must not re-create or rename the files.
+    #[tokio::test]
+    async fn second_accept_is_ignored() {
+        let tmp = TempDir::new("twice");
+        let mut s = Session::new(&tmp.0);
+        s.offer(
+            vec![file_meta("a.txt", 1, 4), file_meta("b.txt", 2, 4)],
+            vec![],
+        )
+        .await
+        .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        s.file_chunk(1, 4, 0, 0, b"AA").await.unwrap();
+
+        let _ = s.deliver(TransferAction::ConsentAccept).await;
+        let _ = s.file_chunk(1, 4, 2, 0, b"AA").await;
+
+        assert_eq!(dir_names(&tmp.0), ["a.txt", "b.txt"], "a second accept renamed files");
+        assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"AAAA");
+    }
+
+    /// D11: when the name is taken between the offer and the accept, the paths reported to the
+    /// app are the ones really written.
+    #[tokio::test]
+    async fn collision_after_offer_updates_saved_paths() {
+        let tmp = TempDir::new("collision");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![]).await.unwrap();
+        std::fs::write(tmp.0.join("a.txt"), b"other").unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+
+        assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"other");
+        let saved = s
+            .events()
+            .into_iter()
+            .rev()
+            .find_map(|e| e.metadata)
+            .expect("no metadata was reported")
+            .saved_paths;
+        let expected = tmp.0.join("a (1).txt").to_string_lossy().into_owned();
+        assert_eq!(saved, [expected]);
+    }
+
+    /// D9: two dangling symlinks used to make `accept_transfer` spin forever. It runs in a
+    /// thread because a busy loop cannot be stopped by a tokio timeout.
+    #[test]
+    fn dangling_symlinks_do_not_hang_accept() {
+        let tmp = TempDir::new("dangling");
+        std::os::unix::fs::symlink(tmp.0.join("gone-1"), tmp.0.join("a.jpg")).unwrap();
+        std::os::unix::fs::symlink(tmp.0.join("gone-2"), tmp.0.join("a (1).jpg")).unwrap();
+        let dir = tmp.0.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let mut s = Session::new(&dir);
+                let _ = s.offer(vec![file_meta("a.jpg", 1, 4)], vec![]).await;
+                let _ = s.deliver(TransferAction::ConsentAccept).await;
+            });
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(Duration::from_secs(20))
+            .expect("accept_transfer is stuck in a loop on dangling symlinks");
+        assert!(!tmp.0.join("gone-1").exists(), "a dangling symlink was followed");
+        assert!(!tmp.0.join("gone-2").exists(), "a dangling symlink was followed");
+    }
+
+    /// D8: an offer of many files with one name must be handled in bounded time (today the
+    /// cost grows with the cube of the count). Thread plus timeout, as above.
+    #[test]
+    fn many_identical_names_offer_is_bounded() {
+        let tmp = TempDir::new("identical");
+        let dir = tmp.0.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let mut s = Session::new(&dir);
+                let files = (1..=2000).map(|i| file_meta("a.txt", i, 1)).collect();
+                let _ = s.offer(files, vec![]).await;
+            });
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(Duration::from_secs(10))
+            .expect("an offer of 2000 files named a.txt takes far too long");
+    }
+
+    /// Regression guard (passes today): a symlink put at the planned name after the offer is
+    /// never written through.
+    #[tokio::test]
+    async fn symlink_swapped_in_after_offer_is_not_followed() {
+        let tmp = TempDir::new("swap");
+        let outside = TempDir::new("swap-outside");
+        let target = outside.0.join("target.txt");
+        std::fs::write(&target, b"keep").unwrap();
+
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![]).await.unwrap();
+        std::os::unix::fs::symlink(&target, tmp.0.join("a.txt")).unwrap();
+        let _ = s.deliver(TransferAction::ConsentAccept).await;
+        let _ = s.file_chunk(1, 4, 0, 0, b"EVIL").await;
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+    }
+
+    /// The pairing PIN must not be written to the log at any level.
+    #[tokio::test]
+    async fn pin_is_not_logged() {
+        capture_log::install();
+        let mark = capture_log::mark();
+        let (_peer, ours) = tokio::io::duplex(1024);
+        let (bus, _rx) = broadcast::channel(8);
+        let mut req = InboundRequest::new_over(MigratableStream::Duplex(ours), "id".into(), bus);
+        let (secret, _public) = gen_ecdsa_keypair();
+        req.state.private_key = Some(secret);
+        req.state.client_init_msg_data = Some(vec![1, 2, 3]);
+        req.state.server_init_data = Some(vec![4, 5, 6]);
+        let (_peer_secret, peer_public) = gen_ecdsa_keypair();
+        let point = peer_public.to_sec1_point(false);
+        let key = GenericPublicKey {
+            r#type: PublicKeyType::EcP256.into(),
+            ec_p256_public_key: Some(EcP256PublicKey {
+                x: point.x().unwrap().to_vec(),
+                y: point.y().unwrap().to_vec(),
+            }),
+            ..Default::default()
+        };
+        req.finalize_key_exchange(key).await.unwrap();
+
+        let pin = req.state.pin_code.clone().expect("no PIN was derived");
+        let leaked: Vec<String> = capture_log::since(mark)
+            .into_iter()
+            .filter(|l| l.contains(&pin))
+            .collect();
+        assert!(leaked.is_empty(), "the PIN {pin} is in the log: {leaked:?}");
     }
 }

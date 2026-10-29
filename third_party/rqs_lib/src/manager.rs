@@ -525,4 +525,76 @@ mod tests {
             "{states:?}"
         );
     }
+
+    /// The text of an outgoing send must not be written to the log at any level.
+    #[tokio::test]
+    async fn send_text_is_not_logged() {
+        const SECRET: &str = "TOPSECRET-BODY-4f2a9c";
+        crate::hdl::capture_log::install();
+        let mark = crate::hdl::capture_log::mark();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (bus, _keep) = tokio::sync::broadcast::channel(16);
+        let mut watch = bus.subscribe();
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let mut server = TcpServer::new(*b"TEST", listener, bus, rx).unwrap();
+        let ctk = CancellationToken::new();
+        let run = tokio::spawn({
+            let ctk = ctk.clone();
+            async move { server.run(ctk).await }
+        });
+        let mut si = ble_info("127.0.0.1:1");
+        si.addr = "127.0.0.1:1".into();
+        si.ob = OutboundPayload::Text {
+            text: SECRET.into(),
+            text_type: crate::TextPayloadType::Text,
+        };
+        tx.send(si).await.unwrap();
+        // Nothing listens on port 1: the refused send is reported once `run` has logged it.
+        while state_of(watch.recv().await.unwrap()) != Some(TransferState::Disconnected) {}
+        ctk.cancel();
+        run.await.unwrap().unwrap();
+
+        let leaked: Vec<String> = crate::hdl::capture_log::since(mark)
+            .into_iter()
+            .filter(|l| l.contains(SECRET))
+            .collect();
+        assert!(leaked.is_empty(), "the text is in the log: {leaked:?}");
+    }
+
+    /// D12: a connection that sends nothing must be dropped after an idle timeout (60 s in the
+    /// design). Ignored: the timeout is not injectable and tokio's `test-util` (paused time) is
+    /// not enabled for rqs_lib, so the test would need a real minute.
+    #[tokio::test]
+    #[ignore = "needs an injectable idle timeout (Limits) or tokio test-util paused time"]
+    async fn idle_inbound_session_times_out() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (bus, _keep) = tokio::sync::broadcast::channel(16);
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        let mut server = TcpServer::new(*b"TEST", listener, bus, rx).unwrap();
+        let ctk = CancellationToken::new();
+        tokio::spawn({
+            let ctk = ctk.clone();
+            async move { server.run(ctk).await }
+        });
+        let mut idle = TcpStream::connect(addr).await.unwrap();
+        let mut buf = [0u8; 1];
+        let closed = tokio::time::timeout(
+            Duration::from_secs(90),
+            tokio::io::AsyncReadExt::read(&mut idle, &mut buf),
+        )
+        .await
+        .expect("the server kept a silent connection open");
+        assert!(matches!(closed, Ok(0) | Err(_)));
+        ctk.cancel();
+    }
+
+    /// D12: an `accept()` error (file descriptors used up) must not end the server loop.
+    /// Ignored: `TcpServer` owns a concrete `TcpListener`, so there is no way to make
+    /// `accept()` fail without lowering RLIMIT_NOFILE for the whole test process.
+    #[tokio::test]
+    #[ignore = "needs an injectable listener to make accept() fail"]
+    async fn accept_error_keeps_server_running() {
+        unimplemented!("make accept() fail, then connect again and expect the loop to still run");
+    }
 }
