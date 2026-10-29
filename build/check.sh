@@ -21,7 +21,7 @@ cargo test -p rqs_lib
 git ls-files --error-unmatch third_party/rqs_lib/Cargo.lock >/dev/null 2>&1 || rm -f third_party/rqs_lib/Cargo.lock
 
 step "Shell build and tests"
-cmake -S src/shell -B dist/tmp/cmake-dev -G Ninja
+cmake -S src/shell -B dist/tmp/cmake-dev -G Ninja -DBUILD_TESTING=ON
 cmake --build dist/tmp/cmake-dev
 ctest --test-dir dist/tmp/cmake-dev --output-on-failure
 

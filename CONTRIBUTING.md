@@ -63,7 +63,7 @@ build/build-env.sh build/check.sh
 | Format | `cargo fmt --check`, also in `third_party/rqs_lib` |
 | Lint | `cargo clippy --locked --all-targets --all-features -- -D warnings` |
 | Rust tests | `cargo test --locked --all-features` (needs `dbus-daemon`), and `cargo test -p rqs_lib` for the vendored library, which is not a workspace member |
-| Shell | CMake build into `dist/tmp/cmake-dev`, `ctest`, `qmllint-qt6` |
+| Shell | CMake build with `-DBUILD_TESTING=ON` into `dist/tmp/cmake-dev` (the Qt tests are built only then; the AppImage, tarball and Flatpak builds pass `-DBUILD_TESTING=OFF`), `ctest`, `qmllint-qt6` |
 | Data | `xmllint` on the metainfo, `desktop-file-validate`, `msgfmt -c` on every catalog |
 
 CI ([`ci.yml`](.github/workflows/ci.yml)) runs the same script in the image built from [`build/Containerfile`](build/Containerfile) and published to `ghcr.io` by [`images.yml`](.github/workflows/images.yml) (which also publishes the Flatpak and the AppImage Arch images; the AppImage and tarball jobs run in parallel and cache the Rust build); a pull request that changes a Containerfile is checked with the previous image until it is merged. A separate job runs `cargo deny check` ([`deny.toml`](deny.toml): advisories, licenses, sources). Dependabot proposes Cargo and action updates weekly.
