@@ -58,6 +58,9 @@ pub struct Limits {
     pub max_per_addr: usize,
     /// Free space that must remain after the offer is saved.
     pub space_reserve: u64,
+    /// When the service stops: time for the Cancel frames, the FIN and the peer's close. It
+    /// must stay below `manager::STOP_WIND_DOWN`.
+    pub stop_close: Duration,
 }
 
 impl Default for Limits {
@@ -72,6 +75,7 @@ impl Default for Limits {
             max_sessions: 32,
             max_per_addr: 4,
             space_reserve: 32 * 1024 * 1024,
+            stop_close: Duration::from_millis(300),
         }
     }
 }

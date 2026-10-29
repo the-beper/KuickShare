@@ -153,11 +153,28 @@ mod real {
         link: watch::Receiver<bool>,
     ) {
         tracker.spawn(async move {
-            let start = move |stop| run_receiver(endpoint_id, identity, bus.clone(), stop);
+            // The sessions outlive the receiver's own `stop` (a transfer in flight finishes when
+            // the advertising ends), but not the service: `ctk` ends them, and the stop of the
+            // service waits for them, within `STOP_WIND_DOWN`.
+            let sessions = TaskTracker::new();
+            let start = {
+                let (ctk, sessions) = (ctk.clone(), sessions.clone());
+                move |stop| {
+                    run_receiver(
+                        endpoint_id,
+                        identity,
+                        bus.clone(),
+                        stop,
+                        ctk.clone(),
+                        sessions.clone(),
+                    )
+                }
+            };
             tokio::select! {
                 () = ctk.cancelled() => {}
                 () = supervise(start, visibility, link, RETRY_AFTER) => {}
             }
+            crate::manager::wind_down(&sessions).await;
         });
     }
 
@@ -166,6 +183,8 @@ mod real {
         identity: [u8; 16],
         bus: broadcast::Sender<ChannelMessage>,
         stop: CancellationToken,
+        service_stop: CancellationToken,
+        sessions: TaskTracker,
     ) -> anyhow::Result<()> {
         let session = bluer::Session::new().await.context("connecting to BlueZ")?;
         let adapter = Arc::new(
@@ -186,8 +205,14 @@ mod real {
         let data =
             ReceiverAdvertisement::new(endpoint_id, DEVICE_TYPE_LAPTOP, identity, &name).to_bytes();
         let rearm = Arc::new(tokio::sync::Notify::new());
-        let shared =
-            super::gatt::Shared::new(data.clone(), bus, rearm.clone(), Some(adapter.clone()));
+        let shared = super::gatt::Shared::new(
+            data.clone(),
+            bus,
+            rearm.clone(),
+            Some(adapter.clone()),
+            service_stop,
+            sessions,
+        );
         // Both registrations are undone when this future is dropped.
         let _gatt = adapter
             .serve_gatt_application(super::gatt::application(shared.clone()))

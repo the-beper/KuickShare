@@ -856,12 +856,10 @@ impl OutboundRequest {
                     };
 
                     info!("File type to send: {}", ftype);
-                    let fname = path
-                        .file_name()
-                        .ok_or_else(|| anyhow!("Failed to get file_name for {f}"))?;
+                    let fname = utf8_file_name(path)?;
                     let fmeta = FileMetadata {
                         payload_id: Some(rand::rng().random::<i64>()),
-                        name: Some(fname.to_os_string().into_string().unwrap()),
+                        name: Some(fname),
                         size: Some(fmetadata.size() as i64),
                         mime_type: Some(ftype),
                         r#type: Some(meta_type.into()),
@@ -1988,6 +1986,20 @@ fn length_prefixed(data: &[u8]) -> Vec<u8> {
     out
 }
 
+/// The name the peer is shown for a local file. A name that is not UTF-8 cannot be sent as it
+/// is (and a lossy one would name another file): the send fails with this message instead.
+fn utf8_file_name(path: &Path) -> Result<String, anyhow::Error> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| anyhow!("Failed to get the file name of {}", path.display()))?;
+    name.to_str().map(str::to_owned).ok_or_else(|| {
+        anyhow!(
+            "The file name of {} is not valid UTF-8 and cannot be sent",
+            path.display()
+        )
+    })
+}
+
 /// How long the cancel frames, the close and the peer's reply to it may take together.
 pub(super) const CANCEL_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -2614,5 +2626,17 @@ mod tests {
         .expect("the stalled write was never given up")
         .unwrap_err();
         assert!(err.to_string().contains("stopped reading"), "{err}");
+    }
+
+    #[test]
+    fn a_file_name_that_is_not_utf8_is_an_error() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let bad = Path::new(OsStr::from_bytes(b"/tmp/caf\xe9.txt"));
+        let err = utf8_file_name(bad).unwrap_err().to_string();
+        assert!(err.contains("not valid UTF-8"), "{err}");
+        assert_eq!(utf8_file_name(Path::new("/tmp/a.txt")).unwrap(), "a.txt");
+        assert!(utf8_file_name(Path::new("/")).is_err());
     }
 }

@@ -10,6 +10,7 @@ use tokio::sync::Semaphore;
 use tokio::sync::broadcast::{Receiver as BusReceiver, Sender};
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 use crate::channel::{self, ChannelMessage, MessageClient, TransferKind};
 use crate::errors::AppError;
@@ -20,6 +21,24 @@ use crate::safety::Limits;
 use crate::utils::RemoteDeviceInfo;
 
 const INNER_NAME: &str = "TcpServer";
+
+/// How long a stopping service waits for its sessions to wind down (each one tells its peer
+/// and closes, see `Limits::stop_close` and `inbound::FIN_TIMEOUT`). `RQS::stop` waits for this, so it
+/// must stay well under what the caller allows for the whole stop. A session still busy after
+/// it goes on alone: it is already cancelled and ends by itself. Public so that the caller can
+/// keep its own bound for `RQS::stop` above it (KuickShare asserts that in a test).
+pub const STOP_WIND_DOWN: Duration = Duration::from_millis(400);
+
+/// Waits for the tasks of `tracker` for at most `STOP_WIND_DOWN`; the tracker takes no more.
+pub(crate) async fn wind_down(tracker: &TaskTracker) {
+    tracker.close();
+    if tokio::time::timeout(STOP_WIND_DOWN, tracker.wait())
+        .await
+        .is_err()
+    {
+        debug!("{INNER_NAME}: sessions still winding down after the stop wait");
+    }
+}
 
 /// First and longest wait before `accept()` is tried again after it failed (typically no
 /// file descriptors left); the wait doubles on each failure in a row.
@@ -135,6 +154,8 @@ pub struct TcpServer {
     /// connections cannot use up the file descriptors the sends and the accept need.
     sessions: Arc<Semaphore>,
     per_addr: AddrCounts,
+    /// The tasks of the sessions and the sends, so that `run` can wait for them at the stop.
+    tasks: TaskTracker,
 }
 
 impl TcpServer {
@@ -166,6 +187,7 @@ impl TcpServer {
             limits: Limits::default(),
             sessions: Arc::new(Semaphore::new(Limits::default().max_sessions)),
             per_addr: AddrCounts::default(),
+            tasks: TaskTracker::new(),
         }
     }
 
@@ -198,7 +220,7 @@ impl TcpServer {
                     let endpoint_id = self.endpoint_id;
                     let sender = self.sender.clone();
                     let cancel_rx = sender.subscribe();
-                    tokio::spawn(async move {
+                    self.tasks.spawn(async move {
                         if let Err(e) = connect_send(endpoint_id, sender, cancel_rx, cctk, i, Timeouts::default()).await {
                             error!("{INNER_NAME}: error sending: {}", e);
                         }
@@ -221,10 +243,12 @@ impl TcpServer {
                                 continue;
                             };
                             trace!("{INNER_NAME}: new client: {remote_addr}");
+                            // The session ends with the service: it is told when `ctk` is cancelled.
                             let ir = InboundRequest::new(socket, remote_addr.to_string(), self.sender.clone())
-                                .with_limits(self.limits);
+                                .with_limits(self.limits)
+                                .with_stop(ctk.clone());
                             let sender = self.sender.clone();
-                            tokio::spawn(async move {
+                            self.tasks.spawn(async move {
                                 let _held = (permit, guard);
                                 drive_inbound(ir, sender).await;
                             });
@@ -247,6 +271,8 @@ impl TcpServer {
             }
         }
 
+        // The sessions were told to end by the same token: let them tell their peers.
+        wind_down(&self.tasks).await;
         Ok(())
     }
 
@@ -858,5 +884,68 @@ mod tests {
         .expect("a second connection from one address was kept");
         assert!(matches!(closed, Ok(0) | Err(_)));
         ctk.cancel();
+    }
+
+    /// The service stops while a session waits for the user: the session ends as `Cancelled`
+    /// (the app sees it), its permit is back, and `run` is over within the wind-down bound.
+    #[tokio::test]
+    async fn stop_ends_a_lan_session_waiting_for_consent() {
+        let _guard = SERIAL.lock().await;
+        *crate::WIFI_LINK.write().unwrap() = None;
+        // The receiver.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (bus, mut watch) = tokio::sync::broadcast::channel(256);
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        let mut server = TcpServer::new(*b"TEST", listener, bus, rx).unwrap();
+        let sessions = server.sessions.clone();
+        let total = sessions.available_permits();
+        let ctk = CancellationToken::new();
+        let run = tokio::spawn({
+            let ctk = ctk.clone();
+            async move { server.run(ctk).await }
+        });
+
+        // A sender with its own bus offers a text to it.
+        let sender_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (sender_bus, _keep) = tokio::sync::broadcast::channel(256);
+        let (_stx, srx) = tokio::sync::mpsc::channel(1);
+        let sender = TcpServer::new(*b"SEND", sender_listener, sender_bus, srx).unwrap();
+        let mut si = ble_info(&addr.to_string());
+        si.addr = addr.to_string();
+        si.ob = OutboundPayload::Text {
+            text: "hello".into(),
+            text_type: crate::TextPayloadType::Text,
+        };
+        let send = tokio::spawn(async move { sender.connect(CancellationToken::new(), si).await });
+
+        let mut states = vec![];
+        tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                let message = watch.recv().await.unwrap();
+                if state_of(message) == Some(TransferState::WaitingForUserConsent) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("the session never asked for consent");
+        assert_eq!(sessions.available_permits() + 1, total);
+
+        ctk.cancel();
+        tokio::time::timeout(STOP_WIND_DOWN + Duration::from_secs(2), run)
+            .await
+            .expect("run did not end after the stop")
+            .unwrap()
+            .unwrap();
+        assert_eq!(sessions.available_permits(), total, "the permit is held");
+        while let Ok(message) = watch.try_recv() {
+            states.push(state_of(message));
+        }
+        assert!(
+            states.contains(&Some(TransferState::Cancelled)),
+            "{states:?}"
+        );
+        send.abort();
     }
 }

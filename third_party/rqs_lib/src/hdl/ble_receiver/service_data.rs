@@ -124,8 +124,9 @@ impl ReceiverAdvertisement {
         }
         let len = usize::try_from(u32::from_be_bytes(array(rest, 3)?))
             .map_err(|_| ParseError::TooLong)?;
-        let data = slice(rest, 7, len)?;
-        let tail = &rest[7 + len..];
+        let data_end = 7usize.checked_add(len).ok_or(ParseError::Truncated)?;
+        let data = rest.get(7..data_end).ok_or(ParseError::Truncated)?;
+        let tail = rest.get(data_end..).ok_or(ParseError::Truncated)?;
 
         if *data.first().ok_or(ParseError::Truncated)? != DATA_VERSION_PCP
             || slice(data, 1, 3)? != SERVICE_HASH
@@ -408,5 +409,72 @@ mod tests {
             ReceiverAdvertisement::try_parse(&[0x00, 1, 2]),
             Err(ParseError::BadHeader)
         );
+    }
+
+    /// Randomized, deterministic: whatever arrives over the air, `try_parse` returns instead
+    /// of panicking, and what `to_bytes` builds still parses back to the same value.
+    #[test]
+    fn random_input_never_panics_and_valid_input_still_parses() {
+        use rand::{Rng, RngExt, SeedableRng, rngs::StdRng};
+
+        let mut rng = StdRng::seed_from_u64(0x5eed_0fef_3a11);
+
+        // 1. Random byte strings of length 0..=64, a third of them behind a valid header
+        //    (so the inner lengths are reached).
+        for round in 0..100_000 {
+            let len = rng.random_range(0..=64usize);
+            let mut b = vec![0u8; len];
+            rng.fill_bytes(&mut b);
+            if round % 3 == 0 && len >= 8 {
+                b[..4].copy_from_slice(&[HEADER, 0xfc, 0x9f, 0x5e]);
+                // Small data length, so the data part is often inside the input.
+                b[4..7].copy_from_slice(&[0, 0, 0]);
+                b[7] = rng.random_range(0..=64u8);
+            }
+            let _ = ReceiverAdvertisement::try_parse(&b);
+        }
+
+        // 2. Mutations of valid advertisements: flipped bytes, cuts and appended bytes.
+        let valid = [CAPTURE.to_vec(), captured().to_bytes(), {
+            let mut adv = ReceiverAdvertisement::new(*b"ABCD", 3, [7; 16], "Desk");
+            adv.psm = Some(0x00a1);
+            adv.to_bytes()
+        }];
+        for round in 0..50_000 {
+            let mut b = valid[round % valid.len()].clone();
+            for _ in 0..rng.random_range(1..=3usize) {
+                match rng.random_range(0..3u8) {
+                    0 if !b.is_empty() => {
+                        let at = rng.random_range(0..b.len());
+                        b[at] = rng.random();
+                    }
+                    1 => b.truncate(rng.random_range(0..=b.len())),
+                    _ => b.push(rng.random()),
+                }
+            }
+            let _ = ReceiverAdvertisement::try_parse(&b);
+        }
+
+        // 3. Valid advertisements of random shape parse back to what was built.
+        for _ in 0..5_000 {
+            let name: String = (0..rng.random_range(0..=30usize))
+                .map(|_| char::from(rng.random_range(b'a'..=b'z')))
+                .collect();
+            let mut adv = ReceiverAdvertisement::new(
+                rng.random(),
+                rng.random_range(0..=7u8),
+                rng.random(),
+                &name,
+            );
+            adv.bt_mac = rng.random();
+            adv.psm = rng.random::<bool>().then(|| rng.random());
+            adv.rx_instant = rng.random::<bool>().then(|| {
+                let mut d = vec![0u8; rng.random_range(0..=255usize)];
+                rng.fill_bytes(&mut d);
+                d
+            });
+            let parsed = ReceiverAdvertisement::try_parse(&adv.to_bytes());
+            assert_eq!(parsed, Ok(adv));
+        }
     }
 }

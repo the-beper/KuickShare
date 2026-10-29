@@ -19,7 +19,7 @@ use rqs_lib::{
 };
 use tokio::{
     net::TcpStream,
-    sync::{Mutex, broadcast, mpsc},
+    sync::{Mutex, broadcast, mpsc, watch},
     task::JoinHandle,
 };
 use zbus::Connection;
@@ -50,13 +50,14 @@ pub type SharedHistory = Arc<StdMutex<History>>;
 /// id used with the library); the transfer events are reported under the original id.
 pub type Redirects = Arc<StdMutex<HashMap<String, String>>>;
 
-/// Where Accept and Decline send their action: the library's event channel of the running
+/// Where Accept, Decline and Cancel send their action: the library's event channel of the running
 /// engine (`None` while it is stopped). It is shared with the D-Bus service, so these calls never
-/// wait for the `Core` lock, which a send or a restart can hold for seconds.
+/// wait for the `Core` lock, which a restart can hold for seconds.
 #[derive(Clone, Default)]
 pub struct LibActions {
     sender: Arc<StdMutex<Option<broadcast::Sender<ChannelMessage>>>>,
     redirects: Redirects,
+    sends: SendBook,
 }
 
 impl LibActions {
@@ -81,12 +82,203 @@ impl LibActions {
             .map(|_| ())
             .map_err(|e| anyhow!(e.to_string()))
     }
+
+    /// Cancels the transfer `id`. A send that has not been handed to the library yet (it is
+    /// still choosing its route) is marked and ends at once; its final `Cancelled` is returned to
+    /// the caller, who emits it before answering, so it precedes the events of any later send
+    /// under the same id (the shell applies a final event to the newest row of an id). A send
+    /// that was handed over keeps its mark until the library takes it off its queue
+    /// (`await_first_event` repeats the cancel then). The cancel is also broadcast, for a send
+    /// the library already runs. Never takes the `Core` lock.
+    pub fn cancel(&self, id: &str) -> Result<Vec<CancelReport>> {
+        let (marked, due) = self.sends.cancel(id);
+        match self.send(id, TransferAction::TransferCancel) {
+            // The mark is what stops a send that was not queued: nothing more to tell the caller.
+            Err(_) if marked => Ok(due),
+            result => result.map(|()| due),
+        }
+    }
+
+    /// The sends that are not with the library yet (see `SendBook`).
+    pub fn sends(&self) -> SendBook {
+        self.sends.clone()
+    }
+}
+
+/// The final `Cancelled` of a send that ended before it went out, to be emitted exactly once by
+/// whoever takes it from the `SendBook` (`LibActions::cancel` or the send itself).
+#[derive(Debug)]
+pub struct CancelReport {
+    id: String,
+    device: String,
+    conn: Option<Connection>,
+}
+
+impl CancelReport {
+    pub async fn emit(self) {
+        if let Some(conn) = &self.conn {
+            dbus::emit_cancelled_transfer(conn, &self.id, &self.device).await;
+        }
+    }
+}
+
+/// The sends that are not running in the library yet, keyed by the id the user picked. The
+/// library hears a cancel only once it has taken the send off its queue, so `LibActions::cancel`
+/// marks the send here. A send is in the book from before it looks for a route until the library
+/// has reported its first event (the mark outlives the queue: see `await_first_event`). A std
+/// mutex, never held across an await, separate from the `Core` lock.
+#[derive(Clone, Default)]
+pub struct SendBook(Arc<StdMutex<PendingSends>>);
+
+#[derive(Default)]
+struct PendingSends {
+    next: u64,
+    sends: HashMap<u64, Entry>,
+}
+
+struct Entry {
+    /// The id the user picked.
+    id: String,
+    cancel: watch::Sender<bool>,
+    /// What to emit when the send is cancelled while it chooses its route; taken by the first to
+    /// emit it, and gone once the send is handed to the library (which reports its own end).
+    report: Option<CancelReport>,
+}
+
+impl SendBook {
+    /// Registers a send under the picked id; it is forgotten when the last copy of the guard is
+    /// dropped.
+    pub fn begin(&self, id: &str) -> PendingSend {
+        let mut book = self.0.lock().unwrap();
+        book.next += 1;
+        let token = book.next;
+        let (cancel, cancelled) = watch::channel(false);
+        book.sends.insert(
+            token,
+            Entry {
+                id: id.to_owned(),
+                cancel,
+                report: None,
+            },
+        );
+        PendingSend {
+            registration: Arc::new(Registration {
+                book: self.clone(),
+                token,
+            }),
+            cancelled,
+        }
+    }
+
+    /// Marks every send registered under `id`. Returns whether there was one, and the final
+    /// events of those that are still choosing their route (each is handed out once).
+    fn cancel(&self, id: &str) -> (bool, Vec<CancelReport>) {
+        let mut marked = false;
+        let mut due = Vec::new();
+        for entry in self.0.lock().unwrap().sends.values_mut() {
+            if entry.id == id {
+                entry.cancel.send_replace(true);
+                marked = true;
+                due.extend(entry.report.take());
+            }
+        }
+        (marked, due)
+    }
+
+    /// True when no send is starting.
+    pub fn is_empty(&self) -> bool {
+        self.0.lock().unwrap().sends.is_empty()
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.0.lock().unwrap().sends.len()
+    }
+}
+
+/// A send that is registered in the `SendBook`. Copies share the registration.
+#[derive(Clone)]
+pub struct PendingSend {
+    registration: Arc<Registration>,
+    cancelled: watch::Receiver<bool>,
+}
+
+struct Registration {
+    book: SendBook,
+    token: u64,
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        self.book.0.lock().unwrap().sends.remove(&self.token);
+    }
+}
+
+impl PendingSend {
+    pub fn cancelled(&self) -> bool {
+        *self.cancelled.borrow()
+    }
+
+    /// Resolves when the send is cancelled; never when it is not.
+    async fn wait_cancelled(&self) {
+        let mut cancelled = self.cancelled.clone();
+        if cancelled.wait_for(|cancelled| *cancelled).await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+
+    /// Says what a cancel during the route phase reports (the send knows its device only after
+    /// `Core::begin_send`).
+    fn arm(&self, id: &str, device: String, conn: Option<Connection>) {
+        if let Some(entry) = self
+            .registration
+            .book
+            .0
+            .lock()
+            .unwrap()
+            .sends
+            .get_mut(&self.registration.token)
+        {
+            entry.report = Some(CancelReport {
+                id: id.to_owned(),
+                device,
+                conn,
+            });
+        }
+    }
+
+    /// The final `Cancelled` of this send, unless a cancel already took it.
+    fn claim_report(&self) -> Option<CancelReport> {
+        self.registration
+            .book
+            .0
+            .lock()
+            .unwrap()
+            .sends
+            .get_mut(&self.registration.token)
+            .and_then(|entry| entry.report.take())
+    }
+
+    /// The last look before the send goes to the library: true when it was not cancelled, and
+    /// from then on a cancel is the library's to report (it goes out with the first event). One
+    /// step under the book's lock, so a cancel is either seen here or leaves nothing to emit.
+    fn hand_over(&self) -> bool {
+        let mut book = self.registration.book.0.lock().unwrap();
+        let Some(entry) = book.sends.get_mut(&self.registration.token) else {
+            return false;
+        };
+        if *entry.cancel.borrow() {
+            return false;
+        }
+        entry.report = None;
+        true
+    }
 }
 
 struct Engine {
     rqs: RQS,
     send_tx: mpsc::Sender<SendInfo>,
-    tasks: Vec<JoinHandle<()>>,
+    forwarders: dbus::Forwarders,
     discovery_tx: broadcast::Sender<EndpointInfo>,
     discovery_on: bool,
     /// Tasks that restart the mDNS search for a phone seen only over Bluetooth, by device name.
@@ -100,13 +292,82 @@ impl Engine {
         }
     }
 
-    async fn stop(mut self) {
+    async fn stop(mut self, bounds: StopBounds) {
         self.stop_lan_retries();
-        for task in &self.tasks {
-            task.abort();
-        }
-        self.rqs.stop().await;
+        wind_down(self.rqs.stop(), bounds, self.forwarders).await;
     }
+}
+
+/// How long each step of stopping an engine may take.
+#[derive(Clone, Copy)]
+struct StopBounds {
+    /// The library's tasks winding down (`RQS::stop` waits for all of them, without a limit).
+    service: Duration,
+    /// The transfer forwarder emitting what the library still had queued.
+    drain: Duration,
+}
+
+/// A restart waits for the library to let go of its port before the new one binds it.
+const RESTART_STOP: StopBounds = StopBounds {
+    service: Duration::from_secs(3),
+    drain: Duration::from_millis(500),
+};
+/// At exit everything has to fit in `SHUTDOWN_ENGINE_BOUND`.
+const SHUTDOWN_STOP: StopBounds = StopBounds {
+    service: Duration::from_millis(500),
+    drain: Duration::from_millis(200),
+};
+/// Bound of the whole engine stop at exit, the wait for the `Core` lock included. With
+/// `WIFI_STOP_CLEANUP_BOUND` it stays within the shell's 3 s wait for the daemon after SIGTERM.
+pub const SHUTDOWN_ENGINE_BOUND: Duration = Duration::from_millis(800);
+
+/// Stops an engine in the order that keeps its last events: the library first (a cancelled or
+/// failed transfer reports its final state while it winds down), then the transfer forwarder gets
+/// to emit what is still queued, then the other forwarders go. Every step is bounded: a step that
+/// does not finish is abandoned, the next one still runs.
+async fn wind_down(
+    stop_service: impl Future<Output = ()>,
+    bounds: StopBounds,
+    forwarders: dbus::Forwarders,
+) {
+    if tokio::time::timeout(bounds.service, stop_service)
+        .await
+        .is_err()
+    {
+        tracing::warn!("the service did not stop in {:?}", bounds.service);
+    }
+    let dbus::Forwarders {
+        stop,
+        mut drain,
+        abort,
+    } = forwarders;
+    // The forwarder empties its queue and ends.
+    let _ = stop.send(true);
+    if tokio::time::timeout(bounds.drain, &mut drain)
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            "the transfer events were not all sent in {:?}",
+            bounds.drain
+        );
+        drain.abort();
+    }
+    for task in abort {
+        task.abort();
+    }
+}
+
+/// The transfers that had no final event when their engine stopped, as final events: the shell
+/// keeps no row alive for a service that is gone. `active` is left empty.
+fn take_unfinished(active: &ActiveTransfers) -> Vec<TransferEvent> {
+    let now = history::now();
+    active
+        .lock()
+        .unwrap()
+        .drain()
+        .map(|(_, transfer)| transfer.disconnected(now))
+        .collect()
 }
 
 pub struct Core {
@@ -159,8 +420,8 @@ impl Core {
         history.set_policy(settings.history_enabled, settings.history_keep_days);
         let redirects = Redirects::default();
         let lib_actions = LibActions {
-            sender: Arc::default(),
             redirects: redirects.clone(),
+            ..LibActions::default()
         };
         let (notice_tx, link_notices) = mpsc::unbounded_channel();
         // The firewall consent (`HotspotPolicy`) is never stored: every start begins without it,
@@ -224,16 +485,34 @@ impl Core {
         self.start_engine(false).await
     }
 
-    /// Stops the service. The Wi-Fi link is released apart, without the `Core` lock (see
-    /// `release_wifi`): the caller gets what that needs.
-    pub async fn shutdown(&mut self) -> WifiRelease {
+    /// Stops the service within `SHUTDOWN_ENGINE_BOUND` (the caller bounds the wait for the lock).
+    /// The Wi-Fi link is released apart, without the `Core` lock (see `release_wifi`).
+    pub async fn shutdown(&mut self) {
+        let unfinished = self.stop_engine(SHUTDOWN_STOP).await;
+        self.emit_unfinished(unfinished).await;
+    }
+
+    /// Stops the engine and forgets what belonged to it. Accept, Decline and Cancel fail at once:
+    /// the old transfers end anyway, and their tokens must not answer a transfer that gets the
+    /// same id later. The consents are forgotten (`Consents::clear`) only after the forwarders
+    /// emitted the last events of the old engine, which that call would make them drop. Returns
+    /// the transfers that never got a final event, as final events (not emitted here).
+    async fn stop_engine(&mut self, bounds: StopBounds) -> Vec<TransferEvent> {
         self.lib_actions.set(None);
-        self.consents.clear();
         if let Some(engine) = self.engine.take() {
-            engine.stop().await;
+            engine.stop(bounds).await;
         }
+        self.consents.clear();
         self.redirects.lock().unwrap().clear();
-        self.wifi_release()
+        take_unfinished(&self.active)
+    }
+
+    async fn emit_unfinished(&self, unfinished: Vec<TransferEvent>) {
+        if let Some(conn) = &self.conn {
+            for event in &unfinished {
+                dbus::emit_transfer(conn, event).await;
+            }
+        }
     }
 
     /// What `release_wifi` needs: the shared link.
@@ -260,17 +539,7 @@ impl Core {
     }
 
     fn control_addr(&self, endpoint_id: &str) -> Result<SocketAddr> {
-        if BleTarget::parse(endpoint_id).is_some() {
-            bail!("Bluetooth devices cannot be paired");
-        }
-        let ip = self
-            .endpoints
-            .lock()
-            .unwrap()
-            .get(endpoint_id)
-            .and_then(|e| e.ip.clone())
-            .with_context(|| format!("unknown device {endpoint_id}"))?;
-        Ok(SocketAddr::new(ip.parse()?, trust::DEFAULT_PORT))
+        control_addr(&self.endpoints, endpoint_id)
     }
 
     /// Remembers the sender of an incoming transfer: from now on its transfers are accepted
@@ -629,20 +898,17 @@ impl Core {
 
     /// The last network connection is gone: the devices found over the LAN cannot be reached any
     /// more, so they are dropped now instead of when their mDNS records expire, and a Bluetooth
-    /// scan looks for the phones that remain.
-    pub async fn network_lost(&mut self) {
+    /// scan looks for the phones that remain. Returns what the caller reports as `DeviceLost`,
+    /// after it released the `Core` lock.
+    pub fn network_lost(&mut self) -> Option<(Connection, Vec<String>)> {
         if !self.settings.wifi_upgrade {
-            return;
+            return None;
         }
         let gone = take_lan_endpoints(&mut self.endpoints.lock().unwrap());
-        if let Some(conn) = &self.conn {
-            for id in &gone {
-                dbus::emit_device_lost(conn, id).await;
-            }
-        }
         if let Err(e) = self.scan_bluetooth() {
             tracing::debug!("no Bluetooth scan after the network was lost: {e}");
         }
+        self.conn.clone().map(|conn| (conn, gone))
     }
 
     /// A network is up again: the devices of the LAN would be noticed by the mDNS library only
@@ -688,30 +954,9 @@ impl Core {
         self.endpoints.lock().unwrap().clear();
     }
 
-    pub async fn send_files(&mut self, endpoint_id: &str, paths: Vec<String>) -> Result<()> {
-        if paths.is_empty() {
-            bail!("no files to send");
-        }
-        for path in &paths {
-            fs::metadata(path).with_context(|| format!("cannot read {path}"))?;
-        }
-        self.send(endpoint_id, OutboundPayload::Files(paths)).await
-    }
-
-    pub async fn send_text(&mut self, endpoint_id: &str, text: String, url: bool) -> Result<()> {
-        if text.trim().is_empty() {
-            bail!("nothing to send");
-        }
-        let text_type = if url {
-            TextPayloadType::Url
-        } else {
-            TextPayloadType::Text
-        };
-        self.send(endpoint_id, OutboundPayload::Text { text, text_type })
-            .await
-    }
-
-    async fn send(&mut self, endpoint_id: &str, ob: OutboundPayload) -> Result<()> {
+    /// The first step of a send, under the `Core` lock: what the slow steps (route choice,
+    /// announcement) need, taken as a snapshot so they run without the lock.
+    fn begin_send(&self, endpoint_id: &str) -> Result<SendStart> {
         if self.engine.is_none() {
             bail!("service is not running");
         }
@@ -722,23 +967,36 @@ impl Core {
             .get(endpoint_id)
             .cloned()
             .with_context(|| format!("unknown device {endpoint_id}"))?;
-        let endpoint = self.choose_route(picked).await?;
-        let engine = self.engine.as_ref().context("service is not running")?;
+        Ok(SendStart {
+            picked,
+            generation: self.consents.generation(),
+            consents: self.consents.clone(),
+            wifi_upgrade: self.settings.wifi_upgrade,
+            endpoints: self.endpoints.clone(),
+            conn: self.conn.clone(),
+            trusted_ips: self.trusted_ips.clone(),
+            trust: self.trust.clone(),
+        })
+    }
+
+    /// The last step of a send, under the `Core` lock again: hands it to the library, unless the
+    /// service stopped or restarted since `begin_send` (its generation changed) or the user
+    /// cancelled it. Nothing here waits.
+    fn queue_send(
+        &self,
+        start: &SendStart,
+        pending: &PendingSend,
+        endpoint_id: &str,
+        endpoint: EndpointInfo,
+        ob: OutboundPayload,
+    ) -> Result<Queued> {
+        let engine = self.engine.as_ref().context("the service is not running")?;
+        if self.consents.generation() != start.generation {
+            bail!("the service restarted, try again");
+        }
         let ble = endpoint.ble.is_some();
         if ble && !self.settings.wifi_upgrade {
             bail!("Sending over Bluetooth needs the Wi-Fi upgrade, which is off (see Settings)");
-        }
-        // A paired KuickShare computer accepts the transfer by itself if it is told in advance.
-        let trusted = endpoint
-            .ip
-            .as_ref()
-            .is_some_and(|ip| self.trusted_ips.lock().unwrap().contains(ip));
-        if trusted && let Ok(addr) = self.control_addr(&endpoint.id) {
-            let announced =
-                tokio::time::timeout(Duration::from_secs(2), self.trust.announce(addr)).await;
-            if !matches!(announced, Ok(Ok(()))) {
-                tracing::info!("could not announce the transfer to the paired computer");
-            }
         }
         let name = endpoint.name.clone().unwrap_or_default();
         let addr = if ble {
@@ -746,8 +1004,8 @@ impl Core {
         } else {
             format!(
                 "{}:{}",
-                endpoint.ip.unwrap_or_default(),
-                endpoint.port.unwrap_or_default()
+                endpoint.ip.clone().unwrap_or_default(),
+                endpoint.port.clone().unwrap_or_default()
             )
         };
         // Safety net: without any event in time, tell the user. The library reports a failed
@@ -765,6 +1023,10 @@ impl Core {
             addr,
             ob,
         };
+        // The last word on a cancel: from here on it is the library's to report.
+        if !pending.hand_over() {
+            return Ok(Queued::Cancelled);
+        }
         // Only a send that is really going out is mapped, and no two picked ids share one
         // library id.
         {
@@ -775,10 +1037,17 @@ impl Core {
                 redirects.insert(endpoint_id.to_owned(), endpoint.id.clone());
             }
         }
-        if let Err(e) = engine.send_tx.send(send_info).await {
+        // `try_send`: the library takes sends off this queue at once, and the lock is held.
+        if let Err(e) = engine.send_tx.try_send(send_info) {
             self.redirects.lock().unwrap().remove(endpoint_id);
-            return Err(e).context("service stopped while sending");
+            return Err(match e {
+                mpsc::error::TrySendError::Full(_) => anyhow!("too many sends are starting"),
+                mpsc::error::TrySendError::Closed(_) => anyhow!("service stopped while sending"),
+            });
         }
+        // A Cancel from now on is broadcast before the library can listen for it (it subscribes
+        // when it takes the send off its queue): the mark stays until its first event, and
+        // `await_first_event` says it again then.
         if let Some((conn, events, bus)) = watch {
             let within = if ble {
                 BLE_START_TIMEOUT
@@ -792,104 +1061,39 @@ impl Core {
                 (endpoint.id, endpoint_id.to_owned()),
                 name,
                 within,
+                pending.clone(),
             ));
         }
-        Ok(())
+        Ok(Queued::Sent)
     }
 
-    /// Decides which endpoint a send really goes to. A device found over the LAN is probed first:
-    /// a phone whose Wi-Fi went off sends no mDNS goodbye, so its entry would stay for minutes.
-    /// If it is gone the entry is dropped and the same phone is tried over Bluetooth; the other
-    /// way round, a Bluetooth phone that answers on the LAN is reached there. When no LAN entry
-    /// is known for a Bluetooth phone, the mDNS search is restarted once and given
-    /// `LAN_LOOKUP_TIMEOUT` to find it (see `look_up_lan`). The other way round, when a LAN phone
-    /// is gone and no Bluetooth entry is known, a Bluetooth scan window is started and given
-    /// `BLE_LOOKUP_TIMEOUT` to see it (see `look_up_bluetooth`). The `Core` lock is held by the
-    /// caller meanwhile: for a Bluetooth pick at most `LAN_LOOKUP_TIMEOUT` (1.5 s) plus
-    /// two `PROBE_TIMEOUT` (1.5 s each) per probed candidate; for a LAN pick at most two
-    /// `PROBE_TIMEOUT` plus `BLE_LOOKUP_TIMEOUT` (3 s).
-    async fn choose_route(&mut self, picked: EndpointInfo) -> Result<EndpointInfo> {
-        if picked.ble.is_none() {
-            if probe_twice(&lan_addr(&picked)).await {
-                return Ok(picked);
-            }
-            self.endpoints.lock().unwrap().remove(&picked.id);
-            if let Some(conn) = &self.conn {
-                dbus::emit_device_lost(conn, &picked.id).await;
-            }
-            let mut ble = None;
-            if self.settings.wifi_upgrade {
-                ble = self.same_device(&picked, true);
-                if ble.is_none() {
-                    tracing::info!("send: the LAN device is gone, looking for it over Bluetooth");
-                    tracing::debug!("{} is gone: looking for it over Bluetooth", picked.id);
-                    ble = self.look_up_bluetooth(&picked).await;
-                }
-            }
-            let Some(ble) = ble else {
-                if self.settings.wifi_upgrade {
-                    tracing::info!(
-                        "send refused: the LAN device is gone and has no Bluetooth entry"
-                    );
-                    tracing::debug!("{} is gone and has no Bluetooth entry", picked.id);
-                } else {
-                    tracing::info!("send refused: the LAN device is gone and Wi-Fi Direct is off");
-                    tracing::debug!(
-                        "{} is gone (Wi-Fi Direct is off: no Bluetooth lookup)",
-                        picked.id
-                    );
-                }
-                bail!("The device is not reachable");
-            };
-            tracing::info!("send goes over Bluetooth: the LAN device is gone");
-            tracing::debug!("{} is gone, sending to {} (same name)", picked.id, ble.id);
-            return Ok(ble);
+    /// Restarts the search for the phone picked over Bluetooth, at most once per `LAN_LOOKUP_GAP`
+    /// (the send waits for it without the lock: see `RouteSteps`). `generation` is the one the
+    /// send started with: after a restart nothing is touched. False when nothing was restarted.
+    fn restart_lan_search_for(&mut self, generation: u64) -> bool {
+        if self.consents.generation() != generation {
+            return false;
         }
-        let mut lan = self.same_device(&picked, false);
-        if lan.is_none() && self.settings.wifi_upgrade && self.lan_entries(&picked) == 0 {
-            lan = self.look_up_lan(&picked).await;
+        let now = Instant::now();
+        if !lookup_due(self.last_lan_lookup, now) || !self.restart_discovery() {
+            return false;
         }
-        let name = picked.name.as_deref().unwrap_or_default();
-        match lan {
-            Some(lan) if probe_twice(&lan_addr(&lan)).await => {
-                tracing::info!("send goes over the LAN: the device answers there");
-                tracing::debug!(
-                    "{} answers on the LAN, sending to {} (same name)",
-                    picked.id,
-                    lan.id
-                );
-                return Ok(lan);
-            }
-            Some(_) => {
-                tracing::info!("send stays on Bluetooth: LAN probe failed");
-                tracing::debug!(
-                    "{} stays on Bluetooth: the LAN entry did not answer",
-                    picked.id
-                );
-            }
-            None if self.lan_entries(&picked) > 1 => {
-                tracing::info!("send stays on Bluetooth: more than one LAN entry has that name");
-                tracing::debug!("{} stays on Bluetooth: ambiguous LAN entries", picked.id);
-            }
-            None => {
-                tracing::info!("send stays on Bluetooth: no LAN entry with that name");
-                tracing::debug!(
-                    "{} stays on Bluetooth: no LAN entry named \"{name}\"",
-                    picked.id
-                );
-            }
-        }
-        Ok(picked)
+        self.last_lan_lookup = Some(now);
+        true
     }
 
     /// A phone was seen over Bluetooth only: restarts the mDNS search every `LAN_RETRY_EVERY`, at
     /// most `LAN_RETRIES` times, until its LAN entry is known (the phone answers the first
     /// queries late). One task per device name; it ends with the discovery or the engine.
-    pub fn watch_lan(&mut self, ble: EndpointInfo) {
+    pub fn watch_lan(&mut self, generation: u64, ble: EndpointInfo) {
         let Some(name) = ble.name.clone() else {
             return;
         };
-        if !self.settings.wifi_upgrade || !self.lan_retry_wanted(&ble) {
+        // A sighting of an engine that was stopped since: the new one lists the phone again.
+        if self.consents.generation() != generation
+            || !self.settings.wifi_upgrade
+            || !self.lan_retry_wanted(&ble)
+        {
             return;
         }
         let handle = self.handle.clone();
@@ -914,82 +1118,16 @@ impl Core {
         endpoints.contains_key(&ble.id) && needs_lan_retry(endpoints.values(), ble)
     }
 
-    /// Restarts the mDNS search (the list stays) and waits up to `LAN_LOOKUP_TIMEOUT` for the
-    /// phone picked over Bluetooth to show up on the LAN with the same name and device type. The
-    /// library notices a phone that joined the LAN only when the phone announces itself, and
-    /// NetworkManager reports nothing when it is the phone's network that changed. At most one
-    /// restart per `LAN_LOOKUP_GAP`; nothing happens while the discovery is not running. No
-    /// std mutex guard is held across the waits.
-    async fn look_up_lan(&mut self, picked: &EndpointInfo) -> Option<EndpointInfo> {
-        picked.name.as_ref()?;
-        let now = Instant::now();
-        if !lookup_due(self.last_lan_lookup, now) || !self.restart_discovery() {
-            return None;
-        }
-        self.last_lan_lookup = Some(now);
-        tracing::info!("send: the device is not on the LAN list, restarting the search");
-        tracing::debug!("{} is not on the LAN list", picked.id);
-        let deadline = tokio::time::Instant::now() + LAN_LOOKUP_TIMEOUT;
-        loop {
-            tokio::time::sleep(LAN_LOOKUP_POLL).await;
-            if let Some(lan) = self.same_device(picked, false) {
-                return Some(lan);
-            }
-            if tokio::time::Instant::now() >= deadline || self.lan_entries(picked) > 1 {
-                return None;
-            }
-        }
-    }
-
-    /// Starts a Bluetooth scan window and waits up to `BLE_LOOKUP_TIMEOUT` for the phone picked
-    /// over the LAN to be seen with the same name and device type. `scan_bluetooth` does nothing
-    /// while a window runs or just after one; a running window delivers its sightings to the same
-    /// list, so waiting is still right. Stops early on a match, or when several phones match (no
-    /// guessing). No std mutex guard is held across the waits.
-    async fn look_up_bluetooth(&mut self, picked: &EndpointInfo) -> Option<EndpointInfo> {
-        picked.name.as_ref()?;
-        if let Err(e) = self.scan_bluetooth() {
-            tracing::debug!("Bluetooth lookup: no scan started: {e:#}");
-        }
-        let deadline = tokio::time::Instant::now() + BLE_LOOKUP_TIMEOUT;
-        loop {
-            tokio::time::sleep(BLE_LOOKUP_POLL).await;
-            if let Some(ble) = self.same_device(picked, true) {
-                return Some(ble);
-            }
-            if tokio::time::Instant::now() >= deadline || self.ble_entries(picked) > 1 {
-                return None;
-            }
-        }
-    }
-
-    /// How many known Bluetooth endpoints have the name and the device type of `of`.
-    fn ble_entries(&self, of: &EndpointInfo) -> usize {
-        let endpoints = self.endpoints.lock().unwrap();
-        matching(endpoints.values(), of, true).count()
-    }
-
-    /// How many known LAN endpoints have the name and the device type of `of`.
-    fn lan_entries(&self, of: &EndpointInfo) -> usize {
-        let endpoints = self.endpoints.lock().unwrap();
-        matching(endpoints.values(), of, false).count()
-    }
-
-    /// The only known Bluetooth (`ble`) or LAN endpoint with the name and the device type of
-    /// `of`; `None` when there is none or when more than one matches (no guessing).
-    fn same_device(&self, of: &EndpointInfo, ble: bool) -> Option<EndpointInfo> {
-        let endpoints = self.endpoints.lock().unwrap();
-        unique_match(endpoints.values(), of, ble).cloned()
-    }
-
     fn is_idle(&self) -> bool {
         let mut active = self.active.lock().unwrap();
         drop_stale(&mut active, history::now());
         active.is_empty()
     }
 
+    /// Fails while a transfer runs or a send is still starting (choosing its route, or queued and
+    /// not yet heard from): a restart would tear it down.
     fn ensure_idle(&self) -> Result<()> {
-        if self.is_idle() {
+        if self.is_idle() && self.lib_actions.sends.is_empty() {
             Ok(())
         } else {
             bail!("Wait for the current transfer to finish before changing this setting");
@@ -1028,14 +1166,8 @@ impl Core {
     /// Rebuilds the service, keeping discovery on if it was on.
     async fn restart(&mut self) -> Result<()> {
         let discovery = self.engine.as_ref().is_some_and(|e| e.discovery_on);
-        // Accept and Decline fail at once from here: the restart ends the old transfers anyway,
-        // and their tokens must not answer a transfer that gets the same id later.
-        self.lib_actions.set(None);
-        self.consents.clear();
-        if let Some(engine) = self.engine.take() {
-            engine.stop().await;
-        }
-        self.redirects.lock().unwrap().clear();
+        let unfinished = self.stop_engine(RESTART_STOP).await;
+        self.emit_unfinished(unfinished).await;
         self.endpoints.lock().unwrap().clear();
         self.wifi_creds.lock().unwrap().clear();
         self.start_engine(discovery).await
@@ -1056,7 +1188,7 @@ impl Core {
             .context("failed to start the Quick Share service")?;
 
         let (discovery_tx, _) = broadcast::channel(32);
-        let tasks = dbus::spawn_forwarders(
+        let forwarders = dbus::spawn_forwarders(
             dbus::Forwarding {
                 connection: conn,
                 endpoints: self.endpoints.clone(),
@@ -1079,7 +1211,7 @@ impl Core {
         self.engine = Some(Engine {
             rqs,
             send_tx,
-            tasks,
+            forwarders,
             discovery_tx,
             discovery_on: false,
             lan_retries: HashMap::new(),
@@ -1097,6 +1229,399 @@ impl Core {
             tracing::warn!("cannot save settings: {e:#}");
         }
     }
+}
+
+/// The control address (`ip` and the pairing port) of a device found over the LAN.
+fn control_addr(endpoints: &Endpoints, endpoint_id: &str) -> Result<SocketAddr> {
+    if BleTarget::parse(endpoint_id).is_some() {
+        bail!("Bluetooth devices cannot be paired");
+    }
+    let ip = endpoints
+        .lock()
+        .unwrap()
+        .get(endpoint_id)
+        .and_then(|e| e.ip.clone())
+        .with_context(|| format!("unknown device {endpoint_id}"))?;
+    Ok(SocketAddr::new(ip.parse()?, trust::DEFAULT_PORT))
+}
+
+/// What a send takes from the `Core` (under its lock) before the slow steps, which run without
+/// it: a snapshot, valid for the engine of `generation` (`Consents::generation`).
+struct SendStart {
+    picked: EndpointInfo,
+    generation: u64,
+    /// To tell whether the engine of `generation` still runs.
+    consents: Consents,
+    wifi_upgrade: bool,
+    endpoints: Endpoints,
+    conn: Option<Connection>,
+    trusted_ips: TrustedIps,
+    trust: Arc<Trust>,
+}
+
+/// What `Core::queue_send` did.
+enum Queued {
+    Sent,
+    /// The user cancelled the send before it was handed to the library: nothing was sent.
+    Cancelled,
+}
+
+/// What a send came to.
+#[derive(Debug)]
+pub enum SendOutcome {
+    /// With the library; its events come as `TransferUpdated` under the picked id.
+    Queued,
+    /// Cancelled before it went out. The final `Cancelled` event is the caller's to emit when
+    /// this holds it; `None` when `LibActions::cancel` emitted it already.
+    Cancelled(Option<CancelReport>),
+}
+
+/// The slow, outside-world parts of choosing a route, so that the choice runs without the `Core`
+/// lock and a test can hold it still.
+trait RouteSteps {
+    /// True when `addr` accepts a TCP connection (`PROBE_TIMEOUT`).
+    async fn probe(&self, addr: &str) -> bool;
+    /// Restarts the mDNS search (see `Core::restart_lan_search_for`); false when it did not.
+    async fn restart_lan_search(&self) -> bool;
+    /// Starts a Bluetooth scan window; does nothing when one cannot start.
+    async fn scan_bluetooth(&self);
+    /// The device was dropped from the list: tell the shell.
+    async fn device_lost(&self, id: &str);
+    /// True while the engine the send began with is the one that runs: the list and the
+    /// signals belong to the engine that found them.
+    fn engine_is_current(&self) -> bool;
+
+    /// `probe`, tried once more when it fails (a lost SYN is not a gone phone).
+    async fn probe_twice(&self, addr: &str) -> bool {
+        self.probe(addr).await || self.probe(addr).await
+    }
+}
+
+/// `RouteSteps` on the running service: each step that needs the `Core` takes its lock for that
+/// step only, and does nothing when the service restarted since the send began.
+struct CoreSteps<'a> {
+    core: &'a Mutex<Core>,
+    generation: u64,
+    consents: Consents,
+    conn: Option<Connection>,
+}
+
+impl RouteSteps for CoreSteps<'_> {
+    async fn probe(&self, addr: &str) -> bool {
+        probe(addr).await
+    }
+
+    async fn restart_lan_search(&self) -> bool {
+        self.core
+            .lock()
+            .await
+            .restart_lan_search_for(self.generation)
+    }
+
+    async fn scan_bluetooth(&self) {
+        let core = self.core.lock().await;
+        if core.consents.generation() != self.generation {
+            return;
+        }
+        if let Err(e) = core.scan_bluetooth() {
+            tracing::debug!("Bluetooth lookup: no scan started: {e:#}");
+        }
+    }
+
+    async fn device_lost(&self, id: &str) {
+        if let Some(conn) = &self.conn {
+            dbus::emit_device_lost(conn, id).await;
+        }
+    }
+
+    fn engine_is_current(&self) -> bool {
+        self.consents.generation() == self.generation
+    }
+}
+
+/// Sends files to the device `endpoint_id` (see `send_payload`).
+pub async fn send_files(
+    core: &Mutex<Core>,
+    sends: &SendBook,
+    endpoint_id: &str,
+    paths: Vec<String>,
+) -> Result<()> {
+    if paths.is_empty() {
+        bail!("no files to send");
+    }
+    for path in &paths {
+        fs::metadata(path).with_context(|| format!("cannot read {path}"))?;
+    }
+    send_payload(core, sends, endpoint_id, OutboundPayload::Files(paths)).await
+}
+
+/// Sends a text or a link to the device `endpoint_id` (see `send_payload`).
+pub async fn send_text(
+    core: &Mutex<Core>,
+    sends: &SendBook,
+    endpoint_id: &str,
+    text: String,
+    url: bool,
+) -> Result<()> {
+    if text.trim().is_empty() {
+        bail!("nothing to send");
+    }
+    let text_type = if url {
+        TextPayloadType::Url
+    } else {
+        TextPayloadType::Text
+    };
+    let ob = OutboundPayload::Text { text, text_type };
+    send_payload(core, sends, endpoint_id, ob).await
+}
+
+/// Runs a send; a send the user cancelled before it went out ends with a final `Cancelled`
+/// event, never with an error.
+async fn send_payload(
+    core: &Mutex<Core>,
+    sends: &SendBook,
+    endpoint_id: &str,
+    ob: OutboundPayload,
+) -> Result<()> {
+    let steps = |start: &SendStart| CoreSteps {
+        core,
+        generation: start.generation,
+        consents: start.consents.clone(),
+        conn: start.conn.clone(),
+    };
+    if let SendOutcome::Cancelled(Some(report)) =
+        run_send(core, sends, steps, endpoint_id, ob).await?
+    {
+        report.emit().await;
+    }
+    Ok(())
+}
+
+/// One send, in three steps. The `Core` lock is held for the first and the last only (neither
+/// waits for anything slow); the route choice and the announcement to a paired computer, which
+/// take seconds, run without it, so the properties, Cancel, the discovery and the rest of the
+/// API stay responsive:
+///
+/// 1. under the lock, a snapshot (`Core::begin_send`);
+/// 2. no lock: `choose_route`, then the announcement to a paired computer;
+/// 3. under the lock, the engine must be the same one (else the send fails with "the service
+///    restarted") and the send goes to the library (`Core::queue_send`).
+///
+/// The send is in the `SendBook` from before step 1, so a Cancel at any point stops it at once:
+/// step 2 gives way to it wherever it waits (a probe, a lookup, the announcement), and the last
+/// look is just before the queue. The final `Cancelled` is emitted by the Cancel call itself
+/// (`LibActions::cancel`) when it comes during the route phase.
+async fn run_send<S: RouteSteps>(
+    core: &Mutex<Core>,
+    sends: &SendBook,
+    steps: impl FnOnce(&SendStart) -> S,
+    endpoint_id: &str,
+    ob: OutboundPayload,
+) -> Result<SendOutcome> {
+    let pending = sends.begin(endpoint_id);
+    let start = core.lock().await.begin_send(endpoint_id)?;
+    pending.arm(
+        endpoint_id,
+        start.picked.name.clone().unwrap_or_default(),
+        start.conn.clone(),
+    );
+    let cancelled = || SendOutcome::Cancelled(pending.claim_report());
+    let steps = steps(&start);
+    let endpoint = tokio::select! {
+        biased;
+        () = pending.wait_cancelled() => return Ok(cancelled()),
+        route = choose_route(&start, &steps) => route?,
+    };
+    if pending.cancelled() {
+        return Ok(cancelled());
+    }
+    let ble = endpoint.ble.is_some();
+    if ble && !start.wifi_upgrade {
+        bail!("Sending over Bluetooth needs the Wi-Fi upgrade, which is off (see Settings)");
+    }
+    // A paired KuickShare computer accepts the transfer by itself if it is told in advance.
+    let trusted = endpoint
+        .ip
+        .as_ref()
+        .is_some_and(|ip| start.trusted_ips.lock().unwrap().contains(ip));
+    if trusted
+        && steps.engine_is_current()
+        && let Ok(addr) = control_addr(&start.endpoints, &endpoint.id)
+    {
+        let announce = tokio::time::timeout(Duration::from_secs(2), start.trust.announce(addr));
+        let announced = tokio::select! {
+            biased;
+            () = pending.wait_cancelled() => return Ok(cancelled()),
+            announced = announce => announced,
+        };
+        if !matches!(announced, Ok(Ok(()))) {
+            tracing::info!("could not announce the transfer to the paired computer");
+        }
+    }
+    let queued = core
+        .lock()
+        .await
+        .queue_send(&start, &pending, endpoint_id, endpoint, ob)?;
+    Ok(match queued {
+        Queued::Sent => SendOutcome::Queued,
+        Queued::Cancelled => cancelled(),
+    })
+}
+
+/// Decides which endpoint a send really goes to. A device found over the LAN is probed first:
+/// a phone whose Wi-Fi went off sends no mDNS goodbye, so its entry would stay for minutes.
+/// If it is gone the entry is dropped and the same phone is tried over Bluetooth; the other
+/// way round, a Bluetooth phone that answers on the LAN is reached there. When no LAN entry
+/// is known for a Bluetooth phone, the mDNS search is restarted once and given
+/// `LAN_LOOKUP_TIMEOUT` to find it (see `look_up_lan`). The other way round, when a LAN phone
+/// is gone and no Bluetooth entry is known, a Bluetooth scan window is started and given
+/// `BLE_LOOKUP_TIMEOUT` to see it (see `look_up_bluetooth`). The `Core` lock is not held
+/// meanwhile (see `run_send`); the time it takes is, for a Bluetooth pick, at most
+/// `LAN_LOOKUP_TIMEOUT` (1.5 s) plus two `PROBE_TIMEOUT` (1.5 s each) per probed candidate; for a
+/// LAN pick, at most two `PROBE_TIMEOUT` plus `BLE_LOOKUP_TIMEOUT` (3 s).
+async fn choose_route<S: RouteSteps>(start: &SendStart, steps: &S) -> Result<EndpointInfo> {
+    let picked = start.picked.clone();
+    let endpoints = &start.endpoints;
+    if picked.ble.is_none() {
+        if steps.probe_twice(&lan_addr(&picked)).await {
+            return Ok(picked);
+        }
+        // The list and the signals belong to the engine that found the device: after a restart
+        // the new one may have found it again.
+        if steps.engine_is_current() {
+            endpoints.lock().unwrap().remove(&picked.id);
+            steps.device_lost(&picked.id).await;
+        }
+        let mut ble = None;
+        if start.wifi_upgrade {
+            ble = same_device(endpoints, &picked, true);
+            if ble.is_none() {
+                tracing::info!("send: the LAN device is gone, looking for it over Bluetooth");
+                tracing::debug!("{} is gone: looking for it over Bluetooth", picked.id);
+                ble = look_up_bluetooth(steps, endpoints, &picked).await;
+            }
+        }
+        let Some(ble) = ble else {
+            if start.wifi_upgrade {
+                tracing::info!("send refused: the LAN device is gone and has no Bluetooth entry");
+                tracing::debug!("{} is gone and has no Bluetooth entry", picked.id);
+            } else {
+                tracing::info!("send refused: the LAN device is gone and Wi-Fi Direct is off");
+                tracing::debug!(
+                    "{} is gone (Wi-Fi Direct is off: no Bluetooth lookup)",
+                    picked.id
+                );
+            }
+            bail!("The device is not reachable");
+        };
+        tracing::info!("send goes over Bluetooth: the LAN device is gone");
+        tracing::debug!("{} is gone, sending to {} (same name)", picked.id, ble.id);
+        return Ok(ble);
+    }
+    let mut lan = same_device(endpoints, &picked, false);
+    if lan.is_none() && start.wifi_upgrade && lan_entries(endpoints, &picked) == 0 {
+        lan = look_up_lan(steps, endpoints, &picked).await;
+    }
+    let name = picked.name.as_deref().unwrap_or_default();
+    match lan {
+        Some(lan) if steps.probe_twice(&lan_addr(&lan)).await => {
+            tracing::info!("send goes over the LAN: the device answers there");
+            tracing::debug!(
+                "{} answers on the LAN, sending to {} (same name)",
+                picked.id,
+                lan.id
+            );
+            return Ok(lan);
+        }
+        Some(_) => {
+            tracing::info!("send stays on Bluetooth: LAN probe failed");
+            tracing::debug!(
+                "{} stays on Bluetooth: the LAN entry did not answer",
+                picked.id
+            );
+        }
+        None if lan_entries(endpoints, &picked) > 1 => {
+            tracing::info!("send stays on Bluetooth: more than one LAN entry has that name");
+            tracing::debug!("{} stays on Bluetooth: ambiguous LAN entries", picked.id);
+        }
+        None => {
+            tracing::info!("send stays on Bluetooth: no LAN entry with that name");
+            tracing::debug!(
+                "{} stays on Bluetooth: no LAN entry named \"{name}\"",
+                picked.id
+            );
+        }
+    }
+    Ok(picked)
+}
+
+/// Restarts the mDNS search (the list stays) and waits up to `LAN_LOOKUP_TIMEOUT` for the
+/// phone picked over Bluetooth to show up on the LAN with the same name and device type. The
+/// library notices a phone that joined the LAN only when the phone announces itself, and
+/// NetworkManager reports nothing when it is the phone's network that changed. At most one
+/// restart per `LAN_LOOKUP_GAP`; nothing happens while the discovery is not running. No
+/// lock is held across the waits.
+async fn look_up_lan<S: RouteSteps>(
+    steps: &S,
+    endpoints: &Endpoints,
+    picked: &EndpointInfo,
+) -> Option<EndpointInfo> {
+    picked.name.as_ref()?;
+    if !steps.restart_lan_search().await {
+        return None;
+    }
+    tracing::info!("send: the device is not on the LAN list, restarting the search");
+    tracing::debug!("{} is not on the LAN list", picked.id);
+    let deadline = tokio::time::Instant::now() + LAN_LOOKUP_TIMEOUT;
+    loop {
+        tokio::time::sleep(LAN_LOOKUP_POLL).await;
+        if let Some(lan) = same_device(endpoints, picked, false) {
+            return Some(lan);
+        }
+        if tokio::time::Instant::now() >= deadline || lan_entries(endpoints, picked) > 1 {
+            return None;
+        }
+    }
+}
+
+/// Starts a Bluetooth scan window and waits up to `BLE_LOOKUP_TIMEOUT` for the phone picked
+/// over the LAN to be seen with the same name and device type. A scan does nothing while a window
+/// runs or just after one; a running window delivers its sightings to the same list, so waiting
+/// is still right. Stops early on a match, or when several phones match (no guessing). No lock
+/// is held across the waits.
+async fn look_up_bluetooth<S: RouteSteps>(
+    steps: &S,
+    endpoints: &Endpoints,
+    picked: &EndpointInfo,
+) -> Option<EndpointInfo> {
+    picked.name.as_ref()?;
+    steps.scan_bluetooth().await;
+    let deadline = tokio::time::Instant::now() + BLE_LOOKUP_TIMEOUT;
+    loop {
+        tokio::time::sleep(BLE_LOOKUP_POLL).await;
+        if let Some(ble) = same_device(endpoints, picked, true) {
+            return Some(ble);
+        }
+        if tokio::time::Instant::now() >= deadline || ble_entries(endpoints, picked) > 1 {
+            return None;
+        }
+    }
+}
+
+/// How many known Bluetooth endpoints have the name and the device type of `of`.
+fn ble_entries(endpoints: &Endpoints, of: &EndpointInfo) -> usize {
+    matching(endpoints.lock().unwrap().values(), of, true).count()
+}
+
+/// How many known LAN endpoints have the name and the device type of `of`.
+fn lan_entries(endpoints: &Endpoints, of: &EndpointInfo) -> usize {
+    matching(endpoints.lock().unwrap().values(), of, false).count()
+}
+
+/// The only known Bluetooth (`ble`) or LAN endpoint with the name and the device type of
+/// `of`; `None` when there is none or when more than one matches (no guessing).
+fn same_device(endpoints: &Endpoints, of: &EndpointInfo, ble: bool) -> Option<EndpointInfo> {
+    unique_match(endpoints.lock().unwrap().values(), of, ble).cloned()
 }
 
 /// Longest device name in bytes: it goes into a one-byte length field of the mDNS record.
@@ -1249,11 +1774,6 @@ async fn retry_lan(core: Weak<Mutex<Core>>, ble: EndpointInfo) {
     }
 }
 
-/// `probe`, tried once more when it fails (a lost SYN is not a gone phone).
-async fn probe_twice(addr: &str) -> bool {
-    probe(addr).await || probe(addr).await
-}
-
 /// True when `addr` accepts a TCP connection within `PROBE_TIMEOUT`.
 async fn probe(addr: &str) -> bool {
     matches!(
@@ -1269,7 +1789,14 @@ pub async fn watch_network(core: Arc<tokio::sync::Mutex<Core>>) {
     tokio::spawn(crate::link::watch_network(tx));
     while let Some(event) = events.recv().await {
         match event {
-            NetworkEvent::Lost => core.lock().await.network_lost().await,
+            NetworkEvent::Lost => {
+                let lost = core.lock().await.network_lost();
+                if let Some((conn, ids)) = lost {
+                    for id in &ids {
+                        dbus::emit_device_lost(&conn, id).await;
+                    }
+                }
+            }
             NetworkEvent::Gained => core.lock().await.network_gained(),
         }
     }
@@ -1292,26 +1819,52 @@ async fn report_silent_send(
     ids: (String, String),
     device: String,
     within: Duration,
+    pending: PendingSend,
 ) {
     let (sent_as, shown_as) = ids;
-    if send_started(&mut events, &sent_as, within).await {
+    if await_first_event(&mut events, &bus, &sent_as, within, &pending).await {
         return;
     }
     tracing::info!("no answer to a send in time: reporting it as failed");
     tracing::debug!("no answer from {sent_as}");
     // Stop the library's transfer too, or it would go on and a retry would offer the files twice.
     // No effect while it is still scanning or dialling (no request exists yet to receive it).
+    cancel_in_library(&bus, &sent_as);
+    dbus::emit_failed_transfer(&conn, &shown_as, &device).await;
+}
+
+fn cancel_in_library(bus: &broadcast::Sender<ChannelMessage>, id: &str) {
     let _ = bus.send(ChannelMessage {
-        id: sent_as,
+        id: id.to_owned(),
         msg: Message::Lib {
             action: TransferAction::TransferCancel,
         },
     });
-    dbus::emit_failed_transfer(&conn, &shown_as, &device).await;
 }
 
-/// True when the transfer `id` produced an event within `within`, or when the service stopped
-/// (then there is nothing to report).
+/// Waits for the first event of the library for the transfer `id` (see `send_started`). The
+/// library listens for a cancel only after it took the send off its queue, and its first event
+/// comes after that: a Cancel that was marked on `pending` meanwhile never reached it, so it is
+/// said again now. True when the transfer started (or the service stopped).
+async fn await_first_event(
+    events: &mut broadcast::Receiver<ChannelMessage>,
+    bus: &broadcast::Sender<ChannelMessage>,
+    id: &str,
+    within: Duration,
+    pending: &PendingSend,
+) -> bool {
+    if !send_started(events, id, within).await {
+        return false;
+    }
+    if pending.cancelled() {
+        cancel_in_library(bus, id);
+    }
+    true
+}
+
+/// True when the library reported the transfer `id` (a `Message::Client`) within `within`, or
+/// when the service stopped (then there is nothing to report). The actions on the bus, a Cancel
+/// among them, are not the library's word.
 async fn send_started(
     events: &mut broadcast::Receiver<ChannelMessage>,
     id: &str,
@@ -1320,7 +1873,10 @@ async fn send_started(
     let started = async {
         loop {
             match events.recv().await {
-                Ok(message) if message.id == id => return true,
+                Ok(ChannelMessage {
+                    id: from,
+                    msg: Message::Client(_),
+                }) if from == id => return true,
                 Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(broadcast::error::RecvError::Closed) => return true,
             }
@@ -1427,14 +1983,37 @@ pub async fn change_wifi_upgrade<P: RequirementsProbe>(
     Ok(change)
 }
 
-/// What `release_wifi` works on, taken under the `Core` lock so the D-Bus calls run without it.
+/// What `release_wifi` works on: the shared link. `main` takes it once at start
+/// (`Core::wifi_release`) and keeps it, so the cleanup at exit never waits for the `Core` lock.
+#[derive(Clone)]
 #[must_use]
 pub struct WifiRelease {
     nm: Arc<NmLink>,
 }
 
+/// Stops the daemon within the shell's 3 s wait after SIGTERM: the engine first (the wait for the
+/// `Core` lock included) for at most `engine_bound`, whatever it does, then ALWAYS the Wi-Fi
+/// cleanup, so a hotspot, an open firewall port or the replaced connection are restored even when
+/// the engine hangs or something holds the `Core` lock.
+pub async fn stop_daemon(
+    stop_engine: impl Future<Output = ()>,
+    engine_bound: Duration,
+    release: impl Future<Output = ()>,
+) {
+    if tokio::time::timeout(engine_bound, stop_engine)
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            "the service did not stop in {engine_bound:?}: going on with the Wi-Fi cleanup"
+        );
+    }
+    release.await;
+}
+
 /// Bound of the Wi-Fi cleanup when the daemon stops. The shell waits 3 s for the daemon to end
-/// after SIGTERM (`waitForFinished` in `corebridge.cpp`): this stays within it.
+/// after SIGTERM (`waitForFinished` in `corebridge.cpp`): this and `SHUTDOWN_ENGINE_BOUND`, which
+/// goes first, stay within it (2 s + 0.8 s).
 pub const WIFI_STOP_CLEANUP_BOUND: Duration = Duration::from_secs(2);
 /// Bound of the sweep of leftover profiles at start, before the service takes its name.
 pub const WIFI_START_SWEEP_BOUND: Duration = Duration::from_secs(5);
@@ -1520,6 +2099,8 @@ fn visibility(visible: bool) -> Visibility {
 
 #[cfg(test)]
 mod tests {
+    use tokio::sync::Notify;
+
     use super::*;
 
     #[test]
@@ -1887,7 +2468,623 @@ mod tests {
         assert_eq!(left, ["quiet but alive", "recent"]);
     }
 
-    fn message(id: &str) -> ChannelMessage {
+    // --- The lifecycle of a send, a restart and the exit -------------------------------------
+    // Nothing here sleeps to "let something happen": a fake holds the step under test on a
+    // `Notify` gate, and the test acts while it is held.
+
+    const PICKED: &str = "10.0.0.5:4000";
+
+    /// Puts an engine that was never run into `core`; what is queued for the library arrives on
+    /// the returned receiver. This is the test seam for `Core::engine`: a real `RQS::run` would
+    /// bind a port and start mDNS and Bluetooth.
+    fn install_engine(core: &mut Core) -> mpsc::Receiver<SendInfo> {
+        let (send_tx, queue) = mpsc::channel(10);
+        let (discovery_tx, _) = broadcast::channel(4);
+        let (stop, _) = watch::channel(false);
+        core.engine = Some(Engine {
+            rqs: RQS::new(Visibility::Visible, None, None, None),
+            send_tx,
+            forwarders: dbus::Forwarders {
+                stop,
+                drain: tokio::spawn(async {}),
+                abort: Vec::new(),
+            },
+            discovery_tx,
+            discovery_on: false,
+            lan_retries: HashMap::new(),
+        });
+        queue
+    }
+
+    fn lan_phone() -> EndpointInfo {
+        EndpointInfo {
+            id: PICKED.into(),
+            name: Some("Pixel".into()),
+            ip: Some("10.0.0.5".into()),
+            port: Some("4000".into()),
+            ..EndpointInfo::default()
+        }
+    }
+
+    fn hello() -> OutboundPayload {
+        OutboundPayload::Text {
+            text: "hello".into(),
+            text_type: TextPayloadType::Text,
+        }
+    }
+
+    /// A route step that stops in `probe` until the test lets it go, and answers `true` then.
+    struct Gated<'a> {
+        entered: &'a Notify,
+        release: &'a Notify,
+    }
+
+    impl RouteSteps for Gated<'_> {
+        async fn probe(&self, _addr: &str) -> bool {
+            self.entered.notify_one();
+            self.release.notified().await;
+            true
+        }
+        async fn restart_lan_search(&self) -> bool {
+            false
+        }
+        async fn scan_bluetooth(&self) {}
+        async fn device_lost(&self, _id: &str) {}
+        fn engine_is_current(&self) -> bool {
+            true
+        }
+    }
+
+    /// A route step that stops in the lookup of a Bluetooth phone on the LAN, for good.
+    struct StuckInLookup<'a> {
+        entered: &'a Notify,
+    }
+
+    impl RouteSteps for StuckInLookup<'_> {
+        async fn probe(&self, _addr: &str) -> bool {
+            false
+        }
+        async fn restart_lan_search(&self) -> bool {
+            self.entered.notify_one();
+            std::future::pending().await
+        }
+        async fn scan_bluetooth(&self) {}
+        async fn device_lost(&self, _id: &str) {}
+        fn engine_is_current(&self) -> bool {
+            true
+        }
+    }
+
+    /// A core with an engine and the phone in its list, and the queue of the library.
+    fn core_with_phone() -> (Mutex<Core>, mpsc::Receiver<SendInfo>, LibActions) {
+        let mut core = test_core();
+        let queue = install_engine(&mut core);
+        core.endpoints
+            .lock()
+            .unwrap()
+            .insert(PICKED.into(), lan_phone());
+        let actions = core.lib_actions();
+        (Mutex::new(core), queue, actions)
+    }
+
+    #[tokio::test]
+    async fn a_send_does_not_hold_the_core_lock_while_it_chooses_its_route() {
+        let (core, mut queue, actions) = core_with_phone();
+        let sends = actions.sends();
+        let (entered, release) = (Notify::new(), Notify::new());
+        let send = run_send(
+            &core,
+            &sends,
+            |_| Gated {
+                entered: &entered,
+                release: &release,
+            },
+            PICKED,
+            hello(),
+        );
+        let meanwhile = async {
+            entered.notified().await;
+            // The route is being chosen: the properties, Cancel and the rest are not blocked.
+            drop(core.try_lock().expect("the Core lock is held by the send"));
+            let _ = core.lock().await.device_name(); // a property getter completes
+            assert_eq!(sends.len(), 1, "the send is registered while it waits");
+            release.notify_one();
+        };
+        let (outcome, ()) = tokio::join!(send, meanwhile);
+        assert!(matches!(outcome.unwrap(), SendOutcome::Queued));
+        let queued = queue.try_recv().expect("the send reaches the library");
+        assert_eq!((queued.id.as_str(), queued.addr.as_str()), (PICKED, PICKED));
+        assert_eq!(sends.len(), 0, "nothing stays registered");
+    }
+
+    #[tokio::test]
+    async fn a_cancel_during_the_route_phase_stops_the_send_with_one_cancelled() {
+        let (core, mut queue, actions) = core_with_phone();
+        let sends = actions.sends();
+        let (entered, release) = (Notify::new(), Notify::new());
+        let send = run_send(
+            &core,
+            &sends,
+            |_| Gated {
+                entered: &entered,
+                release: &release,
+            },
+            PICKED,
+            hello(),
+        );
+        let meanwhile = async {
+            entered.notified().await;
+            // The library is not listening yet and nothing is mapped: the mark is what counts,
+            // and the Cancel call itself holds the one `Cancelled` to emit. The probe is not
+            // released: the send does not wait for it.
+            let due = actions
+                .cancel(PICKED)
+                .expect("a pending send can be cancelled");
+            assert_eq!(due.len(), 1);
+            assert_eq!(
+                (due[0].id.as_str(), due[0].device.as_str()),
+                (PICKED, "Pixel")
+            );
+        };
+        let (outcome, ()) = tokio::join!(send, meanwhile);
+        match outcome.unwrap() {
+            SendOutcome::Cancelled(report) => {
+                assert!(report.is_none(), "the same Cancelled is emitted twice");
+            }
+            SendOutcome::Queued => panic!("a cancelled send was queued"),
+        }
+        assert!(queue.try_recv().is_err(), "nothing goes to the library");
+        assert!(core.lock().await.redirects.lock().unwrap().is_empty());
+        assert_eq!(sends.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_cancel_during_the_lookup_ends_the_send_at_once() {
+        let mut core = test_core();
+        let mut queue = install_engine(&mut core);
+        core.settings.wifi_upgrade = true;
+        let ble = named("ble:G483", "Pixel", true);
+        core.endpoints.lock().unwrap().insert(ble.id.clone(), ble);
+        let actions = core.lib_actions();
+        let core = Mutex::new(core);
+        let sends = actions.sends();
+        let entered = Notify::new();
+        let send = run_send(
+            &core,
+            &sends,
+            |_| StuckInLookup { entered: &entered },
+            "ble:G483",
+            hello(),
+        );
+        let meanwhile = async {
+            entered.notified().await;
+            // The lookup never finishes by itself: only the cancel can end the send.
+            assert_eq!(actions.cancel("ble:G483").unwrap().len(), 1);
+        };
+        let (outcome, ()) = tokio::join!(send, meanwhile);
+        assert!(matches!(outcome.unwrap(), SendOutcome::Cancelled(None)));
+        assert!(queue.try_recv().is_err(), "nothing goes to the library");
+        assert_eq!(sends.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_cancel_before_the_report_is_armed_is_reported_by_the_send_itself() {
+        let (core, mut queue, actions) = core_with_phone();
+        let sends = actions.sends();
+        // Cancelled while the send still waits for the lock: nothing to emit yet.
+        let held = core.lock().await;
+        let entered = Notify::new();
+        let send = run_send(
+            &core,
+            &sends,
+            |_| StuckInLookup { entered: &entered },
+            PICKED,
+            hello(),
+        );
+        let meanwhile = async {
+            actions.cancel(PICKED).unwrap();
+            drop(held);
+        };
+        let (outcome, ()) = tokio::join!(send, meanwhile);
+        assert!(matches!(outcome.unwrap(), SendOutcome::Cancelled(Some(_))));
+        assert!(queue.try_recv().is_err());
+    }
+
+    /// A message the library sends about a transfer (what `send_started` waits for).
+    fn client_message(id: &str) -> ChannelMessage {
+        ChannelMessage {
+            id: id.to_owned(),
+            msg: Message::Client(rqs_lib::channel::MessageClient {
+                kind: rqs_lib::channel::TransferKind::Outbound,
+                state: None,
+                metadata: None,
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cancel_just_after_queuing_reaches_the_library_when_it_takes_the_send() {
+        let actions = LibActions::default();
+        let (bus, _keep) = broadcast::channel(8);
+        actions.set(Some(bus.clone()));
+        actions
+            .redirects
+            .lock()
+            .unwrap()
+            .insert("picked".into(), "sent".into());
+        // The send was handed over (queue_send), and `report_silent_send` listens already.
+        let pending = actions.sends().begin("picked");
+        assert!(pending.hand_over());
+        let mut watcher = bus.subscribe();
+        // The cancel comes before the library took the send off its queue: nobody hears it.
+        assert!(actions.cancel("picked").unwrap().is_empty());
+        assert!(pending.cancelled());
+        // The library takes the send (it subscribes), then reports it.
+        let mut library = bus.subscribe();
+        bus.send(client_message("sent")).unwrap();
+        assert!(
+            await_first_event(&mut watcher, &bus, "sent", Duration::from_secs(5), &pending).await
+        );
+        let first = library.recv().await.unwrap();
+        assert!(matches!(first.msg, Message::Client(_)));
+        let cancel = library.recv().await.unwrap();
+        assert_eq!(cancel.id, "sent");
+        assert!(matches!(
+            cancel.msg,
+            Message::Lib {
+                action: TransferAction::TransferCancel
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_send_that_was_not_cancelled_says_nothing_more_to_the_library() {
+        let actions = LibActions::default();
+        let (bus, _keep) = broadcast::channel(8);
+        actions.set(Some(bus.clone()));
+        let pending = actions.sends().begin("picked");
+        assert!(pending.hand_over());
+        let mut watcher = bus.subscribe();
+        let mut library = bus.subscribe();
+        bus.send(client_message("picked")).unwrap();
+        assert!(
+            await_first_event(
+                &mut watcher,
+                &bus,
+                "picked",
+                Duration::from_secs(5),
+                &pending
+            )
+            .await
+        );
+        assert!(library.recv().await.is_ok());
+        assert!(library.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn the_watchdog_stays_armed_after_a_cancel() {
+        let actions = LibActions::default();
+        let (bus, _keep) = broadcast::channel(8);
+        actions.set(Some(bus.clone()));
+        let pending = actions.sends().begin("picked");
+        assert!(pending.hand_over());
+        let mut watcher = bus.subscribe();
+        // The cancel itself is on the bus under the library's id; it is not a first event.
+        actions.cancel("picked").unwrap();
+        assert!(!await_first_event(&mut watcher, &bus, "picked", SHORT, &pending).await);
+    }
+
+    #[test]
+    fn a_pending_send_blocks_the_settings_that_restart_the_service() {
+        let core = test_core();
+        core.ensure_idle().unwrap();
+        let pending = core.lib_actions().sends().begin("10.0.0.5:4000");
+        let error = core.ensure_idle().unwrap_err().to_string();
+        assert!(error.contains("Wait for the current transfer"), "{error}");
+        // A copy kept for the watchdog keeps it registered too.
+        let kept = pending.clone();
+        drop(pending);
+        assert!(core.ensure_idle().is_err());
+        drop(kept);
+        core.ensure_idle().unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_sighting_of_a_stopped_engine_starts_no_lan_retry() {
+        let mut core = test_core();
+        let _queue = install_engine(&mut core);
+        core.engine.as_mut().unwrap().discovery_on = true;
+        core.settings.wifi_upgrade = true;
+        let mut ble = named("ble:G483", "Pixel", true);
+        ble.present = Some(true);
+        core.endpoints
+            .lock()
+            .unwrap()
+            .insert(ble.id.clone(), ble.clone());
+        let stale = core.consents.generation();
+        core.consents.clear(); // another engine took over
+        core.watch_lan(stale, ble.clone());
+        assert!(core.engine.as_ref().unwrap().lan_retries.is_empty());
+        let current = core.consents.generation();
+        core.watch_lan(current, ble);
+        assert_eq!(core.engine.as_ref().unwrap().lan_retries.len(), 1);
+        core.engine.as_mut().unwrap().stop_lan_retries();
+    }
+
+    #[tokio::test]
+    async fn a_cancel_after_the_queue_still_reaches_the_library() {
+        let (_core, _queue, actions) = core_with_phone();
+        let (tx, mut rx) = broadcast::channel(4);
+        actions.set(Some(tx));
+        actions
+            .redirects
+            .lock()
+            .unwrap()
+            .insert("picked".into(), "sent".into());
+        // Not pending any more (it was queued): the cancel is broadcast, under the mapped id.
+        assert!(actions.cancel("picked").unwrap().is_empty());
+        let heard = rx.recv().await.unwrap();
+        assert_eq!(heard.id, "sent");
+        assert!(matches!(
+            heard.msg,
+            Message::Lib {
+                action: TransferAction::TransferCancel
+            }
+        ));
+        // Nothing pending and nobody to hear it: still an error, as before.
+        actions.set(None);
+        assert!(actions.cancel("other").is_err());
+    }
+
+    #[test]
+    fn a_cancel_marks_only_the_sends_started_before_it() {
+        let book = SendBook::default();
+        let before = book.begin("a");
+        let other = book.begin("b");
+        assert!(book.cancel("a").0);
+        let after = book.begin("a");
+        assert!(before.cancelled() && !other.cancelled() && !after.cancelled());
+        assert!(!book.cancel("unknown").0);
+        drop((before, other, after));
+        assert_eq!(book.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_send_fails_cleanly_when_the_service_restarted_under_it() {
+        let (core, mut queue, actions) = core_with_phone();
+        let sends = actions.sends();
+        let (entered, release) = (Notify::new(), Notify::new());
+        let send = run_send(
+            &core,
+            &sends,
+            |_| Gated {
+                entered: &entered,
+                release: &release,
+            },
+            PICKED,
+            hello(),
+        );
+        let meanwhile = async {
+            entered.notified().await;
+            core.lock().await.stop_engine(SHUTDOWN_STOP).await;
+            release.notify_one();
+        };
+        let (outcome, ()) = tokio::join!(send, meanwhile);
+        let error = outcome.unwrap_err().to_string();
+        assert!(error.contains("not running"), "{error}");
+        assert!(queue.try_recv().is_err());
+        assert!(core.lock().await.redirects.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_send_says_so_when_another_engine_took_over() {
+        let (core, mut queue, actions) = core_with_phone();
+        let sends = actions.sends();
+        let (entered, release) = (Notify::new(), Notify::new());
+        let send = run_send(
+            &core,
+            &sends,
+            |_| Gated {
+                entered: &entered,
+                release: &release,
+            },
+            PICKED,
+            hello(),
+        );
+        let meanwhile = async {
+            entered.notified().await;
+            // A restart: the engine is there again, but it is another one.
+            core.lock().await.consents.clear();
+            release.notify_one();
+        };
+        let (outcome, ()) = tokio::join!(send, meanwhile);
+        let error = outcome.unwrap_err().to_string();
+        assert!(error.contains("restarted"), "{error}");
+        assert!(queue.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn stopping_the_engine_ends_every_unfinished_transfer_and_empties_the_list() {
+        let mut core = test_core();
+        let _queue = install_engine(&mut core);
+        seed_active(&core, "10.0.0.5:4000", "outbound", "SendingFiles", "phone");
+        seed_active(
+            &core,
+            "10.0.0.6:4000",
+            "inbound",
+            "WaitingForUserConsent",
+            "tablet",
+        );
+        core.redirects
+            .lock()
+            .unwrap()
+            .insert("picked".into(), "sent".into());
+        let generation = core.consents.generation();
+        let (tx, _rx) = broadcast::channel(4);
+        core.lib_actions.set(Some(tx));
+
+        let mut unfinished = core.stop_engine(RESTART_STOP).await;
+        unfinished.sort_by(|a, b| a.summary().0.cmp(b.summary().0));
+        let seen: Vec<_> = unfinished.iter().map(TransferEvent::summary).collect();
+        assert_eq!(
+            seen,
+            [
+                ("10.0.0.5:4000", "outbound", "Disconnected", 0),
+                ("10.0.0.6:4000", "inbound", "Disconnected", 0),
+            ]
+        );
+        // A stale entry no longer blocks the settings that restart the service.
+        assert!(core.active.lock().unwrap().is_empty());
+        core.ensure_idle().unwrap();
+        assert!(core.engine.is_none() && core.redirects.lock().unwrap().is_empty());
+        assert_ne!(core.consents.generation(), generation);
+        assert!(
+            core.lib_actions
+                .send("x", TransferAction::TransferCancel)
+                .is_err()
+        );
+    }
+
+    /// Records what happened in what order.
+    type Log = Arc<StdMutex<Vec<&'static str>>>;
+
+    /// Sets a flag when it is dropped: the task that owned it is gone.
+    struct Gone(Arc<AtomicBool>);
+
+    impl Drop for Gone {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    const QUICK: StopBounds = StopBounds {
+        service: Duration::from_millis(20),
+        drain: Duration::from_millis(20),
+    };
+
+    #[tokio::test]
+    async fn the_library_stops_before_the_forwarders_and_they_get_to_drain() {
+        let log = Log::default();
+        let (stop, mut stopped) = watch::channel(false);
+        let drain_log = log.clone();
+        let drain = tokio::spawn(async move {
+            let _ = stopped.changed().await;
+            drain_log.lock().unwrap().push("drained");
+        });
+        let service_log = log.clone();
+        wind_down(
+            async move { service_log.lock().unwrap().push("service stopped") },
+            QUICK,
+            dbus::Forwarders {
+                stop,
+                drain,
+                abort: Vec::new(),
+            },
+        )
+        .await;
+        assert_eq!(*log.lock().unwrap(), ["service stopped", "drained"]);
+    }
+
+    #[tokio::test]
+    async fn every_step_of_stopping_is_bounded_and_the_next_one_still_runs() {
+        let (stop, _) = watch::channel(false);
+        let drain_gone = Arc::new(AtomicBool::new(false));
+        let other_gone = Arc::new(AtomicBool::new(false));
+        let guard = Gone(drain_gone.clone());
+        // Ignores the stop signal: abandoned after the bound.
+        let drain = tokio::spawn(async move {
+            let _guard = guard;
+            std::future::pending::<()>().await;
+        });
+        let guard = Gone(other_gone.clone());
+        let other = tokio::spawn(async move {
+            let _guard = guard;
+            std::future::pending::<()>().await;
+        });
+        // A regression must fail the test, not hang it.
+        tokio::time::timeout(Duration::from_secs(10), async {
+            wind_down(
+                std::future::pending::<()>(), // a library that never lets go
+                QUICK,
+                dbus::Forwarders {
+                    stop,
+                    drain,
+                    abort: vec![other],
+                },
+            )
+            .await;
+            while !(drain_gone.load(Ordering::SeqCst) && other_gone.load(Ordering::SeqCst)) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("stopping did not finish within its bounds");
+    }
+
+    #[tokio::test]
+    async fn the_wifi_cleanup_runs_when_the_engine_stop_hangs() {
+        let cleaned = AtomicBool::new(false);
+        stop_daemon(
+            std::future::pending::<()>(),
+            Duration::from_millis(20),
+            async { cleaned.store(true, Ordering::SeqCst) },
+        )
+        .await;
+        assert!(cleaned.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn the_wifi_cleanup_runs_when_something_holds_the_core_lock() {
+        let core = Arc::new(Mutex::new(test_core()));
+        let _held = core.lock().await; // a slow restart, for instance
+        let cleaned = AtomicBool::new(false);
+        stop_daemon(
+            async { core.lock().await.shutdown().await },
+            Duration::from_millis(20),
+            async { cleaned.store(true, Ordering::SeqCst) },
+        )
+        .await;
+        assert!(cleaned.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn the_wifi_cleanup_also_runs_after_a_clean_engine_stop() {
+        let mut core = test_core();
+        let _queue = install_engine(&mut core);
+        let core = Mutex::new(core);
+        let cleaned = AtomicBool::new(false);
+        stop_daemon(
+            async { core.lock().await.shutdown().await },
+            SHUTDOWN_ENGINE_BOUND,
+            async { cleaned.store(true, Ordering::SeqCst) },
+        )
+        .await;
+        assert!(cleaned.load(Ordering::SeqCst) && core.lock().await.engine.is_none());
+    }
+
+    #[test]
+    fn the_exit_fits_in_the_shells_wait_for_the_daemon() {
+        // `waitForFinished(3000)` in corebridge.cpp, after SIGTERM.
+        assert!(SHUTDOWN_ENGINE_BOUND + WIFI_STOP_CLEANUP_BOUND < Duration::from_secs(3));
+        assert!(
+            SHUTDOWN_ENGINE_BOUND + WIFI_STOP_CLEANUP_BOUND <= Duration::from_millis(2800),
+            "the engine and the Wi-Fi cleanup leave no margin in the shell's wait"
+        );
+        assert!(SHUTDOWN_STOP.service + SHUTDOWN_STOP.drain <= SHUTDOWN_ENGINE_BOUND);
+    }
+
+    #[test]
+    fn the_library_winds_down_before_the_core_gives_up_on_it() {
+        // The sessions of a stopping library get `STOP_WIND_DOWN` (an inbound one needs up to
+        // 400 ms to close): the core's bounds on `RQS::stop` are above it, at exit and at a
+        // restart, or the library's last events would be cut off.
+        assert!(rqs_lib::manager::STOP_WIND_DOWN >= Duration::from_millis(400));
+        assert!(rqs_lib::manager::STOP_WIND_DOWN < SHUTDOWN_STOP.service);
+        assert!(SHUTDOWN_STOP.service < RESTART_STOP.service);
+    }
+
+    /// What the user's Cancel puts on the bus: an action, not a word of the library.
+    fn lib_message(id: &str) -> ChannelMessage {
         ChannelMessage {
             id: id.to_owned(),
             msg: rqs_lib::channel::Message::Lib {
@@ -1901,15 +3098,22 @@ mod tests {
     #[tokio::test]
     async fn a_send_has_started_when_its_own_first_event_arrives() {
         let (tx, mut rx) = broadcast::channel(8);
-        tx.send(message("other")).unwrap();
-        tx.send(message("ble:A")).unwrap();
+        tx.send(client_message("other")).unwrap();
+        tx.send(client_message("ble:A")).unwrap();
         assert!(send_started(&mut rx, "ble:A", SHORT).await);
     }
 
     #[tokio::test]
     async fn events_of_other_transfers_do_not_count_as_a_start() {
         let (tx, mut rx) = broadcast::channel(8);
-        tx.send(message("other")).unwrap();
+        tx.send(client_message("other")).unwrap();
+        assert!(!send_started(&mut rx, "ble:A", SHORT).await);
+    }
+
+    #[tokio::test]
+    async fn an_action_on_the_bus_is_not_the_start_of_a_send() {
+        let (tx, mut rx) = broadcast::channel(8);
+        tx.send(lib_message("ble:A")).unwrap();
         assert!(!send_started(&mut rx, "ble:A", SHORT).await);
     }
 

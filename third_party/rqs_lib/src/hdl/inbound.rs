@@ -16,6 +16,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 use super::outbound::{CANCEL_TIMEOUT, sharing_cancel_frame};
 use super::{InnerState, TransferState};
@@ -52,6 +53,10 @@ const SANE_FRAME_LENGTH: i32 = 5 * 1024 * 1024;
 const SANITY_DURATION: Duration = Duration::from_micros(10);
 /// How long looking at the download folder (space, names) may take at the offer.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
+/// Bound on the FIN after the Cancel frames at a stop (the close itself is `Limits::stop_close`).
+pub(crate) const FIN_TIMEOUT: Duration = Duration::from_millis(50);
+/// How long a session stopped by the service waits for its peer to close after the Cancel
+/// (a user cancel waits `CANCEL_TIMEOUT`): the stop of the service waits for the sessions.
 
 #[derive(Debug)]
 pub struct InboundRequest {
@@ -80,6 +85,9 @@ pub struct InboundRequest {
     poisoned: bool,
     /// Ids of the last `Bytes` payloads completed, to ignore a repeated empty last chunk.
     completed: VecDeque<i64>,
+    /// Cancelled when the service stops: the session then ends like a user cancel (see
+    /// `on_stop`). Never cancelled unless the owner of the session sets it (`with_stop`).
+    stop: CancellationToken,
     /// Tests only: where files go, instead of the process-wide download directory.
     #[cfg(test)]
     download_dir: Option<PathBuf>,
@@ -121,6 +129,7 @@ impl InboundRequest {
             consent_since: Instant::now(),
             poisoned: false,
             completed: VecDeque::new(),
+            stop: CancellationToken::new(),
             #[cfg(test)]
             download_dir: None,
         }
@@ -129,6 +138,14 @@ impl InboundRequest {
     /// Replaces the default limits (tests, or a caller with other needs).
     pub fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Ends the session when `stop` is cancelled (the service shutting down), like a user cancel
+    /// where the stream can still be written, else by dropping it. The partial files are removed
+    /// and the app gets the final state.
+    pub fn with_stop(mut self, stop: CancellationToken) -> Self {
+        self.stop = stop;
         self
     }
 
@@ -173,6 +190,11 @@ impl InboundRequest {
     }
 
     async fn handle_event(&mut self) -> Result<(), anyhow::Error> {
+        // `select!` picks at random among the branches that are ready, so a stop could lose
+        // against a queued bus message (or a frame) every time it is looked at; check it first.
+        if self.stop.is_cancelled() {
+            return Err(self.on_stop().await);
+        }
         let idle_deadline = self.idle_deadline();
         tokio::select! {
             _ = tokio::time::sleep_until(idle_deadline.unwrap_or_else(Instant::now)), if idle_deadline.is_some() => {
@@ -182,6 +204,9 @@ impl InboundRequest {
                     return self.decline().await;
                 }
                 return Err(anyhow!("no data from the peer within the time allowed"));
+            },
+            () = self.stop.cancelled() => {
+                return Err(self.on_stop().await);
             },
             i = self.receiver.recv() => {
                 self.on_bus(i).await?;
@@ -272,6 +297,10 @@ impl InboundRequest {
             frame.resize(end, 0);
             let mut filled = start;
             while filled < end {
+                // Not left to the `select!` below, which may keep picking the bus or the read.
+                if self.stop.is_cancelled() {
+                    return Err(self.on_stop().await);
+                }
                 if is_handshaking(&self.state.state) {
                     hard = hard.min(self.started + self.limits.handshake);
                 }
@@ -280,6 +309,9 @@ impl InboundRequest {
                 let n = tokio::select! {
                     r = tokio::time::timeout_at(deadline, self.socket.read(&mut frame[filled..end])) => {
                         r.map_err(|_| anyhow!("the peer stopped in the middle of a frame"))??
+                    }
+                    () = self.stop.cancelled() => {
+                        return Err(self.on_stop().await);
                     }
                     i = self.receiver.recv() => {
                         self.on_bus(i).await?;
@@ -1353,22 +1385,66 @@ impl InboundRequest {
     /// between two frames or while a frame body is read: nothing else writes meanwhile.
     async fn cancel_peer(&mut self) {
         info!("Transfer canceled by the user");
-        let closing = async {
-            let sent: Result<(), anyhow::Error> = async {
-                self.send_encrypted_frame(&sharing_cancel_frame()).await?;
-                self.disconnection().await
-            }
+        self.close_with_cancel(CANCEL_TIMEOUT).await;
+    }
+
+    /// The service is stopping. A session the app knows about ends as `Cancelled` (the partial
+    /// files go with the session), and the peer is told when a frame can still be written:
+    /// between frames or while a body is read, nothing writes meanwhile, and a stream with a
+    /// failed write is never written again. Always returns the error that ends the session.
+    async fn on_stop(&mut self) -> anyhow::Error {
+        let state = self.state.state.clone();
+        let known = !matches!(
+            state,
+            TransferState::Initial
+                | TransferState::Disconnected
+                | TransferState::Rejected
+                | TransferState::Cancelled
+                | TransferState::Finished
+        );
+        if known {
+            info!("Transfer ended: the service is stopping");
+            self.update_state(
+                |e| {
+                    e.state = TransferState::Cancelled;
+                },
+                true,
+            )
             .await;
-            if let Err(e) = sent {
-                debug!("Cancel frames not sent: {e}");
+            if !self.poisoned && (self.plain_frames || self.state.encrypt_key.is_some()) {
+                self.close_with_cancel(self.limits.stop_close).await;
             }
-            if let Err(e) = self.socket.shutdown().await {
-                debug!("Closing the write half failed: {e}");
-            }
-            let mut sink = [0u8; 4096];
+        }
+        anyhow!(crate::errors::AppError::NotAnError)
+    }
+
+    /// The sharing Cancel, the Disconnection, a FIN and a wait for the peer to close, within
+    /// `limit`.
+    async fn close_with_cancel(&mut self, limit: Duration) {
+        let deadline = tokio::time::Instant::now() + limit;
+        let sent = tokio::time::timeout_at(deadline, async {
+            self.send_encrypted_frame(&sharing_cancel_frame()).await?;
+            self.disconnection().await
+        })
+        .await;
+        match sent {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => debug!("Cancel frames not sent: {e}"),
+            Err(_) => debug!("Cancel frames not sent in time"),
+        }
+        // The FIN goes out even when the frames were late, so the peer always sees the end; a
+        // frame cut off by the deadline is never followed by another one (no write but this).
+        match tokio::time::timeout(FIN_TIMEOUT, self.socket.shutdown()).await {
+            Ok(Err(e)) => debug!("Closing the write half failed: {e}"),
+            Err(_) => debug!("Closing the write half timed out"),
+            Ok(Ok(())) => {}
+        }
+        let mut sink = [0u8; 4096];
+        let drained = tokio::time::timeout_at(deadline, async {
             while matches!(self.socket.read(&mut sink).await, Ok(n) if n > 0) {}
-        };
-        if tokio::time::timeout(CANCEL_TIMEOUT, closing).await.is_err() {
+        })
+        .await;
+        if drained.is_err() {
             debug!("The peer did not close after the cancel in time");
         }
     }
@@ -2421,6 +2497,113 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    /// A stopping session closes (frames, FIN, the peer's close) within the wind-down that
+    /// `RQS::stop` waits for.
+    #[test]
+    fn a_stopping_session_closes_within_the_wind_down() {
+        let close = Limits::default().stop_close + FIN_TIMEOUT;
+        let wind_down = crate::manager::STOP_WIND_DOWN;
+        assert!(close < wind_down, "{close:?} vs {wind_down:?}");
+    }
+
+    /// The service stops: the session ends like a user cancel (the peer is told and closes),
+    /// the app gets `Cancelled`, and what was received so far is removed.
+    async fn stop_session(s: &mut Session) -> (anyhow::Error, Vec<MessageClient>) {
+        let stop = CancellationToken::new();
+        s.req.stop = stop.clone();
+        // Generous on purpose: a loaded test machine must not turn the bounded close into a
+        // missing Cancel (the production bound is checked against STOP_WIND_DOWN in manager.rs).
+        s.req.limits.stop_close = Duration::from_secs(5);
+        let mut peer = s.peer.take().expect("peer is closed");
+        let closer = async move {
+            let mut sink = Vec::new();
+            let _ = peer.read_to_end(&mut sink).await;
+            sink
+        };
+        stop.cancel();
+        let (ended, sink) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(s.req.handle(), closer)
+        })
+        .await
+        .expect("the stop did not end the session");
+        assert!(!sink.is_empty(), "the peer was not told");
+        (ended.unwrap_err(), s.events())
+    }
+
+    /// A stop wins against what is ready at the same time (the session's own events queued on
+    /// the bus): `handle` used to return after the bus message about half of the time.
+    #[tokio::test]
+    async fn stop_wins_against_queued_bus_messages() {
+        for round in 0..50 {
+            let tmp = TempDir::new("stop-queued");
+            let mut s = Session::new(&tmp.0);
+            s.offer(vec![file_meta("a.txt", 1, 10)], vec![])
+                .await
+                .unwrap();
+            // Nobody reads the other end: the Cancel goes nowhere and the close is short.
+            drop(s.peer.take());
+            s.req.limits.stop_close = Duration::from_millis(200);
+            let stop = CancellationToken::new();
+            s.req.stop = stop.clone();
+            stop.cancel();
+            let err = tokio::time::timeout(Duration::from_secs(10), s.req.handle())
+                .await
+                .expect("the stop did not end the session")
+                .expect_err(&format!("round {round}: handle returned without the stop"));
+            assert!(is_end_of_session(&Err(err)));
+            assert_eq!(
+                s.events().last().unwrap().state,
+                Some(TransferState::Cancelled)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_ends_a_session_waiting_for_consent() {
+        let tmp = TempDir::new("stop-consent");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 10)], vec![])
+            .await
+            .unwrap();
+        let (err, events) = stop_session(&mut s).await;
+        assert!(is_end_of_session(&Err(err)));
+        assert_eq!(events.last().unwrap().state, Some(TransferState::Cancelled));
+        assert!(dir_names(&tmp.0).is_empty());
+    }
+
+    #[tokio::test]
+    async fn stop_ends_a_receiving_session_and_removes_the_partial_file() {
+        let tmp = TempDir::new("stop-receiving");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 10)], vec![])
+            .await
+            .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        s.file_chunk(1, 10, 0, 0, b"12345").await.unwrap();
+        assert!(tmp.0.join("a.txt").exists(), "precondition");
+        let (err, events) = stop_session(&mut s).await;
+        assert!(is_end_of_session(&Err(err)));
+        assert_eq!(events.last().unwrap().state, Some(TransferState::Cancelled));
+        assert!(dir_names(&tmp.0).is_empty(), "the partial file is left");
+    }
+
+    /// Before the handshake the app does not know the session: it ends silently.
+    #[tokio::test]
+    async fn stop_ends_a_session_before_the_handshake_without_an_event() {
+        let (_peer, ours) = tokio::io::duplex(1024);
+        let (bus, mut rx) = broadcast::channel(16);
+        let stop = CancellationToken::new();
+        let mut req = InboundRequest::new_over(MigratableStream::Duplex(ours), "id".into(), bus)
+            .with_stop(stop.clone());
+        stop.cancel();
+        let err = tokio::time::timeout(Duration::from_secs(10), req.handle())
+            .await
+            .expect("the stop did not end the session")
+            .unwrap_err();
+        assert!(is_end_of_session(&Err(err)));
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
     }
 
     /// D1: a user cancel while receiving must not leave the half file behind.

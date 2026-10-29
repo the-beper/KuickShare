@@ -88,7 +88,7 @@ Settings that restart the engine (device name, static port, reset) are refused w
 
 At start the core removes leftover `kuickshare-*` NetworkManager profiles (unconditionally, bounded at 5 s) before it takes its D-Bus name; at stop it releases the Wi-Fi link within 2 s ([timings](wifi-direct.md#timings-and-timeouts)).
 
-The core is behind one lock, held while a send chooses its route (up to about 8 s in the worst case, see the timeouts in `choose_route`) and during a restart, so other D-Bus calls wait meanwhile. Answering a transfer (`AnswerTransfer`, `Accept`, `Decline`) does not: it goes through the consent book and the library's event channel directly. Cancel does wait, because a send that is still choosing its route has no library id to cancel yet.
+The core is behind one lock, but a send holds it only briefly: to take a snapshot at the start and to queue the send at the end. Choosing the route (the LAN probe, the mDNS restart, the Bluetooth lookup, see the timeouts in `choose_route`) and the announce to a paired computer run without it, so other D-Bus calls do not wait for them; if the engine restarted meanwhile, the send fails with "the service restarted". Answering a transfer (`AnswerTransfer`, `Accept`, `Decline`) and `Cancel` do not take the lock either: answers go through the consent book, and a Cancel marks a send that is still choosing its route so it is dropped before it is queued and ends as `Cancelled` (a Cancel in the instant between queuing and the library taking the send can still be lost; it is sent twice to narrow that window). A restart still holds the lock while the old engine stops (bounded: the library first, then the final events are drained; unfinished transfers end as `Disconnected`). At exit the engine stop is bounded to 0.8 s and the Wi-Fi cleanup always runs after it (2 s), within the shell's 3 s wait.
 
 ### Inside the shell
 
@@ -192,12 +192,15 @@ The state names come from `rqs_lib` and are passed through unchanged as strings.
 | --- | --- |
 | `WaitingForUserConsent` (inbound) | Opens the consent (token, deadline, MAC read); the only state where auto-accept is evaluated. Any later state closes it |
 | `SendingFiles`, `ReceivingFiles` | Counts as active for the shell (progress job, Do Not Disturb, blocking settings) |
-| `Finished`, `Cancelled`, `Rejected`, `Disconnected` | Final. The transfer leaves the active set and is written to the history |
+| `Finished`, `Cancelled`, `Rejected`, `Disconnected` | Final. The transfer leaves the active set and is written to the history, except the final events the core itself emits without a history entry (see below) |
 
 - The first final state wins. `Finished` may be followed by `Disconnected`; the second is ignored in the core and in the shell's `TransferModel`.
 - Later events often carry less data than earlier ones, so the core merges events and keeps known fields.
 - The library reports a refusal by the remote side as `Disconnected`. The shell shows "not accepted" when an outgoing transfer ends that way before any data moved.
 - The core's guard may decline an inbound transfer at any non-final event that lists file names, not only at the consent request.
+- When the engine stops for a restart (settings that rebuild it, `ResetSettings`) or at exit, each transfer that had no final event gets a final `Disconnected` from the core. It has no history entry.
+- A `Cancel` of a send that is still choosing its route ends it with a `Cancelled` emitted before `Cancel` returns, also without a history entry.
+- At exit the library stop is bounded (its own wind-down is 400 ms) and the engine stop takes 0.8 s in all; then the Wi-Fi cleanup runs (2 s), within the shell's 3 s wait ([timings](wifi-direct.md#timings-and-timeouts)). At a stop an inbound session sends Cancel and Disconnection, then a FIN, within 300 ms + 50 ms, so the phone is told before the socket closes.
 
 ## Files on disk
 

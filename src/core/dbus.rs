@@ -13,11 +13,11 @@ use std::{
 use anyhow::{Context, Result};
 use rqs_lib::{
     EndpointInfo, TransferState,
-    channel::{ChannelMessage, Message, MessageClient, TransferAction, TransferKind},
+    channel::{ChannelMessage, Message, MessageClient, TransferKind},
     hdl::info::TransferPayload,
 };
 use tokio::{
-    sync::{Mutex, broadcast, mpsc, watch},
+    sync::{Mutex, OwnedSemaphorePermit, Semaphore, broadcast, mpsc, watch},
     task::JoinHandle,
 };
 use zbus::{
@@ -28,8 +28,8 @@ use zbus::{
 use crate::{
     allowed::{self, Allowed},
     app::{
-        ActiveTransfers, Core, Endpoints, Redirects, SharedHistory, TrustedIps, UpgradeRefused,
-        change_wifi_upgrade, needs_lan_retry,
+        ActiveTransfers, Core, Endpoints, LibActions, Redirects, SharedHistory, TrustedIps,
+        UpgradeRefused, change_wifi_upgrade, needs_lan_retry,
     },
     consent::{Answer, By, ConsentError, Consents, Opened},
     history::{self, HistoryEntry},
@@ -49,6 +49,8 @@ struct Service {
     core: SharedCore,
     /// Every answer to an incoming transfer goes through this, not through the `Core` lock.
     consents: Consents,
+    /// Cancel goes through this too: it must not wait for the `Core` lock either.
+    lib_actions: LibActions,
     /// The Wi-Fi requirements engine. The report and the gate on the Wi-Fi upgrade go through
     /// this, never through the `Core` lock.
     requirements: Arc<SystemEngine>,
@@ -200,13 +202,15 @@ impl Service {
         self.answer(id, Some(consent), answer).await
     }
 
-    /// Takes the `Core` lock on purpose: a send that is still choosing its route maps its ids
-    /// only at the end, so a Cancel has to wait for that to find the transfer.
+    /// Cancels a transfer, also one that is still "Starting" (choosing its route): that send is
+    /// marked and does not go out, and ends with a final `Cancelled` event, emitted before this
+    /// call returns (so it precedes the events of a later send to the same device). Never waits
+    /// for the `Core` lock.
     async fn cancel(&self, id: &str) -> fdo::Result<()> {
-        let actions = self.core.lock().await.lib_actions();
-        actions
-            .send(id, TransferAction::TransferCancel)
-            .map_err(failed)
+        for report in self.lib_actions.cancel(id).map_err(failed)? {
+            report.emit().await;
+        }
+        Ok(())
     }
 
     /// Joins the Wi-Fi network received in a finished transfer, as a saved connection that
@@ -261,15 +265,19 @@ impl Service {
         self.core.lock().await.stop_discovery();
     }
 
+    /// The `Core` lock is held only briefly at the start and at the end of a send, not while it
+    /// chooses its route (see `app::run_send`).
     async fn send_files(&self, device_id: &str, paths: Vec<String>) -> fdo::Result<()> {
-        let mut core = self.core.lock().await;
-        core.send_files(device_id, paths).await.map_err(failed)
+        let sends = self.lib_actions.sends();
+        crate::app::send_files(&self.core, &sends, device_id, paths)
+            .await
+            .map_err(failed)
     }
 
     /// `kind` is "text" or "url".
     async fn send_text(&self, device_id: &str, text: String, kind: &str) -> fdo::Result<()> {
-        let mut core = self.core.lock().await;
-        core.send_text(device_id, text, kind == "url")
+        let sends = self.lib_actions.sends();
+        crate::app::send_text(&self.core, &sends, device_id, text, kind == "url")
             .await
             .map_err(failed)
     }
@@ -752,6 +760,15 @@ impl TransferEvent {
         }
     }
 
+    /// The final event of a transfer whose engine stopped before it ended: nothing waits for an
+    /// answer any more, so the consent token goes too.
+    pub(crate) fn disconnected(mut self, now: i64) -> Self {
+        self.state = format!("{:?}", TransferState::Disconnected);
+        self.consent = 0;
+        self.last_event = now;
+        self
+    }
+
     /// A transfer for the tests of other modules.
     #[cfg(test)]
     pub(crate) fn for_test(id: &str, kind: &str, state: &str, device: &str) -> Self {
@@ -767,6 +784,12 @@ impl TransferEvent {
             last_event: history::now(),
             ..Self::default()
         }
+    }
+
+    /// What a test of another module looks at: id, kind, state and consent token.
+    #[cfg(test)]
+    pub(crate) fn summary(&self) -> (&str, &str, &str, u64) {
+        (&self.id, self.kind, &self.state, self.consent)
     }
 
     /// Overlays a newer event: later events often carry less, so empty fields keep their old value.
@@ -862,6 +885,7 @@ pub async fn serve(
     requirements: Arc<SystemEngine>,
 ) -> Result<Connection> {
     let reports = requirements.subscribe();
+    let lib_actions = core.lock().await.lib_actions();
     let connection = connection::Builder::session()
         .name(BUS_NAME)
         .serve_at(
@@ -869,6 +893,7 @@ pub async fn serve(
             Service {
                 core,
                 consents,
+                lib_actions,
                 requirements,
             },
         )
@@ -904,24 +929,42 @@ pub struct Forwarding {
     pub core: Weak<Mutex<Core>>,
 }
 
+/// The tasks of one engine's forwarders. The transfer forwarder is stopped by letting it empty
+/// its queue (so the last events of a stopping engine are still reported); the others are
+/// aborted.
+pub struct Forwarders {
+    /// Set to true: `forward_transfers` sends what is queued and ends.
+    pub stop: watch::Sender<bool>,
+    pub drain: JoinHandle<()>,
+    pub abort: Vec<JoinHandle<()>>,
+}
+
 /// Re-emits library events (transfers, discovered devices) as D-Bus signals.
 pub fn spawn_forwarders(
     shared: Forwarding,
     transfers: broadcast::Receiver<ChannelMessage>,
     devices: broadcast::Receiver<EndpointInfo>,
-) -> Vec<JoinHandle<()>> {
-    vec![
-        tokio::spawn(expire_consents(shared.consents.clone())),
-        tokio::spawn(forward_transfers(shared.clone(), transfers)),
-        tokio::spawn(forward_devices(
-            shared.connection,
-            devices,
-            shared.endpoints,
-            shared.trust,
-            shared.trusted_ips,
-            shared.core,
-        )),
-    ]
+) -> Forwarders {
+    let (stop, stopped) = watch::channel(false);
+    Forwarders {
+        stop,
+        drain: tokio::spawn(forward_transfers(shared.clone(), transfers, stopped)),
+        abort: vec![
+            tokio::spawn(expire_consents(shared.consents.clone())),
+            tokio::spawn(forward_devices(
+                DeviceForwarding {
+                    connection: shared.connection,
+                    endpoints: shared.endpoints,
+                    trust: shared.trust,
+                    trusted_ips: shared.trusted_ips,
+                    consents: shared.consents,
+                    generation: shared.generation,
+                    core: shared.core,
+                },
+                devices,
+            )),
+        ],
+    }
 }
 
 /// What `consent_step` needs, apart from the transfer.
@@ -1028,7 +1071,44 @@ fn consent_step(
     true
 }
 
-async fn forward_transfers(shared: Forwarding, mut events: broadcast::Receiver<ChannelMessage>) {
+/// The next transfer event of the engine. Once `stopped` fires the events already queued are
+/// still returned, then `None`; `None` also when the channel closed.
+async fn next_transfer(
+    events: &mut broadcast::Receiver<ChannelMessage>,
+    stopped: &mut watch::Receiver<bool>,
+    draining: &mut bool,
+) -> Option<ChannelMessage> {
+    loop {
+        if *draining {
+            match events.try_recv() {
+                Ok(message) => return Some(message),
+                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    tracing::warn!("dropped {n} transfer events");
+                }
+                Err(_) => return None,
+            }
+            continue;
+        }
+        tokio::select! {
+            biased;
+            received = events.recv() => match received {
+                Ok(message) => return Some(message),
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("dropped {n} transfer events");
+                }
+                Err(broadcast::error::RecvError::Closed) => return None,
+            },
+            // Also when the sender is gone.
+            _ = stopped.changed() => *draining = true,
+        }
+    }
+}
+
+async fn forward_transfers(
+    shared: Forwarding,
+    mut events: broadcast::Receiver<ChannelMessage>,
+    mut stopped: watch::Receiver<bool>,
+) {
     let Forwarding {
         connection,
         endpoints,
@@ -1043,14 +1123,11 @@ async fn forward_transfers(shared: Forwarding, mut events: broadcast::Receiver<C
         generation,
         ..
     } = shared;
+    let mut draining = false;
     loop {
-        let mut message = match events.recv().await {
-            Ok(message) => message,
-            Err(broadcast::error::RecvError::Lagged(n)) => {
-                tracing::warn!("dropped {n} transfer events");
-                continue;
-            }
-            Err(broadcast::error::RecvError::Closed) => return,
+        let Some(mut message) = next_transfer(&mut events, &mut stopped, &mut draining).await
+        else {
+            return;
         };
         // A send that was redirected to another route is reported under the id the user picked.
         if let Some(picked) = redirects
@@ -1140,8 +1217,68 @@ async fn forward_transfers(shared: Forwarding, mut events: broadcast::Receiver<C
     }
 }
 
-/// Addresses remembered as probed before the old ones are forgotten.
+/// Addresses remembered as probed before the oldest are forgotten.
 const MAX_PROBED: usize = 256;
+/// How often the same address is probed again when it keeps announcing itself.
+const PROBE_EVERY: Duration = Duration::from_secs(20);
+/// An address not probed for this long is forgotten when the list is full.
+const PROBE_FORGET_AFTER: Duration = Duration::from_secs(600);
+/// KuickShare probes running at once: a stream of adverts cannot start more connections.
+const MAX_PROBES_AT_ONCE: usize = 8;
+
+/// When each address was last probed for KuickShare, at most `MAX_PROBED` of them.
+#[derive(Default)]
+struct ProbeLog(HashMap<String, Instant>);
+
+impl ProbeLog {
+    /// True when `ip` was not probed within `PROBE_EVERY` before `now`.
+    fn due(&self, ip: &str, now: Instant) -> bool {
+        self.0
+            .get(ip)
+            .is_none_or(|at| now.saturating_duration_since(*at) > PROBE_EVERY)
+    }
+
+    /// Notes a probe of `ip` at `now`. When the list is full, the addresses not seen for
+    /// `PROBE_FORGET_AFTER` go, and if that is not enough the oldest one.
+    fn record(&mut self, ip: String, now: Instant) {
+        if self.0.len() >= MAX_PROBED && !self.0.contains_key(&ip) {
+            self.0
+                .retain(|_, at| now.saturating_duration_since(*at) < PROBE_FORGET_AFTER);
+            while self.0.len() >= MAX_PROBED {
+                let Some(oldest) = self
+                    .0
+                    .iter()
+                    .min_by_key(|(_, at)| **at)
+                    .map(|(k, _)| k.clone())
+                else {
+                    break;
+                };
+                self.0.remove(&oldest);
+            }
+        }
+        self.0.insert(ip, now);
+    }
+
+    fn forget(&mut self, ip: &str) {
+        self.0.remove(ip);
+    }
+}
+
+/// Bounds the probes that run at once.
+#[derive(Clone)]
+struct ProbeLimit(Arc<Semaphore>);
+
+impl ProbeLimit {
+    fn new(at_once: usize) -> Self {
+        Self(Arc::new(Semaphore::new(at_once)))
+    }
+
+    /// A slot for one probe, held until it ends; `None` when all are taken (the address is
+    /// probed at its next announcement).
+    fn try_start(&self) -> Option<OwnedSemaphorePermit> {
+        self.0.clone().try_acquire_owned().ok()
+    }
+}
 
 /// True for addresses on the local network. An mDNS advert is not trusted to name any address:
 /// someone could make this computer connect to an outside host (or scan one) by advertising it.
@@ -1279,16 +1416,32 @@ fn device_info(
     ])
 }
 
-async fn forward_devices(
+/// What `forward_devices` works with.
+struct DeviceForwarding {
     connection: Connection,
-    mut events: broadcast::Receiver<EndpointInfo>,
     endpoints: Endpoints,
     trust: Arc<Trust>,
     trusted_ips: TrustedIps,
+    consents: Consents,
+    /// `Consents::generation` of the engine these forwarders belong to: what a delayed task of
+    /// theirs does is dropped once that engine was replaced.
+    generation: u64,
     core: Weak<Mutex<Core>>,
-) {
+}
+
+async fn forward_devices(shared: DeviceForwarding, mut events: broadcast::Receiver<EndpointInfo>) {
+    let DeviceForwarding {
+        connection,
+        endpoints,
+        trust,
+        trusted_ips,
+        consents,
+        generation: engine,
+        core,
+    } = shared;
     let presence = Arc::new(StdMutex::new(Presence::default()));
-    let mut probed: HashMap<String, Instant> = HashMap::new();
+    let mut probed = ProbeLog::default();
+    let limit = ProbeLimit::new(MAX_PROBES_AT_ONCE);
     let cache = ProbeCache::default();
     let mut reprobe = tokio::time::interval(PAIRING_REPROBE);
     loop {
@@ -1311,6 +1464,8 @@ async fn forward_devices(
                             .collect()
                     };
                     for endpoint in known {
+                        // All slots taken: the next round asks again.
+                        let Some(slot) = limit.try_start() else { break };
                         tokio::spawn(probe_device(
                             connection.clone(),
                             endpoint,
@@ -1318,6 +1473,7 @@ async fn forward_devices(
                             trusted_ips.clone(),
                             endpoints.clone(),
                             cache.clone(),
+                            slot,
                         ));
                     }
                 }
@@ -1366,7 +1522,7 @@ async fn forward_devices(
             if !replaced.is_empty()
                 && let Some(ip) = &endpoint.ip
             {
-                probed.remove(ip);
+                probed.forget(ip);
             }
 
             // A phone seen only over Bluetooth: ask the core to keep searching the LAN. Spawned,
@@ -1375,22 +1531,17 @@ async fn forward_devices(
                 && let Some(core) = core.upgrade()
             {
                 let ble = endpoint.clone();
-                tokio::spawn(async move { core.lock().await.watch_lan(ble) });
+                tokio::spawn(async move { core.lock().await.watch_lan(engine, ble) });
             }
 
             // Is it a computer running KuickShare? Android rotates its announcements often: probe
-            // each address only now and then.
+            // each address only now and then, and only a few at a time.
             if let Some(ip) = endpoint.ip.clone()
                 && is_local_address(&ip)
-                && probed
-                    .get(&ip)
-                    .is_none_or(|at| at.elapsed() > Duration::from_secs(20))
+                && probed.due(&ip, Instant::now())
+                && let Some(slot) = limit.try_start()
             {
-                // Forget the addresses not seen for a while, so a stream of adverts cannot grow this.
-                if probed.len() >= MAX_PROBED {
-                    probed.retain(|_, at| at.elapsed() < Duration::from_secs(600));
-                }
-                probed.insert(ip, Instant::now());
+                probed.record(ip, Instant::now());
                 tokio::spawn(probe_device(
                     connection.clone(),
                     endpoint,
@@ -1398,6 +1549,7 @@ async fn forward_devices(
                     trusted_ips.clone(),
                     endpoints.clone(),
                     cache.clone(),
+                    slot,
                 ));
             }
         } else {
@@ -1406,6 +1558,7 @@ async fn forward_devices(
                 connection.clone(),
                 endpoint.id,
                 generation,
+                (consents.clone(), engine),
                 presence.clone(),
                 endpoints.clone(),
             ));
@@ -1427,6 +1580,7 @@ async fn probe_device(
     trusted_ips: TrustedIps,
     endpoints: Endpoints,
     cache: ProbeCache,
+    _slot: OwnedSemaphorePermit,
 ) {
     let Some(ip) = endpoint.ip.clone() else {
         return;
@@ -1586,7 +1740,20 @@ fn failed_transfer_event(id: &str, device: &str) -> TransferEvent {
 
 /// Reports a transfer that never started as failed (`Disconnected`), without a history entry.
 pub async fn emit_failed_transfer(connection: &Connection, id: &str, device: &str) {
-    let event = failed_transfer_event(id, device);
+    emit_transfer(connection, &failed_transfer_event(id, device)).await;
+}
+
+/// Reports a send the user cancelled before it went out as `Cancelled`, without a history entry.
+pub async fn emit_cancelled_transfer(connection: &Connection, id: &str, device: &str) {
+    let event = TransferEvent {
+        state: format!("{:?}", TransferState::Cancelled),
+        ..failed_transfer_event(id, device)
+    };
+    emit_transfer(connection, &event).await;
+}
+
+/// Emits `TransferUpdated` for `event`.
+pub async fn emit_transfer(connection: &Connection, event: &TransferEvent) {
     let emitted = async {
         let iface = interface_ref(connection).await?;
         Service::transfer_updated(iface.signal_emitter(), &event.id, event.info()).await
@@ -1596,10 +1763,14 @@ pub async fn emit_failed_transfer(connection: &Connection, id: &str, device: &st
     }
 }
 
+/// Removes a device that stayed silent for `LOST_GRACE`. `engine` is the `Consents::generation`
+/// of the engine that saw it go: when the service restarted meanwhile, the device may have been
+/// found again by the new engine (the list is shared), so nothing is removed.
 async fn expire_device(
     connection: Connection,
     id: String,
     generation: u64,
+    engine: (Consents, u64),
     presence: Arc<StdMutex<Presence>>,
     endpoints: Endpoints,
 ) {
@@ -1607,8 +1778,16 @@ async fn expire_device(
     if !presence.lock().unwrap().expire(&id, generation) {
         return;
     }
+    if !engine_is_current(&engine.0, engine.1) {
+        return;
+    }
     endpoints.lock().unwrap().remove(&id);
     emit_device_lost(&connection, &id).await;
+}
+
+/// True while the engine of `generation` is the one that runs.
+fn engine_is_current(consents: &Consents, generation: u64) -> bool {
+    consents.generation() == generation
 }
 
 pub async fn emit_visible_until_changed(connection: &Connection) {
@@ -1636,6 +1815,7 @@ pub async fn emit_device_lost(connection: &Connection, id: &str) {
 mod tests {
     use rqs_lib::{
         TransferState,
+        channel::TransferAction,
         hdl::info::{TransferMetadata, TransferPayloadKind},
     };
 
@@ -1652,6 +1832,7 @@ mod tests {
         let (lib_tx, lib_rx) = broadcast::channel(16);
         core.lib_actions().set(Some(lib_tx));
         let consents = core.consents();
+        let lib_actions = core.lib_actions();
         let core = Arc::new(Mutex::new(core));
         let requirements = crate::requirements::RequirementsEngine::new(
             crate::requirements::SystemRequirementsProbe::new(),
@@ -1661,6 +1842,7 @@ mod tests {
             Service {
                 core,
                 consents,
+                lib_actions,
                 requirements,
             },
             lib_rx,
@@ -2294,5 +2476,111 @@ mod tests {
         assert!(is_final(&TransferState::Cancelled));
         assert!(!is_final(&TransferState::SendingFiles));
         assert!(!is_final(&TransferState::WaitingForUserConsent));
+    }
+
+    #[test]
+    fn the_probe_log_is_capped_and_forgets_the_oldest_first() {
+        let t0 = Instant::now();
+        let mut log = ProbeLog::default();
+        for i in 0..MAX_PROBED + 44 {
+            let at = t0 + Duration::from_millis(i as u64);
+            log.record(format!("10.0.{}.{}", i / 250, i % 250), at);
+        }
+        assert_eq!(log.0.len(), MAX_PROBED);
+        let last = format!(
+            "10.0.{}.{}",
+            (MAX_PROBED + 43) / 250,
+            (MAX_PROBED + 43) % 250
+        );
+        assert!(log.0.contains_key(&last), "the newest stays");
+        assert!(!log.0.contains_key("10.0.0.0"), "the oldest went");
+        // An address already in the list never evicts another one.
+        let before: Vec<_> = log.0.keys().cloned().collect();
+        log.record(last.clone(), t0 + Duration::from_secs(1));
+        assert_eq!(log.0.len(), before.len());
+    }
+
+    #[test]
+    fn the_probe_log_forgets_old_entries_before_evicting_young_ones() {
+        let t0 = Instant::now();
+        let mut log = ProbeLog::default();
+        for i in 0..MAX_PROBED {
+            log.record(format!("a{i}"), t0);
+        }
+        let later = t0 + PROBE_FORGET_AFTER + Duration::from_secs(1);
+        log.record("new".into(), later);
+        assert_eq!(log.0.len(), 1);
+        let again = later + PROBE_EVERY + Duration::from_secs(1);
+        assert!(!log.due("new", later) && log.due("new", again));
+        assert!(log.due("unknown", later));
+        log.forget("new");
+        assert!(log.due("new", later));
+    }
+
+    #[test]
+    fn only_a_few_probes_run_at_once() {
+        let limit = ProbeLimit::new(MAX_PROBES_AT_ONCE);
+        let held: Vec<_> = (0..MAX_PROBES_AT_ONCE)
+            .map(|_| limit.try_start().expect("a slot is free"))
+            .collect();
+        assert!(limit.try_start().is_none());
+        drop(held);
+        assert!(limit.try_start().is_some());
+    }
+
+    #[tokio::test]
+    async fn a_stopping_forwarder_reports_what_is_still_queued_and_then_ends() {
+        let (tx, mut events) = broadcast::channel(8);
+        let (stop, mut stopped) = watch::channel(false);
+        let mut draining = false;
+        for id in ["a", "b"] {
+            tx.send(ChannelMessage {
+                id: id.into(),
+                msg: Message::Lib {
+                    action: TransferAction::TransferCancel,
+                },
+            })
+            .unwrap();
+        }
+        // Stopped with two events waiting: both are still handed over, in order.
+        stop.send(true).unwrap();
+        let mut seen = Vec::new();
+        while let Some(message) = next_transfer(&mut events, &mut stopped, &mut draining).await {
+            seen.push(message.id);
+        }
+        assert_eq!(seen, ["a", "b"]);
+        assert!(draining);
+        // Nothing queued, not stopped: it waits (here: until the sender goes away).
+        let (stop, mut stopped) = watch::channel(false);
+        let (tx, mut events) = broadcast::channel::<ChannelMessage>(2);
+        let mut draining = false;
+        drop(stop);
+        let ended = next_transfer(&mut events, &mut stopped, &mut draining).await;
+        assert!(ended.is_none());
+        drop(tx);
+    }
+
+    #[tokio::test]
+    async fn a_delayed_task_of_an_old_engine_leaves_the_list_alone() {
+        let (service, _) = test_service();
+        let old = service.consents.generation();
+        assert!(engine_is_current(&service.consents, old));
+        service.consents.clear(); // the service restarted
+        assert!(!engine_is_current(&service.consents, old));
+    }
+
+    #[test]
+    fn an_unfinished_transfer_becomes_a_final_disconnection_without_a_token() {
+        let mut waiting = TransferEvent::for_test(
+            "10.0.0.6:4000",
+            "inbound",
+            "WaitingForUserConsent",
+            "tablet",
+        );
+        waiting.consent = 77;
+        let ended = waiting.disconnected(123);
+        let state = (ended.state.as_str(), ended.consent, ended.last_event);
+        assert_eq!(state, ("Disconnected", 0, 123));
+        assert_eq!((ended.kind, ended.device.as_str()), ("inbound", "tablet"));
     }
 }

@@ -121,10 +121,17 @@ impl MDnsDiscovery {
 
                                     let ip_port = format!("{ip}:{port}");
                                     let fullname = info.get_fullname().to_string();
-                                    if matches!(
-                                        tokio::time::timeout(RESOLVE_PROBE_TIMEOUT, TcpStream::connect(&ip_port)).await,
-                                        Ok(Ok(_))
-                                    ) {
+                                    // The probe takes up to `RESOLVE_PROBE_TIMEOUT`: a stop does not wait for it.
+                                    let reachable = tokio::select! {
+                                        _ = ctk.cancelled() => {
+                                            info!("MDnsDiscovery: tracker cancelled during a probe, breaking");
+                                            break;
+                                        }
+                                        probed = tokio::time::timeout(RESOLVE_PROBE_TIMEOUT, TcpStream::connect(&ip_port)) => {
+                                            matches!(probed, Ok(Ok(_)))
+                                        }
+                                    };
+                                    if reachable {
                                         let ei = EndpointInfo {
                                             fullname: fullname.clone(),
                                             id: ip_port,

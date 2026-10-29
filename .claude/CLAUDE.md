@@ -14,7 +14,7 @@ Quick Share client for KDE Plasma 6: Rust daemon `kuickshared` (`src/core`, prot
 - Message boxes use `MessageBox.qml`, never `Kirigami.InlineMessage` directly: it is visible by default and keeps the icon (info, warning, error) vertically centered. Box texts never end with a period. Warning boxes use `Layout.fillWidth` and `Layout.topMargin: Kirigami.Units.largeSpacing`, as in `SettingsPage.qml`.
 - The hotspot subnet `192.168.49.0/24` is written in two places: `GATEWAY` in `src/core/link.rs` and the mDNS exclusion in `third_party/rqs_lib/src/hdl/mdns.rs`. Change both.
 - Outgoing transfers are keyed by the device id (`ble:XXXX` or `ip:port`), which repeats: `TransferModel` treats a non-final event on a finished id as a new row. A send adds a "Starting" row at once (`TransferModel::beginPending`).
-- BLE timings are tied together: scan window 12 s for a send, GATT dial 22 s, watchdog `BLE_START_TIMEOUT` 40 s in `src/core/app.rs`, shell timer 45 s in `corebridge.cpp`; Wi-Fi cleanup at stop 2 s within the shell's 3 s SIGTERM wait. Change one, check the others.
+- BLE timings are tied together: scan window 12 s for a send, GATT dial 22 s, watchdog `BLE_START_TIMEOUT` 40 s in `src/core/app.rs`, shell timer 45 s in `corebridge.cpp`; at stop the library's wind-down 0.4 s (`STOP_WIND_DOWN` in rqs_lib) < the engine's stop 0.5 s (`SHUTDOWN_STOP`) + drain 0.2 s, all within `SHUTDOWN_ENGINE_BOUND` 0.8 s (the wait for the Core lock included), then Wi-Fi cleanup 2 s (total 2.8 s), within the shell's 3 s SIGTERM wait; a test asserts these. Change one, check the others.
 
 ## Hand tests with the phones
 See the `/phone-test` skill. Time zones differ between log files (daemon UTC, system and btmon local). Only a Pixel 7 and a Galaxy A55 were ever tested.

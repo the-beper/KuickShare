@@ -62,8 +62,9 @@ async fn main() -> Result<()> {
     let consents = core.lock().await.consents();
     // Profiles a crash left behind (possibly in an open firewall zone) go first, whatever the
     // settings say, and before the bus name is taken: no request sees the service half-started.
+    // Kept for the exit: the cleanup there must not wait for the `Core` lock.
     let release = core.lock().await.wifi_release();
-    app::release_wifi(release, app::WIFI_START_SWEEP_BOUND).await;
+    app::release_wifi(release.clone(), app::WIFI_START_SWEEP_BOUND).await;
     let connection = dbus::serve(core.clone(), consents, requirements.clone()).await?;
     core.lock().await.start(connection).await?;
     requirements::watch::spawn(requirements);
@@ -76,8 +77,14 @@ async fn main() -> Result<()> {
         _ = terminate.recv() => {}
     }
     tracing::info!("stopping");
-    let release = core.lock().await.shutdown().await;
-    // Closes the firewall port and restores the connection a hotspot replaced, on the shared link.
-    app::release_wifi(release, app::WIFI_STOP_CLEANUP_BOUND).await;
+    // Engine at most 0.8 s, then the Wi-Fi cleanup at most 2 s, whatever the engine does or
+    // whoever holds the `Core` lock: both within the shell's 3 s wait after SIGTERM. The cleanup
+    // closes the firewall port and restores the connection a hotspot replaced, on the shared link.
+    app::stop_daemon(
+        async { core.lock().await.shutdown().await },
+        app::SHUTDOWN_ENGINE_BOUND,
+        app::release_wifi(release, app::WIFI_STOP_CLEANUP_BOUND),
+    )
+    .await;
     Ok(())
 }

@@ -232,7 +232,9 @@ The shell shows a warning under the switch whenever exactly one of Sending and R
 | First encrypted frame over BLE | Waits 200 ms | See [Known behaviours](#known-behaviours). |
 | Write stall (file send) | 30 s | The user's cancel works at once; a phone that vanishes without FIN or RST is noticed only after this |
 | Disconnect and cancel waits | 2 s each; GATT disconnect 5 s | |
-| Wi-Fi cleanup | 2 s at stop (`WIFI_STOP_CLEANUP_BOUND`), 5 s for the sweep at start (`WIFI_START_SWEEP_BOUND`), both in `src/core/app.rs` | The stop bound stays within the shell's 3 s wait after SIGTERM (`corebridge.cpp`); on a timeout the log warns that a hotspot or an open firewall port may remain. Change one, check the other |
+| Engine stop at exit | 0.8 s in all (`SHUTDOWN_ENGINE_BOUND`, the wait for the `Core` lock included); inside it the library gets 0.5 s (`SHUTDOWN_STOP`) and the event forwarder 0.2 s | In `src/core/app.rs`. Runs first; on a timeout the log warns and the Wi-Fi cleanup still runs. A restart of the engine allows the library 3 s instead |
+| Library wind-down at a stop | 400 ms (`STOP_WIND_DOWN` in `third_party/rqs_lib/src/manager.rs`) | An inbound session sends its Cancel and Disconnection frames, then a FIN, within 300 ms (`Limits::stop_close`) + 50 ms (`FIN_TIMEOUT` in `hdl/inbound.rs`); it stays below the engine bound above |
+| Wi-Fi cleanup | 2 s at stop (`WIFI_STOP_CLEANUP_BOUND`), 5 s for the sweep at start (`WIFI_START_SWEEP_BOUND`), both in `src/core/app.rs` | Always runs after the engine stop. Engine stop (0.8 s) and cleanup (2 s) together stay within the shell's 3 s wait after SIGTERM (`corebridge.cpp`); on a timeout the log warns that a hotspot or an open firewall port may remain. Change one, check the others |
 
 ## Sending over GATT
 
