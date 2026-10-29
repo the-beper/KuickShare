@@ -167,10 +167,10 @@ The tag triggers [`release.yml`](.github/workflows/release.yml), one run for one
 | Job | What it does | Rights |
 |---|---|---|
 | `validate` | the tag is `vX.Y.Z`, equals the version in `Cargo.toml`, `CMakeLists.txt` and the first metainfo `<release>`, points to the commit of the run, which is on `main` (`build/release/check-version.sh`) | read |
-| `ci-gate` | waits up to 20 minutes for the `required` check of CI on that commit | read |
+| `ci-gate` | waits up to 20 minutes for the CI run of the push of that commit to `main` to finish green (a pull request's run does not count) | read |
 | `build-appimage`, `build-tarball`, `build-flatpak` | build and smoke-test with the version of the tag; the Flatpak commits are exported unsigned onto an anonymous clone of `gh-pages` | read; no secret |
 | `verify` | exactly the four files, their hashes against the build jobs, the tarball layout and `VERSION`, the `.zsync` header against the AppImage; writes `SHA256SUMS` (those four files) | read |
-| `sign-flatpak` | the only job with the signing key (environment `release-signing`): signs the commits and finishes the repository in a temporary keyring, checks it as a client, requires the `GPGKey` to be unchanged | read; key |
+| `sign-flatpak` | after `ci-gate` and `verify`; the only job with the signing key (environment `release-signing`), on the plain runner with flatpak and ostree from Ubuntu's signed packages, not in a container image: signs the commits and finishes the repository in a temporary keyring, checks it as a client, requires the `GPGKey` to be unchanged | read; key |
 | `publish` | draft release, missing assets, `gh-pages`, wait for Pages, then publishes (`build/release/publish.sh`) | write |
 
 `build/release/simulate.sh` runs these scripts against fakes of `gh`, `flatpak`, `ostree` and `curl` with ephemeral GnuPG keys (CI runs it in `lint`). Order and states: assets are uploaded to the draft first, then `gh-pages` is pushed as one orphan commit (the old one stays as the branch `gh-pages-previous`), then Pages is polled until it serves the new `summary` and `summary.sig`, then the draft is published as latest. The Release and the Flatpak repository are not one transaction; the only visible gap is some minutes where Flatpak users have the new version before the Release is public.
@@ -187,12 +187,16 @@ The tag triggers [`release.yml`](.github/workflows/release.yml), one run for one
 
 These are GitHub settings; nothing in the workflows can do them.
 
-1. Before the first run of this workflow: create the environment `release-signing` (Settings, Environments), deployment branches and tags limited to the tag rule `v*`, required reviewer `the-beper` (self-review allowed). Put the signing key in it: `gh secret set FLATPAK_GPG_PRIVATE_KEY --env release-signing` with the armored secret key without a passphrase, from the offline copy of the key (its fingerprint must be the one of `build/flatpak/signing-key.asc`, `716F76876E67220B72383C99D141D5EC71EE9E68`; the job refuses any other). A new key means every user must re-add the remote. **A job that names an environment that does not exist makes GitHub create it without protection, and the repository secret of the same name stays readable by every workflow until it is deleted.**
-2. After the first green release: `gh secret delete FLATPAK_GPG_PRIVATE_KEY` (the repository-level secret).
+1. Before the first run of this workflow, and before deleting the repository secret: create the environment `release-signing` (Settings, Environments), deployment branches and tags limited to the tag rule `v*`, required reviewer `the-beper` (self-review allowed). Put the signing key in it: `gh secret set FLATPAK_GPG_PRIVATE_KEY --env release-signing` with the armored secret key without a passphrase, from the offline copy of the key (its fingerprint must be the one of `build/flatpak/signing-key.asc`, `716F76876E67220B72383C99D141D5EC71EE9E68`; the job refuses any other). A new key means every user must re-add the remote. **A job that names an environment that does not exist makes GitHub create it without protection, and the repository secret of the same name stays readable by every workflow until it is deleted.**
+2. Right after step 1, and before the first run of this workflow: `gh secret delete FLATPAK_GPG_PRIVATE_KEY` (the repository-level secret; the key now lives only in the environment).
 3. Ruleset for tags `v*`: block updates, deletions and non-fast-forward pushes; only admins may create them.
 4. Ruleset for `main`: required status check `required` (source GitHub Actions), no force-push, no deletion (admin bypass if you keep pushing to `main`).
 5. Settings, Actions: keep the default `GITHUB_TOKEN` read-only and the approval for first-time contributors; optionally require full-length commit SHAs for actions.
 6. Settings, Pages: deploy from the `gh-pages` branch (root), after the first release.
+
+Version risk: the signing job uses the flatpak and ostree of the Ubuntu runner, while `test-repo-update.sh` runs with the Fedora image's. Summary, appstream and static deltas are regenerated by the Ubuntu versions; the formats are stable, but the first release must be checked with a real client (below) before trusting it. If an Ubuntu version turns out to break clients, sign on a runner with a newer flatpak (not in a mutable image tag; pin an image by digest) instead.
+
+The `release` concurrency group keeps one running and one pending run: if three tags are pushed in quick succession, GitHub cancels the middle one. Re-run that tag's workflow from the Actions tab once the others have finished.
 
 Not tested with the real tools: the fakes in `simulate.sh` stand in for `gh`, `flatpak`, `ostree` and Pages. `build/flatpak/test-repo-update.sh` (CI, `flatpak` job) drives a real Flatpak client with an ephemeral key. After the first real release check by hand with the real key: the secret imports and has fingerprint `716F…9E68`; the `GPGKey` of the new `kuickshare.flatpakrepo` is byte-identical to the old one; an existing install updates (`flatpak remote-info --log kuickshare io.github.the_beper.KuickShare` shows the old commit as parent).
 

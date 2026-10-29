@@ -22,10 +22,10 @@ is_doc() {
 }
 
 # Packaging inputs: the build scripts and images, the workflows, the manifests, the shell build and QML, the data files
-# and the language list. The Rust and C++ sources are covered by `check`.
+# and the translations (they are compiled into every package). The Rust and C++ sources are covered by `check`.
 is_packaging() {
     case $1 in
-        build/* | .github/* | Cargo.toml | Cargo.lock | */Cargo.toml | */Cargo.lock | src/shell/CMakeLists.txt | src/shell/qml/* | data/* | po/LINGUAS) return 0 ;;
+        build/* | .github/* | Cargo.toml | Cargo.lock | */Cargo.toml | */Cargo.lock | src/shell/CMakeLists.txt | src/shell/qml/* | data/* | po/*) return 0 ;;
     esac
     return 1
 }

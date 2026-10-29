@@ -4,7 +4,7 @@ name: Release
 # commit (github.sha). See CONTRIBUTING.md, Releases, for the order and for how to recover from a failed run.
 #
 #   validate        the tag names the version of the sources and the commit, which is on main
-#   ci-gate         CI's `required` check is green on that commit
+#   ci-gate         the CI run for that commit, pushed to main, finished green
 #   build-*         build and test the AppImage, the tarball and the Flatpak. No secret, no write permission; the Flatpak
 #                   commits are exported unsigned
 #   verify          the exact set of files, their hashes, their version
@@ -52,30 +52,32 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: build/release/check-version.sh
 
-  # CI does not run on a tag. The release needs its `required` check green on the very commit that is tagged.
+  # CI does not run on a tag. The release needs the CI run of the push of this very commit to main to have finished green
+  # (the workflow run, whose result includes the `required` job). A check from a pull request run does not count: its
+  # changes job may have skipped the packaging jobs.
   ci-gate:
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
       contents: read
-      checks: read
+      actions: read
     steps:
-      - name: Wait for the required check of CI
+      - name: Wait for the CI run of this commit on main
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           deadline=$(( $(date +%s) + 1200 ))
           while :; do
-            state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=required&per_page=100" \
-              --jq '[.check_runs[] | select(.app.slug == "github-actions")] | sort_by(.id) | last | if . == null then "none" else "\(.status) \(.conclusion)" end')
-            echo "required on $GITHUB_SHA: $state"
+            state=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main&per_page=50" \
+              --jq '.workflow_runs | sort_by(.id) | last | if . == null then "none" else "\(.status) \(.conclusion)" end')
+            echo "CI run of the push of $GITHUB_SHA to main: $state"
             case $state in
               "completed success") exit 0 ;;
               "completed "*) echo "CI failed on this commit: fix it, push to main, and tag the new commit" >&2; exit 1 ;;
             esac
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "CI has no finished 'required' check on this commit after 20 minutes: push the commit to main and wait for it, then run this job again" >&2
+              echo "CI has no finished run for the push of this commit to main after 20 minutes: push the commit to main and wait for it, then run this job again" >&2
               exit 1
             fi
             sleep 30
@@ -287,14 +289,12 @@ jobs:
   # that does not exist makes GitHub create it unprotected, and then the repository secret of the same name is readable here.
   # The secret is given to one step only. No --privileged: signing and checking as a client need no sandbox.
   sign-flatpak:
-    needs: [validate, verify, build-flatpak]
+    needs: [validate, ci-gate, verify, build-flatpak]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: release-signing
     permissions:
       contents: read
-    container:
-      image: ghcr.io/the-beper/kuickshare-flatpak:fedora45
     outputs:
       site_sha256: ${{ steps.sign.outputs.site_sha256 }}
       base_sha: ${{ steps.sign.outputs.base_sha }}
@@ -304,9 +304,14 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      # The container runs as root and the workspace belongs to the runner user: trust this one directory, not all of them.
-      - name: Trust the workspace
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # No container image here: the key is loaded where only GitHub's runner image and the distribution's signed packages
+      # run. (The ghcr images are mutable tags; a build job's image is no place for the key.) Done before the secret exists.
+      - name: Install flatpak and ostree
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak ostree appstream
+          flatpak --version
+          ostree --version | head -n 2
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
