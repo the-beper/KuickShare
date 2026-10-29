@@ -20,7 +20,7 @@ dbus = { version = "0.9", features = ["vendored"] }
 anyhow = "1.0"
 base64 = "0.23"
 bytes = "1.10"
-directories = "6.0"
+dirs = "7"
 futures = "0.3"
 hex = "0.4"
 hkdf = "0.13"

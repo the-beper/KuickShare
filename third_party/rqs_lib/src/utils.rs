@@ -298,12 +298,11 @@ pub fn get_download_dir() -> PathBuf {
         }
     }
 
-    if let Some(user_dirs) = directories::UserDirs::new() {
-        if let Some(dd) = user_dirs.download_dir() {
-            return dd.to_path_buf();
-        }
-
-        return user_dirs.home_dir().to_path_buf();
+    if let Some(dd) = dirs::download_dir() {
+        return dd;
+    }
+    if let Some(home) = dirs::home_dir() {
+        return home;
     }
 
     Path::new("/").to_path_buf()
