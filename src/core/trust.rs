@@ -5,9 +5,7 @@
 use std::{
     collections::HashMap,
     fs,
-    io::Write as _,
     net::{IpAddr, SocketAddr},
-    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -24,7 +22,11 @@ use tokio::{
     time::timeout,
 };
 
-use crate::{history, ratelimit::RateLimit};
+use crate::{
+    history,
+    persist::{self, PRIVATE},
+    ratelimit::RateLimit,
+};
 
 pub const DEFAULT_PORT: u16 = 47891;
 
@@ -81,6 +83,8 @@ pub struct Trust {
     identity: Identity,
     peers_path: Option<PathBuf>,
     peers: Mutex<Vec<Peer>>,
+    /// Held while the list is serialized and written, so the file always ends with the newest list.
+    save_lock: Mutex<()>,
     name: Mutex<String>,
     intents: Mutex<HashMap<IpAddr, Intent>>,
     pairing_until: Mutex<Option<Instant>>,
@@ -138,6 +142,7 @@ fn short_code(handshake_hash: &[u8]) -> String {
 
 fn load_or_create_identity(path: Option<&Path>) -> Result<Identity> {
     if let Some(path) = path {
+        persist::remove_stale_temps(path);
         // Only a missing file means "first run": any other error must not replace the key.
         match fs::read_to_string(path) {
             Ok(text) => {
@@ -157,19 +162,10 @@ fn load_or_create_identity(path: Option<&Path>) -> Result<Identity> {
     };
     if let Some(path) = path {
         fs::create_dir_all(path.parent().context("identity path has no parent")?)?;
-        // Private key: mode 0600, and a crash must not leave a half-written file (the daemon would
-        // refuse to start), so write a temporary file and rename it.
-        let tmp = path.with_extension("json.tmp");
-        let _ = fs::remove_file(&tmp);
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp)
-            .with_context(|| format!("cannot create {}", tmp.display()))?;
-        file.write_all(serde_json::to_string(&identity)?.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&tmp, path).with_context(|| format!("cannot create {}", path.display()))?;
+        // Private key: mode 0600 from the creation, and a crash must not leave a half-written file
+        // (the daemon would refuse to start): `write_atomic` covers both.
+        persist::write_atomic(path, serde_json::to_string(&identity)?.as_bytes(), PRIVATE)
+            .with_context(|| format!("cannot create {}", path.display()))?;
     }
     Ok(identity)
 }
@@ -228,17 +224,25 @@ impl Trust {
     ) -> Result<Arc<Self>> {
         let identity = load_or_create_identity(dir.map(|d| d.join("identity.json")).as_deref())?;
         let peers_path = dir.map(|d| d.join("peers.json"));
+        if let Some(p) = &peers_path {
+            persist::remove_stale_temps(p);
+        }
         let peers = peers_path
             .as_deref()
-            .and_then(|p| {
-                let text = fs::read_to_string(p).ok()?;
-                match serde_json::from_str(&text) {
+            .and_then(|p| match fs::read_to_string(p) {
+                Ok(text) => match serde_json::from_str(&text) {
                     Ok(peers) => Some(peers),
                     Err(e) => {
                         tracing::warn!("ignoring invalid peers file {}: {e}", p.display());
-                        crate::settings::keep_aside(p);
+                        persist::set_aside_or_block(p);
                         None
                     }
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => {
+                    tracing::warn!("cannot read peers file {}: {e}", p.display());
+                    persist::set_aside_or_block(p);
+                    None
                 }
             })
             .unwrap_or_default();
@@ -246,6 +250,7 @@ impl Trust {
             identity,
             peers_path,
             peers: Mutex::new(peers),
+            save_lock: Mutex::new(()),
             name: Mutex::new(name),
             intents: Mutex::default(),
             pairing_until: Mutex::default(),
@@ -324,13 +329,20 @@ impl Trust {
     }
 
     fn save_peers(&self) {
-        let Some(path) = &self.peers_path else {
+        let Some(path) = self
+            .peers_path
+            .as_deref()
+            .filter(|p| !persist::is_blocked(p))
+        else {
             return;
         };
+        // Snapshot and write under one lock: two saves from different tasks could otherwise
+        // rename an older list over a newer one. The write is a few hundred bytes and nothing is
+        // awaited while the lock is held. The list's own lock is taken inside, never the reverse.
+        let _saving = self.save_lock.lock().unwrap();
         let json = self.peers_json();
-        let tmp = path.with_extension("json.tmp");
-        if let Err(e) = fs::write(&tmp, json).and_then(|()| fs::rename(&tmp, path)) {
-            tracing::warn!("cannot save trusted devices: {e}");
+        if let Err(e) = persist::write_atomic(path, json.as_bytes(), PRIVATE) {
+            tracing::warn!("cannot save trusted devices {}: {e}", path.display());
         }
     }
 
@@ -599,6 +611,7 @@ impl Trust {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persist::testutil::{TempDir, mode_of, names};
 
     struct Node {
         trust: Arc<Trust>,
@@ -797,5 +810,97 @@ mod tests {
     fn code_has_eight_digits_in_two_groups() {
         assert_eq!(short_code(&[0, 0, 0, 7, 9]), "0000 0007");
         assert_eq!(short_code(&[0xff, 0xff, 0xff, 0xff]), "9496 7295");
+    }
+
+    fn trust_in(dir: &Path) -> Arc<Trust> {
+        let (tx, _events) = mpsc::unbounded_channel();
+        Trust::load(Some(dir), "me".to_owned(), tx).unwrap()
+    }
+
+    #[test]
+    fn the_identity_is_private_and_stays_the_same() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = TempDir::new("identity");
+        let first = trust_in(&dir.0);
+        let path = dir.0.join("identity.json");
+        assert_eq!(mode_of(&path) & 0o077, 0, "no access for group or others");
+        let again = trust_in(&dir.0);
+        assert_eq!(first.identity.public_key, again.identity.public_key);
+        assert_eq!(first.identity.private_key, again.identity.private_key);
+        // An existing key is never rewritten at start, whatever its mode.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let before = fs::read(&path).unwrap();
+        trust_in(&dir.0);
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(names(&dir.0), ["identity.json"]);
+    }
+
+    #[test]
+    fn peers_are_saved_private_and_a_corrupt_file_goes_to_bak() {
+        let dir = TempDir::new("peers");
+        let trust = trust_in(&dir.0);
+        trust.add_peer("phone", b"key-1");
+        let path = dir.0.join("peers.json");
+        assert_eq!(mode_of(&path), 0o600);
+        assert_eq!(trust_in(&dir.0).peers_json(), trust.peers_json());
+
+        fs::write(&path, "{broken").unwrap();
+        let stale = dir.0.join(".peers.json.0123456789abcdef.tmp");
+        fs::write(&stale, "half").unwrap();
+        assert_eq!(trust_in(&dir.0).peers_json(), "[]");
+        assert_eq!(
+            fs::read_to_string(dir.0.join("peers.json.bak")).unwrap(),
+            "{broken"
+        );
+        assert!(!stale.exists());
+    }
+
+    #[test]
+    fn concurrent_pairings_all_reach_the_file() {
+        let dir = TempDir::new("peers-threads");
+        let trust = trust_in(&dir.0);
+        let handles: Vec<_> = (0..8)
+            .map(|t| {
+                let trust = trust.clone();
+                std::thread::spawn(move || {
+                    for i in 0..10 {
+                        trust.add_peer(&format!("pc-{t}-{i}"), format!("key-{t}-{i}").as_bytes());
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        let on_disk: Vec<Peer> =
+            serde_json::from_str(&fs::read_to_string(dir.0.join("peers.json")).unwrap()).unwrap();
+        assert_eq!(on_disk.len(), 80, "the last save holds every pairing");
+        assert_eq!(trust.peers_json(), trust_in(&dir.0).peers_json());
+        assert_eq!(names(&dir.0), ["identity.json", "peers.json"]);
+    }
+
+    #[test]
+    fn unreadable_peers_are_kept_and_an_unreadable_identity_stops_the_start() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = TempDir::new("peers-unreadable");
+        trust_in(&dir.0).add_peer("phone", b"key-1");
+        let (peers, identity) = (dir.0.join("peers.json"), dir.0.join("identity.json"));
+        let saved = fs::read_to_string(&peers).unwrap();
+        fs::set_permissions(&peers, fs::Permissions::from_mode(0o000)).unwrap();
+        fs::set_permissions(&identity, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(&peers).is_ok() {
+            return; // root
+        }
+        let (tx, _events) = mpsc::unbounded_channel();
+        assert!(Trust::load(Some(&dir.0), "me".to_owned(), tx).is_err());
+        assert_eq!(names(&dir.0), ["identity.json", "peers.json"]);
+
+        fs::set_permissions(&identity, fs::Permissions::from_mode(0o600)).unwrap();
+        let again = trust_in(&dir.0);
+        assert_eq!(again.peers_json(), "[]");
+        again.add_peer("tablet", b"key-2");
+        let bak = dir.0.join("peers.json.bak");
+        fs::set_permissions(&bak, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(fs::read_to_string(&bak).unwrap(), saved);
     }
 }

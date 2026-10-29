@@ -8,7 +8,10 @@ use std::{
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::allowed::AllowedDevice;
+use crate::{
+    allowed::AllowedDevice,
+    persist::{self, PRIVATE},
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -64,14 +67,6 @@ impl Default for Settings {
     }
 }
 
-/// Moves an unreadable file to `<name>.bak` so the next save does not destroy it.
-pub fn keep_aside(path: &Path) {
-    let bak = path.with_extension("json.bak");
-    if let Err(e) = fs::rename(path, &bak) {
-        tracing::warn!("cannot keep {} aside: {e}", path.display());
-    }
-}
-
 pub fn default_path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join("kuickshare").join("settings.json"))
 }
@@ -89,11 +84,12 @@ impl Settings {
     /// A missing or unreadable file yields the defaults; the problem is logged, not fatal.
     /// A file of an older version loses its trusted devices once (see `allowed_reset_v1`).
     pub fn load(path: &Path) -> Self {
+        persist::remove_stale_temps(path);
         match fs::read_to_string(path) {
             Ok(text) => {
                 let mut settings: Self = serde_json::from_str(&text).unwrap_or_else(|e| {
                     tracing::warn!("ignoring invalid settings file {}: {e}", path.display());
-                    keep_aside(path);
+                    persist::set_aside_or_block(path);
                     Self::default()
                 });
                 if settings.reset_old_trusted_devices()
@@ -106,6 +102,8 @@ impl Settings {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
             Err(e) => {
                 tracing::warn!("cannot read settings file {}: {e}", path.display());
+                // Defaults are not a reason to destroy what the user has.
+                persist::set_aside_or_block(path);
                 Self::default()
             }
         }
@@ -125,19 +123,24 @@ impl Settings {
         true
     }
 
+    /// Does nothing for a file that was kept (see `persist::set_aside_or_block`).
     pub fn save(&self, path: &Path) -> Result<()> {
+        if persist::is_blocked(path) {
+            return Ok(());
+        }
         let dir = path.parent().context("settings path has no parent")?;
         fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
-        let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, serde_json::to_vec_pretty(self)?)
-            .with_context(|| format!("cannot write {}", tmp.display()))?;
-        fs::rename(&tmp, path).with_context(|| format!("cannot replace {}", path.display()))
+        // The file names and MAC addresses of trusted devices: private. The caller serializes
+        // saves (`Core` holds its lock), so no older snapshot overtakes a newer one.
+        persist::write_atomic(path, &serde_json::to_vec_pretty(self)?, PRIVATE)
+            .with_context(|| format!("cannot write {}", path.display()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persist::testutil::{TempDir, mode_of, names};
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("kuickshare-{name}-{}", std::process::id()));
@@ -253,5 +256,106 @@ mod tests {
     fn a_fresh_install_has_nothing_to_reset() {
         let defaults = Settings::default();
         assert!(defaults.allowed_reset_v1 && !defaults.trusted_devices_reset_notice);
+    }
+
+    #[test]
+    fn save_makes_the_file_private_and_keeps_the_old_one_on_failure() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = TempDir::new("settings-mode");
+        let path = dir.0.join("settings.json");
+        fs::write(&path, r#"{"device_name":"x"}"#).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let loaded = Settings::load(&path);
+        assert_eq!(mode_of(&path), 0o600, "the upgrade reset saved it");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        loaded.save(&path).unwrap();
+        assert_eq!(mode_of(&path), 0o600);
+
+        // A save that cannot happen leaves the file and its directory as they were.
+        let before = fs::read(&path).unwrap();
+        let blocked = dir.0.join("settings.json").join("inner.json");
+        assert!(loaded.save(&blocked).is_err());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(names(&dir.0), ["settings.json"]);
+    }
+
+    #[test]
+    fn an_invalid_file_goes_to_bak_and_leftover_temps_are_cleaned() {
+        let dir = TempDir::new("settings-bak");
+        let path = dir.0.join("settings.json");
+        fs::write(&path, "{not json").unwrap();
+        fs::write(dir.0.join("settings.json.bak"), "older backup").unwrap();
+        let stale = dir.0.join(".settings.json.0123456789abcdef.tmp");
+        fs::write(&stale, "half").unwrap();
+        fs::write(dir.0.join("settings.json.tmp"), "old version").unwrap();
+        fs::write(dir.0.join("other.json.tmp"), "not ours").unwrap();
+
+        assert_eq!(Settings::load(&path), Settings::default());
+        // An earlier backup is not overwritten.
+        assert_eq!(
+            fs::read_to_string(dir.0.join("settings.json.bak")).unwrap(),
+            "older backup"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.0.join("settings.json.bak.1")).unwrap(),
+            "{not json"
+        );
+        assert!(!path.exists());
+        assert!(!stale.exists());
+        assert!(!dir.0.join("settings.json.tmp").exists());
+        assert!(dir.0.join("other.json.tmp").exists());
+    }
+
+    const PRECIOUS: &str = r#"{"device_name":"precious"}"#;
+
+    /// Makes `path` unreadable; false when the mode bits do not apply (running as root).
+    fn make_unreadable(path: &Path) -> bool {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::write(path, PRECIOUS).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap();
+        fs::read(path).is_err()
+    }
+
+    #[test]
+    fn an_unreadable_file_is_kept_aside_not_overwritten() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = TempDir::new("settings-unreadable");
+        let path = dir.0.join("settings.json");
+        if !make_unreadable(&path) {
+            return;
+        }
+        let settings = Settings::load(&path);
+        assert_eq!(settings, Settings::default());
+        settings.save(&path).unwrap();
+        let bak = dir.0.join("settings.json.bak");
+        fs::set_permissions(&bak, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(fs::read_to_string(&bak).unwrap(), PRECIOUS);
+        assert_eq!(
+            Settings::load(&path),
+            settings,
+            "the new file is the saved one"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_file_in_a_read_only_directory_is_never_saved_over() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = TempDir::new("settings-blocked");
+        let path = dir.0.join("settings.json");
+        if !make_unreadable(&path) {
+            return;
+        }
+        fs::set_permissions(&dir.0, fs::Permissions::from_mode(0o500)).unwrap();
+        let settings = Settings::load(&path);
+        assert_eq!(settings, Settings::default());
+        assert!(persist::is_blocked(&path));
+        // The setters work in memory; the save is refused without an error.
+        settings.save(&path).unwrap();
+        fs::set_permissions(&dir.0, fs::Permissions::from_mode(0o700)).unwrap();
+        // Even with the directory writable again, this run does not touch the file.
+        settings.save(&path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), PRECIOUS);
+        assert_eq!(names(&dir.0), ["settings.json"]);
     }
 }

@@ -4,6 +4,7 @@ mod consent;
 mod dbus;
 mod history;
 mod link;
+mod persist;
 mod ratelimit;
 mod safety;
 mod settings;
