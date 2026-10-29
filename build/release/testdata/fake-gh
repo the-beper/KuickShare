@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""A stand-in for the gh CLI, for build/release/simulate.sh. Not a model of GitHub: it implements only the calls
+publish.sh makes, keeps the releases in a JSON file and can be told to fail.
+
+Environment:
+  FAKE_GH_STATE    JSON file with the releases (created on first use); asset contents are kept next to it
+  FAKE_GH_LOG      file the calls are appended to ("upload NAME", "create TAG", ...)
+  FAKE_GH_ORIGIN   bare git repository whose tags `release create --verify-tag` checks
+  FAKE_GH_FAIL     comma list: create, edit, upload:NAME (the call exits 1)
+  FAKE_GH_PARTIAL  1: a failed upload leaves an unfinished asset behind, as an interrupted upload does
+  FAKE_GH_NO_DIGEST 1: assets have no digest, the caller must download them
+"""
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+STATE = os.environ["FAKE_GH_STATE"]
+BLOBS = STATE + ".blobs"
+LOG = os.environ.get("FAKE_GH_LOG")
+FAIL = [x for x in os.environ.get("FAKE_GH_FAIL", "").split(",") if x]
+
+
+def die(message, code=1):
+    print("fake-gh: " + message, file=sys.stderr)
+    sys.exit(code)
+
+
+def log(line):
+    if LOG:
+        with open(LOG, "a") as f:
+            f.write(line + "\n")
+
+
+def load():
+    if os.path.exists(STATE):
+        with open(STATE) as f:
+            return json.load(f)
+    return {"next_id": 1, "releases": [], "latest": None}
+
+
+def save(state):
+    with open(STATE, "w") as f:
+        json.dump(state, f)
+
+
+def new_id(state):
+    state["next_id"] += 1
+    return state["next_id"]
+
+
+def option(args, name, takes_value=True):
+    """Removes --name [value] (or --name=value) from args and returns the value (True for a flag)."""
+    for i, arg in enumerate(args):
+        if arg == name:
+            if takes_value:
+                value = args[i + 1]
+                del args[i:i + 2]
+                return value
+            del args[i]
+            return True
+        if arg.startswith(name + "="):
+            del args[i]
+            return arg.split("=", 1)[1]
+    return None
+
+
+def find(state, tag):
+    for release in state["releases"]:
+        if release["tag_name"] == tag:
+            return release
+    die("release not found: " + tag)
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def api(args):
+    method = option(args, "-X") or "GET"
+    option(args, "--paginate", False)
+    endpoint = args[0].split("?")[0]
+    state = load()
+    parts = endpoint.split("/")  # repos/OWNER/REPO/...
+    path = "/".join(parts[3:])
+    if method == "GET" and path == "releases":
+        print(json.dumps(state["releases"]))
+    elif method == "GET" and path == "releases/latest":
+        for release in state["releases"]:
+            if release["id"] == state["latest"] and not release["draft"]:
+                print(json.dumps(release))
+                return
+        die("HTTP 404: Not Found")
+    elif method == "DELETE" and path.startswith("releases/assets/"):
+        asset_id = int(path.rsplit("/", 1)[1])
+        for release in state["releases"]:
+            release["assets"] = [a for a in release["assets"] if a["id"] != asset_id]
+        log("delete-asset %d" % asset_id)
+        save(state)
+    else:
+        die("unsupported api call: %s %s" % (method, endpoint), 99)
+
+
+def release(args):
+    sub = args.pop(0)
+    option(args, "--repo")
+    state = load()
+    if sub == "create":
+        draft = option(args, "--draft", False)
+        verify = option(args, "--verify-tag", False)
+        title = option(args, "--title")
+        notes = option(args, "--notes-file")
+        tag = args[0]
+        if "create" in FAIL:
+            die("create failed on request")
+        if any(r["tag_name"] == tag for r in state["releases"]):
+            die("HTTP 422: tag_name already exists")
+        if verify and subprocess.run(["git", "--git-dir=" + os.environ["FAKE_GH_ORIGIN"], "rev-parse", "-q", "--verify",
+                                      "refs/tags/" + tag], stdout=subprocess.DEVNULL).returncode != 0:
+            die("tag %s does not exist in the remote repository" % tag)
+        body = ""
+        if notes:
+            with open(notes) as f:
+                body = f.read()
+            if not body.strip():
+                die("empty notes")
+        state["releases"].append({"id": new_id(state), "tag_name": tag, "name": title, "draft": bool(draft), "body": body,
+                                  "assets": []})
+        log("create %s draft=%s" % (tag, bool(draft)))
+    elif sub == "upload":
+        if option(args, "--clobber", False):
+            die("--clobber is never allowed", 99)
+        tag = args.pop(0)
+        rel = find(state, tag)
+        for path in args:
+            name = os.path.basename(path)
+            if any(a["name"] == name for a in rel["assets"]):
+                die("HTTP 422: an asset with the name %s already exists" % name)
+            asset = {"id": new_id(state), "name": name, "size": os.path.getsize(path), "state": "uploaded"}
+            if "upload:" + name in FAIL:
+                if os.environ.get("FAKE_GH_PARTIAL") == "1":
+                    asset["state"] = "starting"
+                    rel["assets"].append(asset)
+                    save(state)
+                log("upload-failed " + name)
+                die("upload of %s failed on request" % name)
+            if os.environ.get("FAKE_GH_NO_DIGEST") != "1":
+                asset["digest"] = "sha256:" + sha256(path)
+            os.makedirs(BLOBS, exist_ok=True)
+            shutil.copy(path, os.path.join(BLOBS, str(asset["id"])))
+            rel["assets"].append(asset)
+            log("upload " + name)
+    elif sub == "edit":
+        draft = option(args, "--draft")
+        latest = option(args, "--latest", False)
+        rel = find(state, args[0])
+        if "edit" in FAIL:
+            die("edit failed on request")
+        if draft == "false":
+            rel["draft"] = False
+        elif draft == "true":
+            rel["draft"] = True
+            if state["latest"] == rel["id"]:
+                state["latest"] = None
+        if latest:
+            state["latest"] = rel["id"]
+        log("edit %s draft=%s" % (args[0], rel["draft"]))
+    elif sub == "download":
+        pattern = option(args, "--pattern") or option(args, "-p")
+        out = option(args, "--dir") or "."
+        rel = find(state, args[0])
+        for asset in rel["assets"]:
+            if asset["name"] == pattern:
+                shutil.copy(os.path.join(BLOBS, str(asset["id"])), os.path.join(out, pattern))
+                return
+        die("no asset matches " + str(pattern))
+    else:
+        die("unsupported release command: " + sub, 99)
+    save(state)
+
+
+def main():
+    args = sys.argv[1:]
+    if not args:
+        die("no command", 99)
+    command = args.pop(0)
+    if command == "api":
+        api(args)
+    elif command == "release":
+        release(args)
+    else:
+        die("unsupported command: " + command, 99)
+
+
+main()

@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""A stand-in for curl, for build/release/simulate.sh: serves $FAKE_PAGES_URL/<path> from the gh-pages branch of the bare
+repository $FAKE_PAGES_ORIGIN, so "Pages" shows what was pushed. FAKE_PAGES_STALE=1: Pages never updates (HTTP 404).
+Understands -o FILE and the URL (the last argument); every other option is ignored.
+"""
+import os
+import subprocess
+import sys
+
+args = sys.argv[1:]
+url = args[-1]
+out = None
+for i, arg in enumerate(args):
+    if arg == "-o":
+        out = args[i + 1]
+base = os.environ["FAKE_PAGES_URL"].rstrip("/") + "/"
+if out is None or not url.startswith(base):
+    print("fake-curl: unsupported call: %s" % " ".join(args), file=sys.stderr)
+    sys.exit(99)
+path = url[len(base):].split("?")[0]
+if os.environ.get("FAKE_PAGES_STALE") == "1":
+    print("fake-curl: 404", file=sys.stderr)
+    sys.exit(22)
+done = subprocess.run(["git", "--git-dir=" + os.environ["FAKE_PAGES_ORIGIN"], "show", "refs/heads/gh-pages:" + path],
+                      capture_output=True)
+if done.returncode != 0:
+    print("fake-curl: 404 for " + path, file=sys.stderr)
+    sys.exit(22)
+with open(out, "wb") as f:
+    f.write(done.stdout)
