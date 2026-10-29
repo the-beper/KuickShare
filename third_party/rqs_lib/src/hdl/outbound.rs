@@ -64,7 +64,7 @@ const MAX_PENDING_FRAMES: usize = 32;
 /// Hard bound on the queue, whatever the frame, so a flooding peer cannot grow memory.
 const MAX_PENDING_FRAMES_HARD: usize = 256;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum OutboundPayload {
     Files(Vec<String>),
     Text {
@@ -72,6 +72,24 @@ pub enum OutboundPayload {
         /// Doesn't support WiFi outbound payload yet due to default SSID and SecurityType
         text_type: TextPayloadType,
     },
+}
+
+/// Hand-written so that no `Debug` output (a log line, a `{:?}` of a `SendInfo`) shows the
+/// text being sent or the paths of the files.
+impl std::fmt::Debug for OutboundPayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Files(files) => f
+                .debug_struct("Files")
+                .field("count", &files.len())
+                .finish(),
+            Self::Text { text, text_type } => f
+                .debug_struct("Text")
+                .field("len", &text.len())
+                .field("text_type", text_type)
+                .finish(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -150,6 +168,7 @@ impl OutboundRequest {
                 total_bytes: Default::default(),
                 ack_bytes: Default::default(),
                 saved_paths: Vec::new(),
+                refusal: None,
             },
             OutboundPayload::Text { text, text_type } => {
                 let (payload_kind, transfer_payload) = match text_type {
@@ -175,6 +194,7 @@ impl OutboundRequest {
                     total_bytes: text.len() as u64,
                     ack_bytes: Default::default(),
                     saved_paths: Vec::new(),
+                    refusal: None,
                 }
             }
         };
@@ -652,43 +672,20 @@ impl OutboundRequest {
                 match header.r#type() {
                     payload_header::PayloadType::Bytes => {
                         trace!("Processing PayloadType::Bytes");
-                        let payload_id = header.id();
+                        // `None` until the last chunk; the payload is then forgotten here.
+                        let Some(buffer) = crate::safety::assemble(
+                            &mut self.state.payload_buffers,
+                            header,
+                            chunk,
+                            &crate::safety::Limits::default(),
+                        )?
+                        else {
+                            return Ok(());
+                        };
 
-                        if header.total_size() > SANE_FRAME_LENGTH.into() {
-                            self.state.payload_buffers.remove(&payload_id);
-                            return Err(anyhow!(
-                                "Payload too large: {} bytes",
-                                header.total_size()
-                            ));
-                        }
-
-                        self.state
-                            .payload_buffers
-                            .entry(payload_id)
-                            .or_insert_with(|| Vec::with_capacity(header.total_size() as usize));
-
-                        // Get the current length of the buffer, if it exists, without holding a mutable borrow.
-                        let buffer_len = self.state.payload_buffers.get(&payload_id).unwrap().len();
-                        if chunk.offset() != buffer_len as i64 {
-                            self.state.payload_buffers.remove(&payload_id);
-                            return Err(anyhow!(
-                                "Unexpected chunk offset: {}, expected: {}",
-                                chunk.offset(),
-                                buffer_len
-                            ));
-                        }
-
-                        let buffer = self.state.payload_buffers.get_mut(&payload_id).unwrap();
-                        if let Some(body) = &chunk.body {
-                            buffer.extend(body);
-                        }
-
-                        if (chunk.flags() & 1) == 1 {
-                            debug!("Chunk flags & 1 == 1 ?? End of data ??");
-
-                            let inner_frame = sharing_nearby::Frame::decode(buffer.as_slice())?;
-                            self.process_transfer_setup(&inner_frame).await?;
-                        }
+                        debug!("Bytes payload complete");
+                        let inner_frame = sharing_nearby::Frame::decode(buffer.as_slice())?;
+                        self.process_transfer_setup(&inner_frame).await?;
                     }
                     payload_header::PayloadType::File => {
                         error!("Unhandled PayloadType::File: {:?}", header.r#type())
@@ -711,8 +708,8 @@ impl OutboundRequest {
             location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeNegotiation => {
                 self.process_bwu_frame(offline).await?;
             }
-            _ => {
-                error!("Unhandled offline frame encrypted: {:?}", offline);
+            other => {
+                error!("Unhandled offline frame encrypted: {:?}", other);
             }
         }
 
@@ -823,21 +820,21 @@ impl OutboundRequest {
                 for f in files {
                     let path = Path::new(f);
                     if !path.is_file() {
-                        warn!("Path is not a file: {}", f);
+                        warn!("A path to send is not a file");
                         continue;
                     }
 
                     let file = match File::open(f) {
                         Ok(_f) => _f,
                         Err(e) => {
-                            error!("Failed to open file: {f}: {:?}", e);
+                            error!("Failed to open a file to send: {e}");
                             continue;
                         }
                     };
                     let fmetadata = match file.metadata() {
                         Ok(_fm) => _fm,
                         Err(e) => {
-                            error!("Failed to get metadata for: {f}: {:?}", e);
+                            error!("Failed to get the metadata of a file to send: {e}");
                             continue;
                         }
                     };
@@ -966,9 +963,8 @@ impl OutboundRequest {
         match upgrade::info_to_credentials(info) {
             Ok(creds) => {
                 info!(
-                    "upgrade: receiver offers {:?}: ssid {:?}, {} MHz, {}:{}",
+                    "upgrade: receiver offers {:?}: {} MHz, {}:{}",
                     info.medium(),
-                    creds.ssid,
                     creds.frequency_mhz,
                     creds.gateway,
                     creds.port
@@ -1250,7 +1246,7 @@ impl OutboundRequest {
                         None => break,
                     };
 
-                    trace!("> Currently sending {:?}", curr_state.file_url);
+                    trace!("> Currently sending file {}", current);
                     if curr_state.bytes_transferred == curr_state.total_size {
                         debug!("File {current} finished");
                         self.update_state(
@@ -1781,8 +1777,6 @@ impl OutboundRequest {
             true,
         )
         .await;
-
-        info!("Pin code: {:?}", self.state.pin_code);
 
         Ok(())
     }

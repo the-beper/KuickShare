@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use info::{InternalFileInfo, TransferMetadata};
+use info::{InboundFiles, InternalFileInfo, TransferMetadata};
 use p256::{PublicKey, SecretKey};
 
 use crate::securegcm::ukey2_client_init::CipherCommitment;
@@ -63,7 +63,10 @@ pub struct InnerState {
     pub remote_device_info: Option<RemoteDeviceInfo>,
     pub pin_code: Option<String>,
     pub transfer_metadata: Option<TransferMetadata>,
+    /// Files being sent (outbound).
     pub transferred_files: HashMap<i64, InternalFileInfo>,
+    /// Files being received (inbound).
+    pub inbound: InboundFiles,
 
     // Everything needed for encryption/decryption/verif
     pub cipher_commitment: Option<CipherCommitment>,

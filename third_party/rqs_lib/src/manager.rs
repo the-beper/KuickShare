@@ -1,6 +1,12 @@
+use std::collections::HashMap;
+use std::io;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Semaphore;
 use tokio::sync::broadcast::{Receiver as BusReceiver, Sender};
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
@@ -10,9 +16,26 @@ use crate::errors::AppError;
 use crate::hdl::{
     BleTarget, InboundRequest, OutboundPayload, OutboundRequest, TransferState, wait_for_cancel,
 };
+use crate::safety::Limits;
 use crate::utils::RemoteDeviceInfo;
 
 const INNER_NAME: &str = "TcpServer";
+
+/// First and longest wait before `accept()` is tried again after it failed (typically no
+/// file descriptors left); the wait doubles on each failure in a row.
+const ACCEPT_RETRY_MIN: Duration = Duration::from_millis(50);
+const ACCEPT_RETRY_MAX: Duration = Duration::from_secs(1);
+
+/// Where inbound connections come from: a `TcpListener`, or a stand-in in the tests.
+pub(crate) trait Acceptor: Send + Sync {
+    fn poll_accept(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<(TcpStream, SocketAddr)>>;
+}
+
+impl Acceptor for TcpListener {
+    fn poll_accept(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<(TcpStream, SocketAddr)>> {
+        TcpListener::poll_accept(self, cx)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct SendInfo {
@@ -63,11 +86,55 @@ pub(crate) async fn drive_inbound(mut ir: InboundRequest, sender: Sender<Channel
     }
 }
 
+/// Sessions open per remote address; a session counts until its guard is dropped.
+type AddrCounts = Arc<Mutex<HashMap<IpAddr, usize>>>;
+
+struct AddrGuard {
+    counts: AddrCounts,
+    ip: IpAddr,
+}
+
+impl AddrGuard {
+    /// `None` if `ip` already has `max` sessions open.
+    fn take(counts: &AddrCounts, ip: IpAddr, max: usize) -> Option<Self> {
+        let mut map = counts.lock().unwrap_or_else(|e| e.into_inner());
+        let n = map.entry(ip).or_insert(0);
+        if *n >= max {
+            return None;
+        }
+        *n += 1;
+        Some(Self {
+            counts: Arc::clone(counts),
+            ip,
+        })
+    }
+}
+
+impl Drop for AddrGuard {
+    fn drop(&mut self) {
+        let mut map = self.counts.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = map.get_mut(&self.ip) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                map.remove(&self.ip);
+            }
+        }
+    }
+}
+
+/// At most one warning per this long about connections dropped over a limit.
+const DROP_WARN_EVERY: Duration = Duration::from_secs(10);
+
 pub struct TcpServer {
     endpoint_id: [u8; 4],
-    tcp_listener: TcpListener,
+    acceptor: Box<dyn Acceptor>,
     sender: Sender<ChannelMessage>,
     connect_receiver: Receiver<SendInfo>,
+    limits: Limits,
+    /// One permit per inbound session, held until the session ends: a flood of silent
+    /// connections cannot use up the file descriptors the sends and the accept need.
+    sessions: Arc<Semaphore>,
+    per_addr: AddrCounts,
 }
 
 impl TcpServer {
@@ -77,16 +144,44 @@ impl TcpServer {
         sender: Sender<ChannelMessage>,
         connect_receiver: Receiver<SendInfo>,
     ) -> Result<Self, anyhow::Error> {
-        Ok(Self {
+        Ok(Self::from_acceptor(
             endpoint_id,
-            tcp_listener,
+            Box::new(tcp_listener),
             sender,
             connect_receiver,
-        })
+        ))
+    }
+
+    fn from_acceptor(
+        endpoint_id: [u8; 4],
+        acceptor: Box<dyn Acceptor>,
+        sender: Sender<ChannelMessage>,
+        connect_receiver: Receiver<SendInfo>,
+    ) -> Self {
+        Self {
+            endpoint_id,
+            acceptor,
+            sender,
+            connect_receiver,
+            limits: Limits::default(),
+            sessions: Arc::new(Semaphore::new(Limits::default().max_sessions)),
+            per_addr: AddrCounts::default(),
+        }
+    }
+
+    /// Replaces the default limits of the inbound sessions.
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self.sessions = Arc::new(Semaphore::new(limits.max_sessions));
+        self
     }
 
     pub async fn run(&mut self, ctk: CancellationToken) -> Result<(), anyhow::Error> {
         info!("{INNER_NAME}: service starting");
+
+        let mut retry = ACCEPT_RETRY_MIN;
+        let mut dropped: u32 = 0;
+        let mut last_warn: Option<tokio::time::Instant> = None;
 
         loop {
             let cctk = ctk.clone();
@@ -97,7 +192,7 @@ impl TcpServer {
                     break;
                 }
                 Some(i) = self.connect_receiver.recv() => {
-                    info!("{INNER_NAME}: connect_receiver: got {:?}", i);
+                    debug!("{INNER_NAME}: connect_receiver: got {:?}", i);
                     // Own task: a slow or silent peer must not block the other sends. The
                     // subscription is made here so a cancel sent right after is not missed.
                     let endpoint_id = self.endpoint_id;
@@ -109,16 +204,43 @@ impl TcpServer {
                         }
                     });
                 }
-                r = self.tcp_listener.accept() => {
+                r = std::future::poll_fn(|cx| self.acceptor.poll_accept(cx)) => {
                     match r {
                         Ok((socket, remote_addr)) => {
+                            retry = ACCEPT_RETRY_MIN;
+                            let ip = remote_addr.ip();
+                            let permit = self.sessions.clone().try_acquire_owned().ok();
+                            let guard = AddrGuard::take(&self.per_addr, ip, self.limits.max_per_addr);
+                            let (Some(permit), Some(guard)) = (permit, guard) else {
+                                dropped += 1;
+                                if last_warn.is_none_or(|t| t.elapsed() >= DROP_WARN_EVERY) {
+                                    warn!("{INNER_NAME}: too many sessions, dropped {dropped} connection(s)");
+                                    dropped = 0;
+                                    last_warn = Some(tokio::time::Instant::now());
+                                }
+                                continue;
+                            };
                             trace!("{INNER_NAME}: new client: {remote_addr}");
-                            let ir = InboundRequest::new(socket, remote_addr.to_string(), self.sender.clone());
-                            tokio::spawn(drive_inbound(ir, self.sender.clone()));
+                            let ir = InboundRequest::new(socket, remote_addr.to_string(), self.sender.clone())
+                                .with_limits(self.limits);
+                            let sender = self.sender.clone();
+                            tokio::spawn(async move {
+                                let _held = (permit, guard);
+                                drive_inbound(ir, sender).await;
+                            });
                         },
                         Err(err) => {
-                            error!("{INNER_NAME}: error accepting: {}", err);
-                            break;
+                            // Not fatal: a lack of descriptors passes once sessions end. The
+                            // server must stay up for the sends and for the next peer.
+                            error!("{INNER_NAME}: error accepting: {}, retrying in {} ms", err, retry.as_millis());
+                            tokio::select! {
+                                _ = ctk.cancelled() => {
+                                    info!("{INNER_NAME}: tracker cancelled, breaking");
+                                    break;
+                                }
+                                _ = tokio::time::sleep(retry) => {}
+                            }
+                            retry = (retry * 2).min(ACCEPT_RETRY_MAX);
                         }
                     }
                 }
@@ -561,17 +683,45 @@ mod tests {
         assert!(leaked.is_empty(), "the text is in the log: {leaked:?}");
     }
 
-    /// D12: a connection that sends nothing must be dropped after an idle timeout (60 s in the
-    /// design). Ignored: the timeout is not injectable and tokio's `test-util` (paused time) is
-    /// not enabled for rqs_lib, so the test would need a real minute.
+    /// Short limits so the tests wait for a fraction of a second.
+    fn quick_limits() -> Limits {
+        Limits {
+            handshake: Duration::from_millis(300),
+            idle: Duration::from_millis(300),
+            ..Limits::default()
+        }
+    }
+
+    /// A stand-in for the listener that fails its first `failures` accepts.
+    struct FlakyAcceptor {
+        inner: TcpListener,
+        failures: u32,
+    }
+
+    impl Acceptor for FlakyAcceptor {
+        fn poll_accept(
+            &mut self,
+            cx: &mut Context<'_>,
+        ) -> Poll<io::Result<(TcpStream, SocketAddr)>> {
+            if self.failures > 0 {
+                self.failures -= 1;
+                return Poll::Ready(Err(io::Error::other("Too many open files (injected)")));
+            }
+            TcpListener::poll_accept(&self.inner, cx)
+        }
+    }
+
+    /// D12: a connection that sends nothing must be dropped after the idle time (60 s by
+    /// default; the limit is injected here).
     #[tokio::test]
-    #[ignore = "needs an injectable idle timeout (Limits) or tokio test-util paused time"]
     async fn idle_inbound_session_times_out() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let (bus, _keep) = tokio::sync::broadcast::channel(16);
         let (_tx, rx) = tokio::sync::mpsc::channel(1);
-        let mut server = TcpServer::new(*b"TEST", listener, bus, rx).unwrap();
+        let mut server = TcpServer::new(*b"TEST", listener, bus, rx)
+            .unwrap()
+            .with_limits(quick_limits());
         let ctk = CancellationToken::new();
         tokio::spawn({
             let ctk = ctk.clone();
@@ -580,7 +730,7 @@ mod tests {
         let mut idle = TcpStream::connect(addr).await.unwrap();
         let mut buf = [0u8; 1];
         let closed = tokio::time::timeout(
-            Duration::from_secs(90),
+            Duration::from_secs(10),
             tokio::io::AsyncReadExt::read(&mut idle, &mut buf),
         )
         .await
@@ -590,11 +740,123 @@ mod tests {
     }
 
     /// D12: an `accept()` error (file descriptors used up) must not end the server loop.
-    /// Ignored: `TcpServer` owns a concrete `TcpListener`, so there is no way to make
-    /// `accept()` fail without lowering RLIMIT_NOFILE for the whole test process.
     #[tokio::test]
-    #[ignore = "needs an injectable listener to make accept() fail"]
     async fn accept_error_keeps_server_running() {
-        unimplemented!("make accept() fail, then connect again and expect the loop to still run");
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (bus, _keep) = tokio::sync::broadcast::channel(16);
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        let flaky = FlakyAcceptor {
+            inner: listener,
+            failures: 3,
+        };
+        let mut server = TcpServer::from_acceptor(*b"TEST", Box::new(flaky), bus, rx)
+            .with_limits(quick_limits());
+        let ctk = CancellationToken::new();
+        let run = tokio::spawn({
+            let ctk = ctk.clone();
+            async move { server.run(ctk).await }
+        });
+        // The connection waits in the backlog while accept fails; once it is accepted the
+        // idle timeout closes it, which only a running server does (a stopped one resets it).
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let mut buf = [0u8; 1];
+        let closed = tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio::io::AsyncReadExt::read(&mut client, &mut buf),
+        )
+        .await
+        .expect("the connection was never served");
+        assert!(matches!(closed, Ok(0)), "{closed:?}");
+        assert!(
+            !run.is_finished(),
+            "the server loop ended after accept errors"
+        );
+        ctk.cancel();
+        run.await.unwrap().unwrap();
+    }
+
+    /// Waits until the server holds `taken` of its permits (the connection was accepted).
+    async fn wait_for_permits(sessions: &Semaphore, taken: usize, total: usize) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while sessions.available_permits() + taken != total {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the server never took the connection");
+    }
+
+    /// D12: more connections than `max_sessions` are dropped, the ones served stay.
+    #[tokio::test]
+    async fn sessions_are_capped() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (bus, _keep) = tokio::sync::broadcast::channel(16);
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        let limits = Limits {
+            max_sessions: 1,
+            handshake: Duration::from_secs(30),
+            idle: Duration::from_secs(30),
+            ..Limits::default()
+        };
+        let mut server = TcpServer::new(*b"TEST", listener, bus, rx)
+            .unwrap()
+            .with_limits(limits);
+        let sessions = server.sessions.clone();
+        let ctk = CancellationToken::new();
+        tokio::spawn({
+            let ctk = ctk.clone();
+            async move { server.run(ctk).await }
+        });
+        let _first = TcpStream::connect(addr).await.unwrap();
+        wait_for_permits(&sessions, 1, 1).await;
+        let mut second = TcpStream::connect(addr).await.unwrap();
+        let mut buf = [0u8; 1];
+        let closed = tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::io::AsyncReadExt::read(&mut second, &mut buf),
+        )
+        .await
+        .expect("a connection over the cap was kept");
+        assert!(matches!(closed, Ok(0) | Err(_)));
+        ctk.cancel();
+    }
+
+    /// One address cannot hold more than `max_per_addr` sessions, however many are free.
+    #[tokio::test]
+    async fn sessions_per_address_are_capped() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (bus, _keep) = tokio::sync::broadcast::channel(16);
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        let limits = Limits {
+            max_per_addr: 1,
+            handshake: Duration::from_secs(30),
+            idle: Duration::from_secs(30),
+            ..Limits::default()
+        };
+        let total = limits.max_sessions;
+        let mut server = TcpServer::new(*b"TEST", listener, bus, rx)
+            .unwrap()
+            .with_limits(limits);
+        let sessions = server.sessions.clone();
+        let ctk = CancellationToken::new();
+        tokio::spawn({
+            let ctk = ctk.clone();
+            async move { server.run(ctk).await }
+        });
+        let _first = TcpStream::connect(addr).await.unwrap();
+        wait_for_permits(&sessions, 1, total).await;
+        let mut second = TcpStream::connect(addr).await.unwrap();
+        let mut buf = [0u8; 1];
+        let closed = tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::io::AsyncReadExt::read(&mut second, &mut buf),
+        )
+        .await
+        .expect("a second connection from one address was kept");
+        assert!(matches!(closed, Ok(0) | Err(_)));
+        ctk.cancel();
     }
 }

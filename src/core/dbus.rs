@@ -1334,6 +1334,7 @@ mod tests {
                 total_bytes: 100,
                 ack_bytes: 40,
                 saved_paths: Vec::new(),
+                refusal: None,
             }),
         };
         let event = TransferEvent::from_client("t2", &client);

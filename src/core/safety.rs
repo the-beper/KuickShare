@@ -1,34 +1,13 @@
 //! Checks on what an unknown sender asks us to do, made before the user (or a trusted-device rule)
-//! accepts a transfer. `rqs_lib` puts the file names it is given straight into the download folder.
+//! accepts a transfer. The file-name rule lives in `rqs_lib::safety`, which also applies it when
+//! the files are created, so the core and the library cannot disagree.
 
-/// The longest file name most file systems take, in bytes.
-const MAX_NAME_BYTES: usize = 255;
-
-/// True if `name` could write outside the download folder or is not a plain file name.
-pub fn unsafe_file_name(name: &str) -> bool {
-    name.is_empty()
-        || name == "."
-        || name == ".."
-        || name.len() > MAX_NAME_BYTES
-        || name
-            .chars()
-            .any(|c| c == '/' || c == '\\' || c.is_control() || is_invisible(c))
-}
-
-/// Zero-width and text-direction characters: with them `photo<U+202E>gpj.exe` shows as `photoexe.jpg`.
-fn is_invisible(c: char) -> bool {
-    matches!(
-        c,
-        '\u{200B}'..='\u{200F}'
-            | '\u{202A}'..='\u{202E}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{2066}'..='\u{2069}'
-            | '\u{FEFF}'
-    )
-}
+pub use rqs_lib::safety::unsafe_file_name;
 
 #[cfg(test)]
 mod tests {
+    use rqs_lib::safety::MAX_NAME_BYTES;
+
     use super::*;
 
     #[test]
