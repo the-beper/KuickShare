@@ -60,12 +60,8 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: write
-      packages: read
     container:
       image: ghcr.io/the-beper/kuickshare-flatpak:fedora45
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
       options: --privileged
     env:
       SITE_URL: https://the-beper.github.io/KuickShare
