@@ -87,6 +87,8 @@ else
 fi
 repo=$pages/repo
 if [ ! -d "$repo" ]; then ostree --repo="$repo" init --mode=archive-z2; fi
+# git keeps no empty directory, and ostree (Ubuntu's at least) fails without these.
+mkdir -p "$repo/refs/heads" "$repo/refs/mirrors" "$repo/refs/remotes" "$repo/tmp"
 old_gpgkey=
 if [ -f "$pages/kuickshare.flatpakrepo" ]; then old_gpgkey=$(sed -n 's/^GPGKey=//p' "$pages/kuickshare.flatpakrepo"); fi
 

@@ -18,6 +18,8 @@ pages=$(cd "$1" && pwd)
 mkdir -p "$2"
 out=$(cd "$2" && pwd)
 repo=$pages/repo
+# A clone of gh-pages lacks the empty directories of the repository (git keeps none).
+mkdir -p "$repo/refs/heads" "$repo/refs/mirrors" "$repo/refs/remotes" "$repo/tmp"
 fail() { echo "export-flatpak-commits: $*" >&2; exit 1; }
 
 base=-
@@ -47,9 +49,12 @@ done
 
 # shellcheck disable=SC2086 # refs have no spaces
 set -- $exported
-ostree --repo="$out/repo" pull-local "$repo" "$@"
 for ref in "$@"; do
     want=$(awk -F'\t' -v r="$ref" '$1 == r { print $2 }' "$out/refs.txt")
+    # By checksum, not by name: pull-local resolves a name through the summary file when the
+    # repository has one, and the published summary still names the old commit.
+    ostree --repo="$out/repo" pull-local "$repo" "$want"
+    ostree --repo="$out/repo" refs --create="$ref" "$want"
     [ "$(ostree --repo="$out/repo" rev-parse "$ref")" = "$want" ] || fail "$ref was not copied unchanged"
 done
 tar --sort=name --owner=0 --group=0 --numeric-owner -C "$out" -cf "$out/flatpak-commits.tar" repo refs.txt
