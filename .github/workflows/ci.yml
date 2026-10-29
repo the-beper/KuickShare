@@ -37,6 +37,8 @@ jobs:
       image: ghcr.io/the-beper/kuickshare-build:fedora45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust (stable)
         run: |
@@ -55,6 +57,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # The Arch image published by images.yml (public, pulled without credentials). A failed pull fails the job;
       # a pull request that changes the Containerfile is checked with the image published from main until it is merged.
@@ -85,6 +89,8 @@ jobs:
       image: ghcr.io/the-beper/kuickshare-build:fedora45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust (stable)
         run: |
@@ -110,6 +116,8 @@ jobs:
       options: --privileged
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Build Flatpak
         run: |
@@ -126,5 +134,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
