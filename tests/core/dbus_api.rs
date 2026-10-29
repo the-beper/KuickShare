@@ -336,6 +336,26 @@ async fn trusting_needs_a_known_transfer() {
     assert_eq!(daemon.json("AllowedDevices").await, serde_json::json!([]));
 }
 
+/// REPRO (defect 7, decision D3): answering a transfer nobody is waiting on is an
+/// error, not a silent success.
+#[tokio::test]
+async fn accept_unknown_id_is_error() {
+    let daemon = Daemon::start("accept-unknown", None).await;
+    assert!(
+        daemon.call("Accept", &("10.0.0.9:4000",)).await.is_err(),
+        "Accept on an id with no pending consent must fail"
+    );
+}
+
+#[tokio::test]
+async fn decline_unknown_id_is_error() {
+    let daemon = Daemon::start("decline-unknown", None).await;
+    assert!(
+        daemon.call("Decline", &("10.0.0.9:4000",)).await.is_err(),
+        "Decline on an id with no pending consent must fail"
+    );
+}
+
 #[tokio::test]
 async fn joining_a_network_needs_credentials_from_a_finished_transfer() {
     let daemon = Daemon::start("join", None).await;

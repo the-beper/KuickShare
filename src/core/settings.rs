@@ -160,4 +160,33 @@ mod tests {
         assert!(loaded.visible);
         assert!(loaded.hide_when_dnd);
     }
+
+    /// REPRO (decision D1): the name+MAC trust list is emptied exactly once on
+    /// the first start of the new version; later additions survive.
+    #[test]
+    fn allowed_devices_are_cleared_once_on_upgrade() {
+        let dir = temp_dir("allowed-reset");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"allowed_devices":[{"name":"old phone","mac":"aa:bb:cc:dd:ee:01"}]}"#,
+        )
+        .unwrap();
+
+        let mut loaded = Settings::load(&path);
+        assert!(
+            loaded.allowed_devices.is_empty(),
+            "the old name+MAC list must be dropped on upgrade"
+        );
+        loaded.allowed_devices.push(AllowedDevice {
+            name: "new phone".into(),
+            mac: "aa:bb:cc:dd:ee:02".into(),
+        });
+        loaded.save(&path).unwrap();
+
+        let again = Settings::load(&path);
+        assert_eq!(again.allowed_devices.len(), 1, "the reset must not repeat");
+        assert_eq!(again.allowed_devices[0].name, "new phone");
+    }
 }

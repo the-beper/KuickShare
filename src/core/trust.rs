@@ -692,6 +692,24 @@ mod tests {
         assert!(!a.trust.probe(b.addr).await.unwrap().trusted);
     }
 
+    /// REPRO (defect 8): an intent announced by a paired computer must not
+    /// outlive the pairing.
+    #[tokio::test]
+    async fn unpaired_peer_intent_is_void() {
+        let (mut a, mut b) = (node("alice").await, node("bob").await);
+        pair(&mut a, &mut b, true, true).await.unwrap();
+        a.trust.announce(b.addr).await.unwrap();
+        // The intent is stored on b before it answers, so it is there now.
+        let fingerprint = b.trust.peers.lock().unwrap()[0].fingerprint.clone();
+        b.trust.unpair(&fingerprint);
+        assert_eq!(b.trust.peers_json(), "[]");
+        assert_eq!(
+            b.trust.take_intent("127.0.0.1"),
+            None,
+            "an unpaired computer's intent must be void"
+        );
+    }
+
     #[tokio::test]
     async fn an_address_that_connects_too_often_is_refused() {
         let node = node("limited").await;

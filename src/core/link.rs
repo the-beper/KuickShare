@@ -1597,13 +1597,59 @@ mod tests {
         assert_eq!(count(&log, "close_port"), 1);
     }
 
+    /// The firewall refused (or is not there): `host` must fail without touching
+    /// the AP profile, the previous connection or the zone.
+    async fn assert_host_refused(link: &NmLink<Fake>, log: &Arc<StdMutex<Vec<String>>>) {
+        let err = link.host(4000).await.expect_err("host must refuse");
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
+        assert!(
+            link.api.added.lock().unwrap().is_empty(),
+            "no AP profile may be added, in any zone"
+        );
+        assert!(link
+            .api
+            .added
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(_, s)| s.zone != OPEN_ZONE));
+        assert_eq!(count(log, "add_and_activate"), 0);
+        assert_eq!(count(log, "activate"), 0);
+        assert_eq!(count(log, "deactivate"), 0);
+        assert_eq!(live(link), 0);
+    }
+
     #[tokio::test]
-    async fn host_falls_back_to_the_open_zone_when_the_firewall_refuses() {
+    async fn host_refuses_when_firewall_denies_and_touches_nothing() {
         let (link, log) = fake().fail(|op, _| op == "open_port").build();
-        link.host(4000).await.unwrap();
-        assert_eq!(link.api.added.lock().unwrap()[0].1.zone, OPEN_ZONE);
+        assert_host_refused(&link, &log).await;
+    }
+
+    #[tokio::test]
+    async fn firewalld_absent_refuses_without_consent() {
+        let mut b = fake();
+        b.fail = Box::new(|op, _| {
+            (op == "open_port")
+                .then(|| io::Error::new(io::ErrorKind::NotFound, "firewalld is not running"))
+        });
+        let (link, log) = b.build();
+        assert_host_refused(&link, &log).await;
+    }
+
+    #[tokio::test]
+    async fn join_never_opens_a_port() {
+        let (link, log) = fake().build();
+        link.join(&creds()).await.unwrap();
         link.release().await;
+        assert_eq!(count(&log, "open_port"), 0);
         assert_eq!(count(&log, "close_port"), 0);
+        assert!(link
+            .api
+            .added
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(_, s)| s.zone != OPEN_ZONE));
     }
 
     #[tokio::test]

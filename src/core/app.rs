@@ -1351,6 +1351,30 @@ mod tests {
         );
     }
 
+    /// Puts a transfer into `Core.active` the way the forwarder does.
+    /// Not possible today: the `TransferEvent` fields are private to `dbus.rs`
+    /// (needs a `#[cfg(test)]` constructor there). The fixer implements this.
+    fn seed_active(_core: &Core, _id: &str, _kind: &str, _state: &str, _device: &str) {
+        todo!("needs a test constructor for dbus::TransferEvent (kind, state, device)")
+    }
+
+    /// REPRO (defect 7): `allow_device` must refuse an outbound transfer and an
+    /// inbound one that is already finished; it must say so by the transfer
+    /// state, before looking at the ARP table (so the error does not mention
+    /// the MAC address) and must not touch the allowed list.
+    #[test]
+    #[ignore = "needs a test constructor for dbus::TransferEvent to seed Core.active (fields are private to dbus.rs)"]
+    fn allow_device_refuses_outbound_and_finished() {
+        let mut core = test_core();
+        seed_active(&core, "10.0.0.5:4000", "outbound", "SendingFiles", "phone");
+        seed_active(&core, "10.0.0.6:4000", "inbound", "Finished", "tablet");
+        for id in ["10.0.0.5:4000", "10.0.0.6:4000"] {
+            let err = core.allow_device(id).unwrap_err().to_string();
+            assert!(!err.contains("MAC"), "refused for the wrong reason: {err}");
+            assert!(core.allowed_json() == "[]", "nothing may be trusted");
+        }
+    }
+
     #[tokio::test]
     async fn a_stale_expiry_is_a_no_op_and_set_visible_cancels() {
         let mut core = test_core();
