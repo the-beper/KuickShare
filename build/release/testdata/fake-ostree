@@ -73,6 +73,17 @@ def main():
         os.makedirs(os.path.join(repo, "refs", "heads"), exist_ok=True)
         os.makedirs(os.path.join(repo, "objects"), exist_ok=True)
     elif command == "refs":
+        create = [r for r in rest if r.startswith("--create=")]
+        if create:
+            # Like ostree: a new ref for an existing commit; an existing ref is an error.
+            ref = create[0].split("=", 1)[1]
+            commit = [r for r in rest if not r.startswith("--")][0]
+            if not os.path.isfile(commit_path(repo, commit)):
+                die("refs: no commit %s" % commit)
+            if os.path.isfile(os.path.join(repo, "refs", "heads", ref)):
+                die("refs: %s already exists" % ref)
+            write_ref(repo, ref, commit)
+            return
         base = os.path.join(repo, "refs", "heads")
         for root, _, files in os.walk(base):
             for name in sorted(files):
@@ -91,13 +102,16 @@ def main():
         rest = [r for r in rest if not r.startswith("--")]
         src, refs = rest[0], rest[1:]
         for ref in refs:
+            # Like ostree: a ref name is copied with its ref, a bare checksum only as objects.
+            named = os.path.isfile(os.path.join(src, "refs", "heads", ref))
             commit = read_ref(src, ref)
             os.makedirs(os.path.join(repo, "objects"), exist_ok=True)
             for suffix in (".commit", ".commitmeta"):
                 path = os.path.join(src, "objects", commit + suffix)
                 if os.path.exists(path):
                     shutil.copy(path, os.path.join(repo, "objects", commit + suffix))
-            write_ref(repo, ref, commit)
+            if named:
+                write_ref(repo, ref, commit)
     elif command == "fake-commit":
         ref, body = rest[0], rest[1]
         path = os.path.join(repo, "refs", "heads", ref)

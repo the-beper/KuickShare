@@ -24,6 +24,8 @@ tools=dist/tmp/flatpak-builder-tools
 # (VS Code, rust-analyzer) walk the whole home through it: keep it in the volume, not in the workspace.
 builder=/var/lib/flatpak/builder
 repo=$(readlink -m "${KUICKSHARE_FLATPAK_REPO:-dist/flatpak-repo}")
+# A repository cloned from gh-pages lacks its empty directories (git keeps none).
+if [ -d "$repo" ]; then mkdir -p "$repo/refs/heads" "$repo/refs/mirrors" "$repo/refs/remotes" "$repo/tmp"; fi
 
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 mkdir -p dist/tmp
