@@ -153,15 +153,48 @@ The maintainer's `.claude/` setup has a `translator` agent that fills the new en
 
 ## Releases
 
+### Making a release
+
 1. Set the new version in `Cargo.toml`, `src/shell/CMakeLists.txt` and the `<releases>` block of `data/io.github.the_beper.KuickShare.metainfo.xml`, where the release notes go in the `<description>` of the new `<release>`.
-2. Tag it `vX.Y.Z`, matching the version, and push the tag.
+2. Push the commit to `main` and wait until the CI run on it is green (its `required` check).
+3. Tag that commit `vX.Y.Z`, matching the version, and push only the tag.
+4. Approve the `release-signing` environment when the run asks for it.
 
-The tag triggers [`release.yml`](.github/workflows/release.yml): it builds the AppImage and the tarball, checks that their version matches the tag, tests them and publishes them with the `.zsync` file and a `SHA256SUMS` file. It then builds the Flatpak, attaches the bundle and updates the repository on GitHub Pages.
+Do not create the release in the GitHub UI or with `gh release create`: the release workflow creates a draft, uploads the files and publishes it last. A release you publish by hand is public without its files (the AppImage update link would point at nothing); if one exists, the workflow only adds what is missing and warns.
 
-One-time setup for the Flatpak repository:
+The tag triggers [`release.yml`](.github/workflows/release.yml), one run for one commit (`github.sha`), one release at a time:
 
-1. Create a signing key without a passphrase and store its private part as the repository secret `FLATPAK_GPG_PRIVATE_KEY`: generate it in a scratch keyring (`export GNUPGHOME=$(mktemp -d)`) with `gpg --batch --pinentry-mode loopback --passphrase '' --quick-gen-key "KuickShare Flatpak" default default never`, then `gpg --armor --export-secret-keys "KuickShare Flatpak" | gh secret set FLATPAK_GPG_PRIVATE_KEY`. Keep a copy: a new key means every user must re-add the remote.
-2. After the first release, set Settings, Pages to deploy from the `gh-pages` branch (root).
+| Job | What it does | Rights |
+|---|---|---|
+| `validate` | the tag is `vX.Y.Z`, equals the version in `Cargo.toml`, `CMakeLists.txt` and the first metainfo `<release>`, points to the commit of the run, which is on `main` (`build/release/check-version.sh`) | read |
+| `ci-gate` | waits up to 20 minutes for the `required` check of CI on that commit | read |
+| `build-appimage`, `build-tarball`, `build-flatpak` | build and smoke-test with the version of the tag; the Flatpak commits are exported unsigned onto an anonymous clone of `gh-pages` | read; no secret |
+| `verify` | exactly the four files, their hashes against the build jobs, the tarball layout and `VERSION`, the `.zsync` header against the AppImage; writes `SHA256SUMS` (those four files) | read |
+| `sign-flatpak` | the only job with the signing key (environment `release-signing`): signs the commits and finishes the repository in a temporary keyring, checks it as a client, requires the `GPGKey` to be unchanged | read; key |
+| `publish` | draft release, missing assets, `gh-pages`, wait for Pages, then publishes (`build/release/publish.sh`) | write |
+
+`build/release/simulate.sh` runs these scripts against fakes of `gh`, `flatpak`, `ostree` and `curl` with ephemeral GnuPG keys (CI runs it in `lint`). Order and states: assets are uploaded to the draft first, then `gh-pages` is pushed as one orphan commit (the old one stays as the branch `gh-pages-previous`), then Pages is polled until it serves the new `summary` and `summary.sig`, then the draft is published as latest. The Release and the Flatpak repository are not one transaction; the only visible gap is some minutes where Flatpak users have the new version before the Release is public.
+
+### When a run fails
+
+- Fix a transient problem and use "Re-run failed jobs": `publish` is idempotent (same asset content is skipped, a different one stops the run, nothing is overwritten; `gh-pages` is pushed only if it is not already the new site). To rebuild, "Re-run all jobs".
+- `stale base` (exit 3 in `sign-flatpak` or `publish`): another release changed `gh-pages` after the build; re-run all jobs.
+- `ci-gate` fails: CI is red or missing on the tagged commit. Fix on `main`, then tag the new commit. Do not move a tag that was pushed: delete it and push a new one only if no release exists for it.
+- An asset with different content on the release (`refusing to overwrite`): look at why; delete that asset by hand only if it is the wrong one, then re-run `publish`.
+- Rollback of a bad Flatpak repository: `git fetch origin gh-pages-previous && git push --force origin FETCH_HEAD:gh-pages`, then `gh release edit vX.Y.Z --draft=true`. Clients that already updated keep the new commit; fix forward with a new version.
+
+### One-time setup (needs a repository admin)
+
+These are GitHub settings; nothing in the workflows can do them.
+
+1. Before the first run of this workflow: create the environment `release-signing` (Settings, Environments), deployment branches and tags limited to the tag rule `v*`, required reviewer `the-beper` (self-review allowed). Put the signing key in it: `gh secret set FLATPAK_GPG_PRIVATE_KEY --env release-signing` with the armored secret key without a passphrase, from the offline copy of the key (its fingerprint must be the one of `build/flatpak/signing-key.asc`, `716F76876E67220B72383C99D141D5EC71EE9E68`; the job refuses any other). A new key means every user must re-add the remote. **A job that names an environment that does not exist makes GitHub create it without protection, and the repository secret of the same name stays readable by every workflow until it is deleted.**
+2. After the first green release: `gh secret delete FLATPAK_GPG_PRIVATE_KEY` (the repository-level secret).
+3. Ruleset for tags `v*`: block updates, deletions and non-fast-forward pushes; only admins may create them.
+4. Ruleset for `main`: required status check `required` (source GitHub Actions), no force-push, no deletion (admin bypass if you keep pushing to `main`).
+5. Settings, Actions: keep the default `GITHUB_TOKEN` read-only and the approval for first-time contributors; optionally require full-length commit SHAs for actions.
+6. Settings, Pages: deploy from the `gh-pages` branch (root), after the first release.
+
+Not tested with the real tools: the fakes in `simulate.sh` stand in for `gh`, `flatpak`, `ostree` and Pages. `build/flatpak/test-repo-update.sh` (CI, `flatpak` job) drives a real Flatpak client with an ephemeral key. After the first real release check by hand with the real key: the secret imports and has fingerprint `716F…9E68`; the `GPGKey` of the new `kuickshare.flatpakrepo` is byte-identical to the old one; an existing install updates (`flatpak remote-info --log kuickshare io.github.the_beper.KuickShare` shows the old commit as parent).
 
 ## Proposing changes
 
