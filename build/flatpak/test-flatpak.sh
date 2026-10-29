@@ -4,14 +4,16 @@
 # check the core answers on D-Bus, the tray item registers, the Dolphin entry lands in the host folder, and file
 # forwarding hands a file to the sandbox. Notifications, job progress, the file chooser and Dolphin itself need a
 # real Plasma session.
-# Usage: build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
+# Usage: [KUICKSHARE_EXPECT_VERSION=1.2.3] build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
+# KUICKSHARE_EXPECT_VERSION (optional): the version `--version` must print. main.cpp has no flag of its own: it comes
+# from KAboutData::setupCommandLine, which prints "kuickshare <version>" (a "kuickshare: <version>" line is accepted too).
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)
 image=localhost/kuickshare-flatpak:fedora45
 
 if [ ! -e /run/.containerenv ]; then
     bundle=$(readlink -f "$1")
-    exec podman run --rm --privileged --security-opt label=disable \
+    exec podman run --rm --privileged --security-opt label=disable -e KUICKSHARE_EXPECT_VERSION \
         --device /dev/fuse -v kuickshare-flatpak:/var/lib/flatpak -v "$bundle:/bundle.flatpak:ro" -v "$root/build/flatpak/test-flatpak.sh:/test.sh:ro" \
         -e XDG_RUNTIME_DIR=/run/user/0 \
         "$image" sh -c 'mkdir -p -m 700 /run/user/0 && exec dbus-run-session -- /test.sh /bundle.flatpak'
@@ -28,6 +30,12 @@ mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME"
 
 flatpak install --user -y --noninteractive --bundle "$1" >/dev/null 2>&1 || fail "install"
 echo "ok: installed"
+if [ -n "${KUICKSHARE_EXPECT_VERSION:-}" ]; then
+    out=$(flatpak run --env=QT_QPA_PLATFORM=offscreen "$id" --version 2>&1) || fail "--version failed: $out"
+    printf '%s\n' "$out" | grep -qxF -e "kuickshare $KUICKSHARE_EXPECT_VERSION" -e "kuickshare: $KUICKSHARE_EXPECT_VERSION" \
+        || fail "--version is not $KUICKSHARE_EXPECT_VERSION: $out"
+    echo "ok: version $KUICKSHARE_EXPECT_VERSION"
+fi
 
 # A minimal StatusNotifierWatcher that records what registers with it.
 python3 - >"$HOME/watcher.log" 2>&1 <<'PY' &
