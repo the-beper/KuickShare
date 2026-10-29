@@ -58,6 +58,10 @@ jobs:
           shellcheck --version
           find build scripts -name '*.sh' -print0 | xargs -0 shellcheck --severity=warning
 
+      # The release scripts against fakes of gh, flatpak and ostree, with ephemeral GnuPG keys (build/release/simulate.sh).
+      - name: Release simulation
+        run: build/release/simulate.sh
+
       - name: Install actionlint
         run: |
           dir="$RUNNER_TEMP/actionlint"
