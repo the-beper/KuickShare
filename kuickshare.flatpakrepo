@@ -1,0 +1,8 @@
+[Flatpak Repo]
+Title=KuickShare
+Url=https://the-beper.github.io/KuickShare/repo/
+Homepage=https://github.com/the-beper/KuickShare
+Comment=Quick Share client for KDE Plasma
+Description=Send files, text and links between your Linux desktop and Android phones.
+Icon=https://the-beper.github.io/KuickShare/icon.svg
+GPGKey=mDMEatYe3RYJKwYBBAHaRw8BAQdAvVPNo6qvOpe+mv8d17axDUVb62fBU2aKKGwEekKYRVy0Ekt1aWNrU2hhcmUgRmxhdHBha4iTBBMWCgA7FiEEcW92h25nIgtyODyZ0UHV7HHunmgFAmrWHt0CGwMFCwkIBwICIgIGFQoJCAsCBBYCAwECHgcCF4AACgkQ0UHV7HHunmiCyAEA1VkQofkXfqqFRiAyFaTu4yrtbPdsd1P7KyCDtibnjwQA/3qkJDRsczMU/1Z9vfXelNOwhEPfVYRDAtU8n+c0daABuDgEatYe3RIKKwYBBAGXVQEFAQEHQD2PM8j6tOXNyb40Z5hQZlx3h3EOcdB61+mTcGI4x5l7AwEIB4h4BBgWCgAgFiEEcW92h25nIgtyODyZ0UHV7HHunmgFAmrWHt0CGwwACgkQ0UHV7HHunmicaAD+PYh8W1++129abe+zRRIrO71ZMc6pQEe4B0YXRcC3ukABAIucple2sZrHdRdyo9iNftGjU4FkEX5J8mjP5kHMxk0N
