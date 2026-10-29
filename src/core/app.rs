@@ -30,6 +30,10 @@ use crate::{
     dbus::{self, TransferEvent},
     history::{self, History},
     link::{HotspotPolicy, LinkNotice, NetworkEvent, NmLink},
+    requirements::{
+        EnableVerdict, RequirementsEngine, RequirementsProbe, RuntimeEvidence, SystemEngine,
+        enable_verdict,
+    },
     settings::{self, Settings},
     trust::{self, Trust, TrustEvent},
     wifi_credentials,
@@ -121,6 +125,9 @@ pub struct Core {
     nm: Arc<NmLink>,
     /// What the link reports (a hotspot the firewall did not allow); forwarded as a D-Bus signal.
     link_notices: Option<mpsc::UnboundedReceiver<LinkNotice>>,
+    /// The Wi-Fi requirements engine; it gets the evidence of the hotspot attempts and of the
+    /// firewall consent (see `set_requirements`).
+    requirements: Option<Arc<SystemEngine>>,
     history: SharedHistory,
     trust: Arc<Trust>,
     trust_events: Option<mpsc::UnboundedReceiver<TrustEvent>>,
@@ -172,6 +179,7 @@ impl Core {
             wifi_creds: wifi_credentials::Shared::default(),
             nm: Arc::new(NmLink::new().with_notices(notice_tx)),
             link_notices: Some(link_notices),
+            requirements: None,
             history: Arc::new(StdMutex::new(history)),
             trust,
             trust_events: Some(trust_events),
@@ -185,6 +193,12 @@ impl Core {
         }
     }
 
+    /// Gives the core the requirements engine, before `start`: the link's evidence goes to it, and
+    /// so does every change of the firewall consent.
+    pub fn set_requirements(&mut self, engine: Arc<SystemEngine>) {
+        self.requirements = Some(engine);
+    }
+
     /// Tells the core which mutex it lives in; needed for `watch_lan`.
     pub fn set_handle(&mut self, handle: Weak<Mutex<Core>>) {
         self.handle = handle;
@@ -195,7 +209,11 @@ impl Core {
             tokio::spawn(dbus::forward_trust_events(conn.clone(), events));
         }
         if let Some(notices) = self.link_notices.take() {
-            tokio::spawn(dbus::forward_link_notices(conn.clone(), notices));
+            tokio::spawn(dbus::forward_link_notices(
+                conn.clone(),
+                notices,
+                self.requirements.clone(),
+            ));
         }
         let any = SocketAddr::from(([0, 0, 0, 0], trust::DEFAULT_PORT));
         if let Err(e) = self.trust.listen(any).await {
@@ -413,6 +431,11 @@ impl Core {
         } else {
             HotspotPolicy::TargetedPortOnly
         });
+        if had != allow
+            && let Some(requirements) = &self.requirements
+        {
+            requirements.record(RuntimeEvidence::FirewallConsent(allow));
+        }
         if had && !allow {
             let nm = self.nm.clone();
             tokio::spawn(async move { nm.drop_open_zone_hotspot().await });
@@ -1326,6 +1349,84 @@ impl std::fmt::Display for InsecureNeedsUpgrade {
 
 impl std::error::Error for InsecureNeedsUpgrade {}
 
+/// What `change_wifi_upgrade` found before it wrote, so the caller can emit the right signals.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Change {
+    pub enabled_before: bool,
+    pub insecure_before: bool,
+}
+
+/// Why `change_wifi_upgrade` wrote nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpgradeRefused {
+    /// The consent to an open firewall zone needs the upgrade to be on.
+    InsecureNeedsUpgrade,
+    /// Turning the upgrade on, while the requirements report proves neither sending nor
+    /// receiving can work on this computer.
+    RequirementsBlocked,
+}
+
+impl std::fmt::Display for UpgradeRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InsecureNeedsUpgrade => std::fmt::Display::fmt(&InsecureNeedsUpgrade, f),
+            Self::RequirementsBlocked => f.write_str(
+                "neither sending nor receiving over Wi-Fi can work on this computer now",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for UpgradeRefused {}
+
+impl From<InsecureNeedsUpgrade> for UpgradeRefused {
+    fn from(_: InsecureNeedsUpgrade) -> Self {
+        Self::InsecureNeedsUpgrade
+    }
+}
+
+/// Orders the writers of the Wi-Fi upgrade: a gate that waits for the requirements report must
+/// not let a later write overtake it. Not the `Core` lock, which the report must not hold.
+static UPGRADE_WRITES: Mutex<()> = Mutex::const_new(());
+
+/// The one gate on every write of the Wi-Fi upgrade setting (the method, the legacy property).
+///
+/// Turning the upgrade on (it was off) is judged by the requirements report, which is awaited
+/// *without* the `Core` lock: both directions proven blocked is refused, anything else is saved
+/// (the report only says what to expect). Turning it off is never refused; a write that leaves it
+/// on only changes the consent, which is never granted without `allow_insecure`. The stored value
+/// never follows NetworkManager or BlueZ coming and going: only this call writes it.
+pub async fn change_wifi_upgrade<P: RequirementsProbe>(
+    core: &Mutex<Core>,
+    requirements: &Arc<RequirementsEngine<P>>,
+    enabled: bool,
+    allow_insecure: bool,
+) -> Result<Change, UpgradeRefused> {
+    if allow_insecure && !enabled {
+        return Err(UpgradeRefused::InsecureNeedsUpgrade);
+    }
+    let _ordered = UPGRADE_WRITES.lock().await;
+    let turning_on = enabled && !core.lock().await.settings().wifi_upgrade;
+    if turning_on {
+        let report = requirements.report(false).await;
+        // A refusal rests on facts gathered after the request, not on a cache up to 30 s old or
+        // a run that began earlier.
+        if enable_verdict(&report.capabilities) == EnableVerdict::Reject {
+            let fresh = requirements.report_from_new_run().await;
+            if enable_verdict(&fresh.capabilities) == EnableVerdict::Reject {
+                return Err(UpgradeRefused::RequirementsBlocked);
+            }
+        }
+    }
+    let mut core = core.lock().await;
+    let change = Change {
+        enabled_before: core.settings().wifi_upgrade,
+        insecure_before: core.insecure_hotspot_allowed(),
+    };
+    core.request_wifi_upgrade(enabled, allow_insecure)?;
+    Ok(change)
+}
+
 /// What `release_wifi` works on, taken under the `Core` lock so the D-Bus calls run without it.
 #[must_use]
 pub struct WifiRelease {
@@ -1456,6 +1557,91 @@ mod tests {
         core.request_wifi_upgrade(true, true).unwrap();
         core.request_wifi_upgrade(false, false).unwrap();
         assert!(!core.insecure_hotspot_allowed() && !core.settings().wifi_upgrade);
+    }
+
+    /// A probe whose answers are all the same: nobody there (`blocked`) or no system bus.
+    struct Fixed {
+        blocked: bool,
+    }
+
+    impl RequirementsProbe for Fixed {
+        fn packaging(&self) -> crate::requirements::model::Packaging {
+            crate::requirements::model::Packaging::Native
+        }
+        async fn sandbox(&self) -> crate::requirements::facts::SandboxFacts {
+            Default::default()
+        }
+        async fn bluez(
+            &self,
+            _b: crate::requirements::Budget,
+        ) -> crate::requirements::facts::BluezFacts {
+            use crate::requirements::facts::{BluezFacts, ProbeError};
+            if self.blocked {
+                BluezFacts::default()
+            } else {
+                BluezFacts::failed(ProbeError::BusUnreachable)
+            }
+        }
+        async fn network_manager(
+            &self,
+            _b: crate::requirements::Budget,
+        ) -> crate::requirements::facts::NmFacts {
+            use crate::requirements::facts::{NmFacts, ProbeError};
+            if self.blocked {
+                NmFacts::default()
+            } else {
+                NmFacts::failed(ProbeError::BusUnreachable)
+            }
+        }
+        async fn firewall(
+            &self,
+            _b: crate::requirements::Budget,
+        ) -> crate::requirements::facts::FirewallFacts {
+            Default::default()
+        }
+        async fn dhcp(
+            &self,
+            _p: crate::requirements::model::Packaging,
+        ) -> crate::requirements::facts::DhcpFacts {
+            Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn the_gate_refuses_only_a_proven_block_and_only_turning_on() {
+        let core = Mutex::new(test_core());
+        let blocked = RequirementsEngine::new(Fixed { blocked: true }, Default::default());
+        let unknown = RequirementsEngine::new(Fixed { blocked: false }, Default::default());
+
+        // Both directions proven blocked: nothing changes.
+        assert_eq!(
+            change_wifi_upgrade(&core, &blocked, true, false).await,
+            Err(UpgradeRefused::RequirementsBlocked)
+        );
+        assert!(!core.lock().await.settings().wifi_upgrade);
+        // The consent without the upgrade is refused before anything is judged.
+        assert_eq!(
+            change_wifi_upgrade(&core, &blocked, false, true).await,
+            Err(UpgradeRefused::InsecureNeedsUpgrade)
+        );
+        // Unknown never blocks.
+        let change = change_wifi_upgrade(&core, &unknown, true, true)
+            .await
+            .unwrap();
+        assert!(!change.enabled_before && !change.insecure_before);
+        assert!(core.lock().await.settings().wifi_upgrade);
+        assert!(core.lock().await.insecure_hotspot_allowed());
+        // Already on: not checked again, only the consent changes.
+        let change = change_wifi_upgrade(&core, &blocked, true, false)
+            .await
+            .unwrap();
+        assert!(change.enabled_before && change.insecure_before);
+        assert!(!core.lock().await.insecure_hotspot_allowed());
+        // Off is always allowed.
+        change_wifi_upgrade(&core, &blocked, false, false)
+            .await
+            .unwrap();
+        assert!(!core.lock().await.settings().wifi_upgrade);
     }
 
     #[tokio::test]

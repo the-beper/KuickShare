@@ -9,5 +9,6 @@ src/shell/qml/SendPage.qml
 src/shell/qml/SettingsPage.qml
 src/shell/qml/ShortcutsDialog.qml
 src/shell/qml/TransfersPage.qml
+src/shell/qml/WifiRequirementsDialog.qml
 src/shell/transferjob.cpp
 src/shell/transferwatcher.cpp

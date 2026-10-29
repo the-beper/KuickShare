@@ -2,7 +2,7 @@
 
 The core daemon `kuickshared` exposes everything the shell does through one object on the session bus. Any other client can use it the same way. Design and security model: [architecture.md](architecture.md). End-user guide: [usage.md](usage.md).
 
-Contents: [Trying it](#trying-it) · [Methods](#methods) · [Properties](#properties) · [Signals](#signals) ([TransferUpdated](#transferupdated), [DeviceFound](#devicefound)) · [Answer errors](#answer-errors) · [Transfer states](#transfer-states) · [JSON results](#json-results) ([History](#history), [Paired computers](#paired-computers), [Always-accepted devices](#always-accepted-devices)) · [Behaviour](#behaviour) ([Pairing and the trust port](#pairing-and-the-trust-port)) · [How the shell uses it](#how-the-shell-uses-it) · [Guaranteed by tests](#guaranteed-by-tests)
+Contents: [Trying it](#trying-it) · [Methods](#methods) · [Properties](#properties) · [Signals](#signals) ([TransferUpdated](#transferupdated), [DeviceFound](#devicefound)) · [Answer errors](#answer-errors) · [Transfer states](#transfer-states) · [JSON results](#json-results) ([History](#history), [Paired computers](#paired-computers), [Always-accepted devices](#always-accepted-devices), [Wi-Fi requirements report](#wi-fi-requirements-report)) · [Behaviour](#behaviour) ([Pairing and the trust port](#pairing-and-the-trust-port)) · [How the shell uses it](#how-the-shell-uses-it) · [Guaranteed by tests](#guaranteed-by-tests)
 
 | | |
 |---|---|
@@ -71,7 +71,8 @@ Bluetooth devices are listed only while `WifiUpgrade` is on, can be sent to but 
 | `JoinNetwork` | `(s transfer_id)` | Join the Wi-Fi network received in a finished inbound transfer (`payload_kind` `WiFi`). Needs NetworkManager. The core keeps the password only in memory ([architecture.md](architecture.md#wi-fi-credentials-from-a-phone)); it is never on the bus. The network becomes a saved connection that reconnects by itself, and replaces the current Wi-Fi connection of the one Wi-Fi device. WPA/WPA2 and open networks only. On success the credentials are forgotten | Unknown, expired (10 minutes) or already used `transfer_id`; WEP or unknown security type; a transfer is in progress; a Wi-Fi upgrade is running; no Wi-Fi device; the SSID starts with `kuickshare-`; the key is a 64-hex PSK (only 8 to 63 character passphrases are accepted); NetworkManager failed or did not connect within 15 s (the profile is removed and the previous connection restored). Messages never contain the password. The join runs to the end even if the caller goes away. Like `Accept`, any process of the same user on the session bus can call it for a transfer id that has stored credentials. A transfer started during the join (up to about 15 s) can lose its connection. If the SSID already has a NetworkManager profile, a second one is added (existing profiles are not looked up) |
 | `StartDiscovery` | `()` | Start looking for nearby devices; reported by `DeviceFound` / `DeviceLost`. Does nothing if already on | Service not running |
 | `FirewallManaged` | `() -> b` | Whether firewalld is running on the system bus. When it is not, the core cannot open the one port of the hotspot and refuses the hotspot (`WifiUpgradeBlocked`, `firewall_missing`) unless the session consent was given; the shell asks before turning the setting on when this is `false`. It says nothing about whether firewalld will accept the change (polkit) | none |
-| `RequestWifiUpgrade` | `(b enabled, b allow_insecure_hotspot)` | The one call that sets `WifiUpgrade` together with the firewall consent. `enabled` is saved. `allow_insecure_hotspot` lets the computer's hotspot use an open firewall zone when its port cannot be opened (firewalld refused: `trusted` zone; firewalld missing: the zone is left to NetworkManager, so another firewall may still block the phone), for this session only: it is kept in memory and shown by `InsecureHotspotAllowed`. Any other write to the upgrade takes it back: this call with `false`, a write of the `WifiUpgrade` property, `ResetSettings`, a restart of the daemon. Taking it back also takes down a hotspot that runs in an open zone (the transfer goes on over its first channel) | `InvalidArgs` for `(false, true)` (consent without the upgrade), nothing changed |
+| `RequestWifiUpgrade` | `(b enabled, b allow_insecure_hotspot)` | The one call that sets `WifiUpgrade` together with the firewall consent. `enabled` is saved. `allow_insecure_hotspot` lets the computer's hotspot use an open firewall zone when its port cannot be opened (firewalld refused: `trusted` zone; firewalld missing: the zone is left to NetworkManager, so another firewall may still block the phone), for this session only: it is kept in memory and shown by `InsecureHotspotAllowed`. Any other write to the upgrade takes it back: this call with `false`, a write of the `WifiUpgrade` property, `ResetSettings`, a restart of the daemon. Taking it back also takes down a hotspot that runs in an open zone (the transfer goes on over its first channel). Turning the setting on (it was off) is judged by the [requirements report](#wi-fi-requirements-report): when sending and receiving are both `unavailable` it is refused, but only if a check that started after the request says so too (an old cached report is never enough to refuse); when one direction works, or something could not be checked, it is saved. Turning it off is never refused. The stored value is written only by this call and by the legacy `WifiUpgrade` write: it never changes because NetworkManager or BlueZ appears or disappears | `InvalidArgs` for `(false, true)` (consent without the upgrade); `io.github.the_beper.KuickShare1.Error.RequirementsBlocked` when turning on while both directions are proven blocked (see [Wi-Fi upgrade errors](#wi-fi-upgrade-errors)). Nothing changed in both cases |
+| `WifiRequirements` | `(b force_refresh) -> s` | What the Wi-Fi upgrade needs from this computer, as JSON ([report](#wi-fi-requirements-report)). It only reads: it starts no hotspot, scan or prompt and changes nothing in Bluetooth, Wi-Fi or the firewall (what is probed: [wifi-direct.md](wifi-direct.md#checking-the-requirements)). `false` returns the cached report while it is younger than its `ttl_ms` (30 s) and no event has dropped it, otherwise a new check runs. `true` runs a new check, except that the report of a check that ended less than 2 s ago, if still fresh, is returned as it is. A check already running is joined, never doubled. Each D-Bus call of a check is limited to 2 s and the whole check to 6 s. What could not be observed (a service that does not answer, a call refused, a malformed reply, the system bus out of reach) is an `unknown` row with a reason code, not an error. Any client of the session bus can call it and so make the core probe the system services: the 2 s rule keeps forced calls to one run per 2 s | `Failed` only if the document would pass 64 KiB (not expected) |
 | `ScanBluetooth` | `()` | Run one more Bluetooth LE scan window (a few seconds) for phones in Receive mode; results arrive as `DeviceFound`. The scan starts at once, then LAN devices that fail two TCP connection attempts of 1.5 s each are dropped (`DeviceLost`) before the call returns, so it can take about 3 s. Nothing is scanned or dropped when discovery is not running. Does nothing without `WifiUpgrade`, a Bluetooth adapter, while a scan or Bluetooth send runs, or within 4 seconds of the previous window | Service not running; discovery is not running |
 | `StopDiscovery` | `()` | Stop looking and forget the devices found so far, so sending to one needs a new `StartDiscovery` | none |
 | `SendFiles` | `(s device_id, as paths)` | Send files to a discovered device. A Bluetooth device is scanned for again first (up to 12 seconds) | Empty list; a path that cannot be read; unknown device; Bluetooth device while `WifiUpgrade` is off; service stopped |
@@ -113,6 +114,18 @@ After the last three, the user can still accept without trusting.
 
 The `consent` value is a guard against stale prompts, not a secret: every client on the session bus can read it from `TransferUpdated` and can call `Accept` without it ([architecture.md](architecture.md#consent-and-the-guard)).
 
+### Wi-Fi upgrade errors
+
+Writes of the Wi-Fi upgrade setting (`RequestWifiUpgrade`, and the legacy write of `WifiUpgrade`) fail with these errors; in all cases nothing changed. Only turning the setting on while it is off is ever refused for its requirements: turning it off, and writing `true` while it is already on, never are.
+
+| Error | From | Meaning |
+|---|---|---|
+| `io.github.the_beper.KuickShare1.Error.RequirementsBlocked` | `RequestWifiUpgrade` | The [requirements report](#wi-fi-requirements-report) proves that neither sending nor receiving can work on this computer now (both capabilities `unavailable`, confirmed by a check that started after the request). The message is human-readable |
+| `org.freedesktop.DBus.Error.AccessDenied` | A write of the `WifiUpgrade` property | The same refusal, in the standard name a property write can carry |
+| `org.freedesktop.DBus.Error.InvalidArgs` | `RequestWifiUpgrade` | The firewall consent was asked for without turning the upgrade on (`(false, true)`) |
+
+One direction usable, or something that could not be checked, is not an error: the setting is saved and the shell shows a warning.
+
 ## Properties
 
 All properties are read-write except `VisibleUntil`, `InsecureHotspotAllowed` and `TrustedDevicesReset`. Persisted ones are saved to `~/.config/kuickshare/settings.json` (JSON keys in snake case, e.g. `history_keep_days`); a partial or missing file falls back to the defaults, an unparsable one is moved to `settings.json.bak`.
@@ -131,7 +144,7 @@ All properties are read-write except `VisibleUntil`, `InsecureHotspotAllowed` an
 | `TrayIcon` | `b` | `true` | yes | Stored only; the shell shows or hides its tray icon |
 | `DolphinIntegration` | `b` | `true` | yes | Stored only; the shell adds or removes the Dolphin entry |
 | `TrustedDevicesEnabled` | `b` | `true` | yes | Whether the [always-accepted list](#always-accepted-devices) is honoured |
-| `WifiUpgrade` | `b` | `false` | yes | Let transfers move to a temporary Wi-Fi hotspot (see [Wi-Fi upgrade](wifi-direct.md)); needs NetworkManager. A write here is the legacy form of `RequestWifiUpgrade(enabled, false)`: it never grants the firewall consent and takes back any given, so the hotspot is refused when the firewall cannot open its port |
+| `WifiUpgrade` | `b` | `false` | yes | Let transfers move to a temporary Wi-Fi hotspot (see [Wi-Fi upgrade](wifi-direct.md)); needs NetworkManager. A write here is the legacy form of `RequestWifiUpgrade(enabled, false)`: it never grants the firewall consent and takes back any given, so the hotspot is refused when the firewall cannot open its port. The same gate as `RequestWifiUpgrade` applies: turning it on while both directions are proven blocked fails with `org.freedesktop.DBus.Error.AccessDenied` ([errors](#wi-fi-upgrade-errors)) |
 | `InsecureHotspotAllowed` | `b` | `false` | no | Read-only. The user allowed the hotspot an open firewall zone for this session (see `RequestWifiUpgrade`). Never saved: `false` after every start, and after `ResetSettings` or any write to the upgrade without the consent |
 | `TrustedDevicesReset` | `b` | `false` | yes | Read-only. `true` from the start after an upgrade that deleted the trusted devices of an older version (once, only if there were any: they were recognised by name and address alone, which can be copied), until `AcknowledgeTrustedDevicesReset`. Kept in `settings.json`, so a restart before the user saw the notice does not lose it |
 
@@ -148,6 +161,7 @@ All properties are read-write except `VisibleUntil`, `InsecureHotspotAllowed` an
 | `PairingFinished` | `(b ok, s peer, s message)` | A pairing ended. `message` is empty on success |
 | `TrustedChanged` | `()` | The paired computers list changed (pairing completed or `Unpair`) |
 | `WifiUpgradeBlocked` | `(s reason)` | The firewall did not allow the computer's hotspot, so the transfer stays on its first channel (Bluetooth, very slow). `reason`: `firewall_denied` (firewalld is running but refused to open the port, or failed in another way) or `firewall_missing` (firewalld is not running or not reachable). More codes may be added, so treat an unknown one as a refusal. Not emitted when the session consent let the hotspot start in an open zone. The shell offers that consent in a box ([wifi-direct.md](wifi-direct.md#requirements)) |
+| `WifiRequirementsChanged` | `(s report_json)` | A check of `WifiRequirements` ended with a different result: the capabilities, the rows, `packaging`, `core_version` or `ttl_ms` differ from the previous report; the time of the check does not count, so a repeat of the same result is silent. `report_json` is the same document `WifiRequirements` returns. A check starts by itself, after a pause, when a service the report looks at appears or vanishes, a Bluetooth or Wi-Fi state changes, or the hotspot or firewall showed how they work ([what triggers it](wifi-direct.md#when-the-report-is-refreshed)). Not emitted for the first report the core builds (whoever asked for it has it), and nothing refreshes before a first report was asked for, so a client that starts later reads the current one with `WifiRequirements` |
 
 A restart of sharing (name, port, reset) forgets the discovered devices without emitting `DeviceLost`; discovery continues if it was on.
 
@@ -286,6 +300,39 @@ sequenceDiagram
 
 An incoming transfer is accepted without asking only if `TrustedDevicesEnabled` is on and both the advertised name and the MAC the kernel has for the sender's address, read once when the prompt opened, match an entry. A different MAC, an unknown MAC (other network, IPv6) or an empty name means the user is asked as usual. No signal is emitted when the list changes. Name and MAC can be copied by anyone on the same network ([architecture.md](architecture.md#trusted-devices-by-name-and-mac)); the lists of older versions were deleted once for that reason (`TrustedDevicesReset`).
 
+### Wi-Fi requirements report
+
+`WifiRequirements()` and `WifiRequirementsChanged` carry one JSON object, schema version 1 (the field names are snake case). The meaning of each requirement and how its status is judged is in [wifi-direct.md](wifi-direct.md#checking-the-requirements); this is the shape. Shortened example, a real report lists every row:
+
+```json
+{"schema_version":1,"generated_at_ms":1760795000123,"ttl_ms":30000,"packaging":"native","core_version":"1.0.0","capabilities":{"sending":"available","receiving":"degraded","join_network":"available"},"requirements":[{"id":"wifi.dhcp","status":"warning","category":"critical","reason_code":"not_found","details":"dnsmasq","device":null,"verification":"dnsmasq at the standard paths, or a hotspot that started this session","affects":["receiving"]}]}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `schema_version` | number | `1`. A change that old readers cannot ignore raises it; a reader should refuse another value |
+| `generated_at_ms` | number | Wall clock of the core when the check ended, milliseconds since the Unix epoch. Not an order: it can go back if the clock does |
+| `ttl_ms` | number | How long the core serves this report from its cache, in milliseconds (see `WifiRequirements`); readers take it as the time after which the report is out of date |
+| `packaging` | string | `flatpak`, `appimage` or `native`: how the daemon is installed, which decides which sandbox rows exist |
+| `core_version` | string | Version of the daemon |
+| `capabilities` | object | `sending`, `receiving`, `join_network`, each `available`, `degraded` (works with a limit), `unavailable` or `unknown` |
+| `requirements` | array | The rows, in a fixed order (BlueZ, NetworkManager, Wi-Fi, firewall, sandbox) |
+
+A row:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Stable id such as `bluez.adapter`; the list is in [wifi-direct.md](wifi-direct.md#the-requirements) |
+| `status` | string | `ready`, `warning`, `blocked` or `unknown`. `checking` is accepted by readers but the core never emits it |
+| `category` | string | `critical`, `warning`, `security` or `info`: how much the row weighs in the capabilities |
+| `reason_code` | string | Stable code such as `rfkill_blocked`; `ok` (or another success word such as `binary_present`) for a ready row. More codes may be added: treat an unknown one as "no more information" |
+| `details` | string | Fixed words, numbers and version strings (for example `network-control=auth`); possibly empty |
+| `device` | string or `null` | An interface or adapter name only |
+| `verification` | string | How the row was checked, in fixed words |
+| `affects` | array of strings | The capabilities the row feeds: `sending`, `receiving`, `join_network`; empty for a row that feeds none |
+
+Limits, kept by the core when it writes and checked again by the shell when it reads: at most 64 rows and 64 KiB for the document (the shell treats more of either as an unreadable report); `details` and `verification` at most 200 characters, `device` at most 32 (the shell cuts longer text). The core removes control characters, invisible format characters and `<` `>` from the text fields. `details` and `device` never carry SSIDs, MAC addresses, IP addresses, passwords or names of remote devices; an interface name that contains a run of twelve or more hexadecimal digits (such as `wlx` followed by a MAC address) has the run replaced by an ellipsis.
+
 ## Behaviour
 
 | Topic | Behaviour |
@@ -313,7 +360,7 @@ Pairing and paired-computer checks use a separate fixed TCP port (see [architect
 
 ## How the shell uses it
 
-`src/shell/corebridge.cpp` starts `kuickshared`, watches the bus name for owner changes, reads all properties and the three JSON lists when the core appears, and subscribes to all seven signals. It answers prompts with `AnswerTransfer` and the `consent` of the latest event of the transfer (a token of 0 is refused without asking the core), closes a prompt when the core says `NotWaiting`, `Expired` or `StaleToken`, keeps it when the sender cannot be trusted (it then offers no "Accept and trust"), shows the `reason` of a refused offer in a notification, shows the `TrustedDevicesReset` notice until `AcknowledgeTrustedDevicesReset`, and shows a box on `WifiUpgradeBlocked` that offers the session consent through `RequestWifiUpgrade`. It reloads the paired computers on `TrustedChanged`, calls `HistorySize` after a transfer ends to warn about a big history, sets `Suspended` from Do Not Disturb, and stops discovery 30 seconds after the Send page is left.
+`src/shell/corebridge.cpp` starts `kuickshared`, watches the bus name for owner changes, reads all properties and the three JSON lists when the core appears, and subscribes to all eight signals. It answers prompts with `AnswerTransfer` and the `consent` of the latest event of the transfer (a token of 0 is refused without asking the core), closes a prompt when the core says `NotWaiting`, `Expired` or `StaleToken`, keeps it when the sender cannot be trusted (it then offers no "Accept and trust"), shows the `reason` of a refused offer in a notification, shows the `TrustedDevicesReset` notice until `AcknowledgeTrustedDevicesReset`, and shows a box on `WifiUpgradeBlocked` that offers the session consent through `RequestWifiUpgrade`. It asks `WifiRequirements` (without `force_refresh` when the Preferences page opens or the core appears, after a change of the switch, and when the requirements dialog opens with no report or an out-of-date one; with it on the dialog's Refresh button), applies `WifiRequirementsChanged` at once, reads the document with its own limits and never judges the services itself, and treats `RequirementsBlocked` as a refusal of the switch. It reloads the paired computers on `TrustedChanged`, calls `HistorySize` after a transfer ends to warn about a big history, sets `Suspended` from Do Not Disturb, and stops discovery 30 seconds after the Send page is left.
 
 ## Guaranteed by tests
 

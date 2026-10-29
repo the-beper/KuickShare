@@ -13,6 +13,7 @@
 #include <functional>
 
 #include "devicemodel.h"
+#include "requirementsreport.h"
 #include "transferfiltermodel.h"
 #include "transfermodel.h"
 
@@ -57,6 +58,13 @@ class CoreBridge : public QObject
     Q_PROPERTY(bool hideWhenDnd READ hideWhenDnd WRITE setHideWhenDnd NOTIFY hideWhenDndChanged)
     Q_PROPERTY(QVariantList trustedDevices READ trustedDevices NOTIFY trustedDevicesChanged)
     Q_PROPERTY(QVariantList allowedDevices READ allowedDevices NOTIFY allowedDevicesChanged)
+    /// What the core last reported about what Wi-Fi Direct needs on this computer, ready to show: `valid`, `stale`,
+    /// `error` ("", "unavailable" or "schema"), `generatedAtMs`, `ttlMs`, `packaging`, `coreVersion`, `capabilities`
+    /// (`sending`, `receiving`, `joinNetwork`, each `status` and `label`) and `sections` (`key`, `title`, `rows`).
+    /// A report from before a core restart is never shown as current: it is marked `stale`.
+    Q_PROPERTY(QVariantMap wifiRequirements READ wifiRequirements NOTIFY wifiRequirementsChanged)
+    /// A check of the requirements is waiting for the core.
+    Q_PROPERTY(bool wifiRequirementsBusy READ wifiRequirementsBusy NOTIFY wifiRequirementsBusyChanged)
 
 public:
     explicit CoreBridge(QObject *parent = nullptr);
@@ -98,6 +106,8 @@ public:
     bool menuEntry() const;
     QVariantList trustedDevices() const { return m_trustedDevices; }
     QVariantList allowedDevices() const { return m_allowedDevices; }
+    QVariantMap wifiRequirements() const { return m_wifiRequirements; }
+    bool wifiRequirementsBusy() const { return m_wifiRequirementsBusy; }
 
     void setVisible(bool visible);
     /// Visible for `seconds` whatever `visible` says; 0 cancels.
@@ -110,12 +120,15 @@ public:
     void setHistoryEnabled(bool enabled);
     void setTrayIcon(bool show);
     void setTrustedDevicesEnabled(bool enabled);
+    /// The same as `requestWifiUpgrade(enabled, false)`: nothing is shown as changed until the core confirms it.
     void setWifiUpgrade(bool enabled);
     /// Turns the Wi-Fi upgrade on, or emits `firewallWarning` first when firewalld is not running (the
     /// user must then agree to the hotspot using an open zone) and waits for the answer.
     Q_INVOKABLE void enableWifiUpgrade();
     /// The core's `RequestWifiUpgrade`: `enabled` is saved; `allowInsecure` allows the hotspot an open firewall zone for
-    /// this session only (needs `enabled`). Any write without it takes a given consent back.
+    /// this session only (needs `enabled`). Any write without it takes a given consent back. The saved value is only
+    /// read back from the core; when it refuses, `wifiUpgradeChanged` is emitted (so a switch shows the real value) and
+    /// `wifiUpgradeRefused` says why.
     Q_INVOKABLE void requestWifiUpgrade(bool enabled, bool allowInsecure);
     void setDolphinIntegration(bool enabled);
     /// AppImage only: writes or removes the application menu entry (no first-start question is asked afterwards).
@@ -196,6 +209,14 @@ public:
     Q_INVOKABLE void openLink(const QString &url) const;
     /// True when `path` may be opened: a plain, non-executable file inside the download folder.
     Q_INVOKABLE bool fileExists(const QString &path) const;
+    /// Asks the core what Wi-Fi Direct needs here (the core's cache is used while it is fresh); the result is
+    /// `wifiRequirements`.
+    Q_INVOKABLE void loadWifiRequirements() { requestWifiRequirements(false); }
+    /// The same, but the core checks again (at most every few seconds).
+    Q_INVOKABLE void refreshWifiRequirements() { requestWifiRequirements(true); }
+    /// Puts a plain-text report of the last result on the clipboard: versions, packaging, time, statuses and reason
+    /// codes; no names, addresses or other details of this computer.
+    Q_INVOKABLE void copyWifiRequirementsReport();
     /// Opens a local file with the default application.
     Q_INVOKABLE void openFile(const QString &path) const;
     /// Asks the core to join the Wi-Fi network received in a finished transfer (it keeps the password).
@@ -225,6 +246,11 @@ Q_SIGNALS:
     void trustedDevicesEnabledChanged();
     void trustedDevicesResetChanged();
     void wifiUpgradeChanged();
+    void wifiRequirementsChanged();
+    void wifiRequirementsBusyChanged();
+    /// The core did not change the Wi-Fi upgrade. `reason` is `requirements_blocked` (neither sending nor receiving
+    /// can work, see `wifiRequirements`), `service_unavailable` (no core to ask) or `failed` (`errorOccurred` explains).
+    void wifiUpgradeRefused(const QString &reason);
     void insecureHotspotAllowedChanged();
     void firewallWarning();
     /// The firewall did not allow the hotspot, so the transfer stays on Bluetooth. `reason` is a code of the core
@@ -261,6 +287,7 @@ private Q_SLOTS:
     void onPairingCode(const QString &code, const QString &peer) { emit pairingCode(code, plain(peer)); }
     void onPairingFinished(bool ok, const QString &peer, const QString &message) { emit pairingFinished(ok, plain(peer), plain(message)); }
     void onWifiUpgradeBlocked(const QString &reason) { emit wifiUpgradeBlocked(reason); }
+    void onWifiRequirementsSignal(const QString &json);
     void loadTrustedDevices();
     void loadAllowedDevices();
     void onServiceRegistered();
@@ -275,6 +302,13 @@ private:
     void callAsync(const QDBusMessage &message, const std::function<void()> &onSuccess = {}, const std::function<void()> &onError = {});
     void setRemoteProperty(const QString &name, const QVariant &value);
     void refreshProperties();
+    void requestWifiRequirements(bool force);
+    /// Shows `report` as the current result and schedules the moment it goes stale.
+    void adoptRequirements(const RequirementsReport::Parsed &report);
+    /// The report on show (if any) is no longer current; `error` is "", "unavailable" or "schema".
+    void markRequirementsStale(const QString &error);
+    void rebuildRequirementsMap();
+    void setRequirementsBusy(bool busy);
     void loadHistory();
     void startCore();
     void loadHistorySize();
@@ -314,4 +348,12 @@ private:
     int m_staticPort = 0;
     QString m_deviceName;
     QString m_downloadDir;
+    QVariantMap m_wifiRequirements;
+    bool m_wifiRequirementsBusy = false;
+    RequirementsReport::RequestTracker m_requirementsTracker;
+    RequirementsReport::Parsed m_requirementsReport;
+    bool m_requirementsHasReport = false;
+    bool m_requirementsStale = true;
+    QString m_requirementsError;
+    QTimer m_requirementsStaleTimer;
 };

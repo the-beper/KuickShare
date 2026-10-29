@@ -17,7 +17,7 @@ use rqs_lib::{
     hdl::info::TransferPayload,
 };
 use tokio::{
-    sync::{Mutex, broadcast, mpsc},
+    sync::{Mutex, broadcast, mpsc, watch},
     task::JoinHandle,
 };
 use zbus::{
@@ -28,11 +28,13 @@ use zbus::{
 use crate::{
     allowed::{self, Allowed},
     app::{
-        ActiveTransfers, Core, Endpoints, Redirects, SharedHistory, TrustedIps, needs_lan_retry,
+        ActiveTransfers, Core, Endpoints, Redirects, SharedHistory, TrustedIps, UpgradeRefused,
+        change_wifi_upgrade, needs_lan_retry,
     },
     consent::{Answer, By, ConsentError, Consents, Opened},
     history::{self, HistoryEntry},
     link::LinkNotice,
+    requirements::{RequirementsReport, SystemEngine},
     safety,
     trust::{self, Trust, TrustEvent},
     wifi_credentials,
@@ -47,6 +49,9 @@ struct Service {
     core: SharedCore,
     /// Every answer to an incoming transfer goes through this, not through the `Core` lock.
     consents: Consents,
+    /// The Wi-Fi requirements engine. The report and the gate on the Wi-Fi upgrade go through
+    /// this, never through the `Core` lock.
+    requirements: Arc<SystemEngine>,
 }
 
 fn failed(e: anyhow::Error) -> fdo::Error {
@@ -83,6 +88,60 @@ impl From<ConsentError> for AnswerError {
             ConsentError::NoMac => Self::NoMac(text),
             ConsentError::NoName => Self::NoName(text),
             ConsentError::NotRunning => Self::NotRunning(text),
+        }
+    }
+}
+
+/// `RequestWifiUpgrade` refused because the requirements report proves that neither sending nor
+/// receiving can work on this computer (`<interface>.Error.RequirementsBlocked`).
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "io.github.the_beper.KuickShare1.Error")]
+enum RequirementsError {
+    RequirementsBlocked(String),
+}
+
+/// The errors of `RequestWifiUpgrade`: `InvalidArgs` of the bus, or `RequirementsBlocked`.
+#[derive(Debug)]
+enum UpgradeError {
+    Bus(fdo::Error),
+    Requirements(RequirementsError),
+}
+
+impl zbus::DBusError for UpgradeError {
+    fn create_reply(
+        &self,
+        msg: &zbus::message::Header<'_>,
+    ) -> zbus::Result<zbus::message::Message> {
+        match self {
+            Self::Bus(e) => zbus::DBusError::create_reply(e, msg),
+            Self::Requirements(e) => zbus::DBusError::create_reply(e, msg),
+        }
+    }
+
+    fn name(&self) -> zbus::names::ErrorName<'_> {
+        match self {
+            Self::Bus(e) => zbus::DBusError::name(e),
+            Self::Requirements(e) => zbus::DBusError::name(e),
+        }
+    }
+
+    fn description(&self) -> Option<&str> {
+        match self {
+            Self::Bus(e) => zbus::DBusError::description(e),
+            Self::Requirements(e) => zbus::DBusError::description(e),
+        }
+    }
+}
+
+impl From<UpgradeRefused> for UpgradeError {
+    fn from(e: UpgradeRefused) -> Self {
+        match e {
+            UpgradeRefused::InsecureNeedsUpgrade => {
+                Self::Bus(fdo::Error::InvalidArgs(e.to_string()))
+            }
+            UpgradeRefused::RequirementsBlocked => {
+                Self::Requirements(RequirementsError::RequirementsBlocked(e.to_string()))
+            }
         }
     }
 }
@@ -416,23 +475,25 @@ impl Service {
     }
 
     /// Legacy write: it cannot carry the firewall consent, so it never grants it and takes back
-    /// any given (see `RequestWifiUpgrade`).
+    /// any given (see `RequestWifiUpgrade`). It goes through the same gate: turning the upgrade
+    /// on while the requirements report proves that neither sending nor receiving can work fails
+    /// with `org.freedesktop.DBus.Error.AccessDenied`, and nothing changes.
     #[zbus(property)]
     async fn set_wifi_upgrade(
         &self,
         enabled: bool,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-    ) {
-        let had_consent = {
-            let mut core = self.core.lock().await;
-            let had_consent = core.insecure_hotspot_allowed();
-            // Without consent the request is always valid.
-            let _ = core.request_wifi_upgrade(enabled, false);
-            had_consent
-        };
-        if had_consent {
+    ) -> zbus::Result<()> {
+        let change = change_wifi_upgrade(&self.core, &self.requirements, enabled, false)
+            .await
+            .map_err(|e| match e {
+                UpgradeRefused::RequirementsBlocked => fdo::Error::AccessDenied(e.to_string()),
+                UpgradeRefused::InsecureNeedsUpgrade => fdo::Error::InvalidArgs(e.to_string()),
+            })?;
+        if change.insecure_before {
             let _ = self.insecure_hotspot_allowed_changed(&emitter).await;
         }
+        Ok(())
     }
 
     /// The single way to change the Wi-Fi upgrade together with the firewall consent.
@@ -440,28 +501,41 @@ impl Service {
     /// firewall zone when the firewall refuses to open its one port, for this session only: it is
     /// kept in memory, and any other write to the upgrade (`WifiUpgrade`, `RequestWifiUpgrade`
     /// without it, `ResetSettings`) takes it back. `(false, true)` fails with `InvalidArgs`.
+    /// Turning the upgrade on (it was off) is judged by `WifiRequirements`: when neither sending
+    /// nor receiving can work on this computer it fails with `RequirementsBlocked` (under
+    /// `io.github.the_beper.KuickShare1.Error`) and nothing changes; when only one direction
+    /// works, or something could not be checked, it is saved. Turning it off always works.
     async fn request_wifi_upgrade(
         &self,
         enabled: bool,
         allow_insecure_hotspot: bool,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-    ) -> fdo::Result<()> {
-        // The lock is released before the signals: the getters behind them take it again.
-        let (insecure_before, enabled_before, result) = {
-            let mut core = self.core.lock().await;
-            let insecure_before = core.insecure_hotspot_allowed();
-            let enabled_before = core.settings().wifi_upgrade;
-            let result = core.request_wifi_upgrade(enabled, allow_insecure_hotspot);
-            (insecure_before, enabled_before, result)
-        };
-        result.map_err(|e| fdo::Error::InvalidArgs(e.to_string()))?;
-        if enabled_before != enabled {
+    ) -> Result<(), UpgradeError> {
+        // The `Core` lock is released before the signals: the getters behind them take it again.
+        let change = change_wifi_upgrade(
+            &self.core,
+            &self.requirements,
+            enabled,
+            allow_insecure_hotspot,
+        )
+        .await?;
+        if change.enabled_before != enabled {
             let _ = self.wifi_upgrade_changed(&emitter).await;
         }
-        if insecure_before != allow_insecure_hotspot {
+        if change.insecure_before != allow_insecure_hotspot {
             let _ = self.insecure_hotspot_allowed_changed(&emitter).await;
         }
         Ok(())
+    }
+
+    /// What the Wi-Fi upgrade needs from this computer, as JSON (schema version 1; see
+    /// docs/dbus-api.md). `false` returns the cached report if it is younger than 30 s, otherwise
+    /// checks again; `true` checks again unless a check ended less than 2 s ago. It only reads:
+    /// it never starts a hotspot, scan or prompt, and never changes Bluetooth, Wi-Fi or the
+    /// firewall. What could not be checked is Unknown in the report, not an error (at most 6 s).
+    async fn wifi_requirements(&self, force_refresh: bool) -> fdo::Result<String> {
+        let report = self.requirements.report(force_refresh).await;
+        report.to_json().map_err(failed)
     }
 
     /// Whether the user allowed the computer's hotspot to use an open firewall zone for this
@@ -584,6 +658,16 @@ impl Service {
     /// port) or "firewall_missing" (firewalld is not running). More codes may be added.
     #[zbus(signal)]
     async fn wifi_upgrade_blocked(emitter: &SignalEmitter<'_>, reason: &str) -> zbus::Result<()>;
+
+    /// A check of `WifiRequirements` ended with a different result (the time of the check does
+    /// not count): a service appeared or vanished, the Bluetooth or Wi-Fi state changed, or the
+    /// hotspot or the firewall showed how they work. `report_json` is as `WifiRequirements`
+    /// returns it. Nothing is sent before a first report was asked for.
+    #[zbus(signal)]
+    async fn wifi_requirements_changed(
+        emitter: &SignalEmitter<'_>,
+        report_json: &str,
+    ) -> zbus::Result<()>;
 
     #[zbus(signal)]
     async fn device_lost(emitter: &SignalEmitter<'_>, id: &str) -> zbus::Result<()>;
@@ -772,13 +856,27 @@ fn is_final(state: &TransferState) -> bool {
     )
 }
 
-pub async fn serve(core: SharedCore, consents: Consents) -> Result<Connection> {
-    connection::Builder::session()
+pub async fn serve(
+    core: SharedCore,
+    consents: Consents,
+    requirements: Arc<SystemEngine>,
+) -> Result<Connection> {
+    let reports = requirements.subscribe();
+    let connection = connection::Builder::session()
         .name(BUS_NAME)
-        .serve_at(OBJECT_PATH, Service { core, consents })
+        .serve_at(
+            OBJECT_PATH,
+            Service {
+                core,
+                consents,
+                requirements,
+            },
+        )
         .build()
         .await
-        .with_context(|| format!("failed to own {BUS_NAME} on the session bus"))
+        .with_context(|| format!("failed to own {BUS_NAME} on the session bus"))?;
+    tokio::spawn(forward_requirements(connection.clone(), reports));
+    Ok(connection)
 }
 
 async fn interface_ref(connection: &Connection) -> zbus::Result<InterfaceRef<Service>> {
@@ -1415,22 +1513,62 @@ pub async fn forward_trust_events(
     }
 }
 
-/// Re-emits what the Wi-Fi link reports as D-Bus signals.
+/// Re-emits what the Wi-Fi link reports as D-Bus signals, and hands its evidence (a hotspot that
+/// came up or not, what the firewall did) to the requirements engine.
 pub async fn forward_link_notices(
     connection: Connection,
     mut notices: mpsc::UnboundedReceiver<LinkNotice>,
+    requirements: Option<Arc<SystemEngine>>,
 ) {
     while let Some(notice) = notices.recv().await {
+        let reason = match notice {
+            LinkNotice::Evidence(evidence) => {
+                if let Some(requirements) = &requirements {
+                    requirements.record(evidence);
+                }
+                continue;
+            }
+            LinkNotice::WifiUpgradeBlocked(reason) => reason,
+        };
         let emitted = async {
             let iface = interface_ref(&connection).await?;
-            match notice {
-                LinkNotice::WifiUpgradeBlocked(reason) => {
-                    Service::wifi_upgrade_blocked(iface.signal_emitter(), reason.code()).await
-                }
-            }
+            Service::wifi_upgrade_blocked(iface.signal_emitter(), reason.code()).await
         };
         if let Err(e) = emitted.await {
             tracing::warn!("failed to emit WifiUpgradeBlocked: {e}");
+        }
+    }
+}
+
+/// Emits `WifiRequirementsChanged` when a new report says something other than the one before.
+/// The first report is only remembered: whoever asked for it has it.
+async fn forward_requirements(
+    connection: Connection,
+    mut reports: watch::Receiver<Option<Arc<RequirementsReport>>>,
+) {
+    let mut last = reports.borrow_and_update().clone();
+    while reports.changed().await.is_ok() {
+        let Some(report) = reports.borrow_and_update().clone() else {
+            continue;
+        };
+        let changed = last.as_ref().is_some_and(|l| !l.same_content(&report));
+        last = Some(Arc::clone(&report));
+        if !changed {
+            continue;
+        }
+        let json = match report.to_json() {
+            Ok(json) => json,
+            Err(e) => {
+                tracing::warn!("not emitting WifiRequirementsChanged: {e:#}");
+                continue;
+            }
+        };
+        let emitted = async {
+            let iface = interface_ref(&connection).await?;
+            Service::wifi_requirements_changed(iface.signal_emitter(), &json).await
+        };
+        if let Err(e) = emitted.await {
+            tracing::warn!("failed to emit WifiRequirementsChanged: {e}");
         }
     }
 }
@@ -1515,7 +1653,18 @@ mod tests {
         core.lib_actions().set(Some(lib_tx));
         let consents = core.consents();
         let core = Arc::new(Mutex::new(core));
-        (Service { core, consents }, lib_rx)
+        let requirements = crate::requirements::RequirementsEngine::new(
+            crate::requirements::SystemRequirementsProbe::new(),
+            crate::requirements::EngineConfig::default(),
+        );
+        (
+            Service {
+                core,
+                consents,
+                requirements,
+            },
+            lib_rx,
+        )
     }
 
     fn accepted(message: &ChannelMessage) -> Option<bool> {

@@ -78,7 +78,11 @@ flowchart LR
 | `safety.rs` | The file name rule, re-exported from `rqs_lib::safety` so that the core's guard and the library cannot disagree |
 | `ratelimit.rs` | Per-address connection limit for the trust port |
 | `wifi_credentials.rs` | In-memory store of received Wi-Fi credentials for "Join network" |
+| `persist.rs` | The one way files are written, see [Files on disk](#files-on-disk) |
 | `history.rs`, `settings.rs` | JSON persistence |
+| `requirements/` | The Wi-Fi requirements engine: `facts` (what the probes saw), `rules` (rows and capabilities, pure), `policy` (the gate on turning the upgrade on), `engine` (runs the probes with time limits, caches, joins concurrent callers), `system` (the read-only probe on the system bus), `watch` (drops the cache when a service or device changes), `model` (the JSON report). One engine serves `WifiRequirements`, `WifiRequirementsChanged` and the gate in `change_wifi_upgrade`; it never takes the `Core` lock. See [Checking the requirements](wifi-direct.md#checking-the-requirements) |
+
+Besides the session bus, the core holds two connections to the system bus for the requirements: the probe's (kept between runs, dropped when the bus is gone) and the watcher's (match rules only, no polling). Both are read-only and idle until the first report is asked for; the Wi-Fi link has its own connection.
 
 Settings that restart the engine (device name, static port, reset) are refused while a transfer is active. A transfer with no event for 600 s counts as over, so a lost final event cannot block them forever.
 
@@ -98,7 +102,10 @@ The core is behind one lock, held while a send chooses its route (up to about 8 
 | `devicemodel.*` | Nearby devices |
 | `dndwatcher.*` | Do Not Disturb state |
 | `autostart.*`, `integration.*`, `dolphinmenu.*`, `launcher.h`, `execquote.h` | Autostart and Dolphin entries, first-launch question, `Exec` quoting, AppImage and Flatpak path detection |
-| `qml/` | Pages (Send, Transfers, Settings, Help), dialogs, and `ToastStack.qml`: transient messages shown on whatever page is open |
+| `requirementsreport.h` | Parses and validates the requirements report (schema, size and row limits, text cleaned) and formats the diagnostic report |
+| `qml/` | Pages (Send, Transfers, Settings, Help), dialogs (`WifiRequirementsDialog.qml` among them), and `ToastStack.qml`: transient messages shown on whatever page is open |
+
+UI only renders: the shell parses and validates the requirements report, turns reason codes into texts, and never checks a service itself; a report older than its time to live, or from before a core restart, is shown as out of date.
 
 ## Transfer data flow
 
@@ -194,20 +201,20 @@ The state names come from `rqs_lib` and are passed through unchanged as strings.
 
 ## Files on disk
 
-Paths follow the XDG variables; defaults are shown. Writes go to `<name>.tmp` and are renamed over the target.
+Paths follow the XDG variables; defaults are shown. All four JSON files are written through one helper (`persist.rs`): the bytes go to a uniquely named temporary file `.<name>.<16 hex digits>.tmp` in the same folder, created exclusively with mode 0600, synced, renamed over the target, and the folder synced. `settings.json`, `history.json` and `peers.json` are therefore 0600 after their next save; `identity.json` is written only when it is created, so one made by an older version keeps its mode. At start, leftover temporary files of our own pattern (and the old `<name>.tmp`) are removed. A file that cannot be read or parsed is moved aside to `<name>.bak`, or `<name>.bak.1`, `.bak.2`… when one exists (a backup is never overwritten), and defaults are used. If it cannot be moved, saving that file is refused for the run, so it is never overwritten.
 
 | File | Location | Contents | If unreadable or invalid |
 | --- | --- | --- | --- |
-| `settings.json` | `~/.config/kuickshare/` | All preferences, including the allowed (trusted by name and MAC) list | Renamed to `settings.json.bak`, defaults used |
+| `settings.json` | `~/.config/kuickshare/` | All preferences, including the allowed (trusted by name and MAC) list | Moved aside to `settings.json.bak` (see above), defaults used |
 | `identity.json` | `~/.local/share/kuickshare/` | Long-term Noise key pair, mode 0600, created on first start | The core refuses to start; the file is not touched |
-| `peers.json` | `~/.local/share/kuickshare/` | Paired computers: name, public key, SHA-256 fingerprint, pairing time | Renamed to `peers.json.bak`, no paired computers |
-| `history.json` | `~/.local/share/kuickshare/` | Finished transfers, newest first | Logged and treated as empty; no `.bak`, so the next save overwrites it |
+| `peers.json` | `~/.local/share/kuickshare/` | Paired computers: name, public key, SHA-256 fingerprint, pairing time | Moved aside to `peers.json.bak` (see above), no paired computers |
+| `history.json` | `~/.local/share/kuickshare/` | Finished transfers, newest first | Moved aside to `history.json.bak` (see above), treated as empty |
 | Received files | Setting `download_dir`, else the library default (XDG download dir) | Written by `rqs_lib`: each name is reserved when the transfer is accepted (never overwriting: `name (1).ext`) and written through a directory handle, at most one file open at a time; see [Receive limits](#receive-limits) | An incomplete file is removed on cancel, decline, error, disconnect and timeout, but not after a crash, SIGKILL or power loss |
 | Clipboard images | `<cache>/clipboard/` | PNGs saved to send a pasted image; the shell deletes those older than 1 h at startup | |
 | Autostart entry | `~/.config/autostart/io.github.the_beper.KuickShare.desktop` | Written by the shell setting | |
 | Installation | `~/.local/share/kuickshare/bin/`, `.desktop`, icons, `.mo`, service menu | See [Packaging](#packaging) | |
 
-`--uninstall` keeps the first four rows; `--uninstall --purge` deletes them.
+`--uninstall` keeps the first four rows; `--uninstall --purge` deletes them: the installer removes the whole `kuickshare` folders under the config and data directories, so backups (`.bak`, `.bak.N`) and leftover temporary files go too.
 
 ## Trust model
 
@@ -359,6 +366,7 @@ Assumes the attacker is on the same LAN, or a malicious app runs as the same use
 | mDNS advert makes the core connect to an outside host | Probe only to local addresses | Any local address can be probed (a TCP connect to the trust port) |
 | Theft of the identity key | File mode 0600, written through a private temp file | Not encrypted; another process of the same user can read it |
 | Other process on the session bus calls the API (accept, trust, send, allow the open firewall zone) | None seen in the interface code: no check of the caller. The consent token only guards against stale prompts; `RequestWifiUpgrade` can grant the firewall consent to any caller | Same trust boundary as the user's session |
+| A session client makes the core probe the system services (`WifiRequirements`) | The probes are read-only (`NoAutoStart`, polkit without interaction), one check runs at a time and forced calls are held to one run per 2 s; the report carries no SSIDs, MACs, IPs or device names | Any client of the session bus can still cause a probe and read the report, which says which services are missing. Read-only is by the code and fake-service tests, not observed on real services |
 | Huge metadata bloats the history | Caps on files and text per entry | Entry count is bounded only by age |
 | Rich-text or HTML injection through a remote name or text | Shell escapes names and text in notifications, labels use plain text | See next section |
 | Leak of Wi-Fi password through the history, D-Bus or logs | Only the network name is kept; the password is never written to disk and stays in a bounded in-memory store (`wifi_credentials.rs`) whose `Debug` output is redacted, also in `rqs_lib` | The password is in the core's memory for up to 10 minutes (a process of the same user could read it) |

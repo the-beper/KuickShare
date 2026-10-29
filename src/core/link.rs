@@ -23,6 +23,8 @@ use tokio::{
     time::sleep,
 };
 
+use crate::requirements::RuntimeEvidence;
+
 const AP_PROFILE: &str = "kuickshare-ap";
 const JOIN_PROFILE: &str = "kuickshare-join";
 /// firewalld zone NetworkManager uses for connection sharing: it allows DHCP and DNS only, so the
@@ -577,6 +579,43 @@ macro_rules! proxy_at {
     };
 }
 
+/// Which of the devices (in `GetDevices` order, by `DeviceType`) the runtime uses for the hotspot
+/// and for joining: the first Wi-Fi (not Wi-Fi P2P) one. The one place this is decided: the
+/// requirements report judges the same device (`requirements::system`).
+pub(crate) fn select_wifi_device(types: &[u32]) -> Option<usize> {
+    types.iter().position(|t| *t == DEVICE_TYPE_WIFI)
+}
+
+/// The first Wi-Fi device of `paths` (in `GetDevices` order): the types are read one by one and
+/// reading stops as soon as `select_wifi_device` finds one, so a device that comes after it (a
+/// veth, a bridge or a USB adapter that vanishes meanwhile) is never touched. A device whose type
+/// cannot be read is skipped.
+async fn first_wifi<P, F, Fut>(paths: Vec<P>, mut kind: F) -> Option<P>
+where
+    P: std::fmt::Display + Clone,
+    F: FnMut(P) -> Fut,
+    Fut: std::future::Future<Output = zbus::Result<u32>>,
+{
+    let mut types = Vec::new();
+    let mut read = Vec::new();
+    for p in paths {
+        match kind(p.clone()).await {
+            Ok(t) => {
+                types.push(t);
+                read.push(p);
+            }
+            Err(e) => {
+                tracing::debug!("skipping device {p}: {e}");
+                continue;
+            }
+        }
+        if select_wifi_device(&types).is_some() {
+            break;
+        }
+    }
+    select_wifi_device(&types).and_then(|i| read.into_iter().nth(i))
+}
+
 impl DbusNm {
     fn new() -> Self {
         Self {
@@ -590,16 +629,18 @@ impl DbusNm {
 
     async fn wifi_device_z(&self) -> zbus::Result<Option<WifiDevice>> {
         let c = self.conn().await?;
-        for p in ManagerProxy::new(c).await?.get_devices().await? {
-            let dev = proxy_at!(DeviceProxy, c, p.as_str());
-            if dev.device_type().await? == DEVICE_TYPE_WIFI {
-                return Ok(Some(WifiDevice {
-                    path: p.to_string(),
-                    iface: dev.interface().await?,
-                }));
-            }
-        }
-        Ok(None)
+        let paths = ManagerProxy::new(c).await?.get_devices().await?;
+        let Some(path) = first_wifi(paths, |p: zbus::OwnedObjectPath| async move {
+            proxy_at!(DeviceProxy, c, p.as_str()).device_type().await
+        })
+        .await
+        else {
+            return Ok(None);
+        };
+        Ok(Some(WifiDevice {
+            iface: proxy_at!(DeviceProxy, c, path.as_str()).interface().await?,
+            path: path.to_string(),
+        }))
     }
 
     async fn stale_profiles_z(&self) -> zbus::Result<Vec<String>> {
@@ -920,6 +961,8 @@ impl BlockReason {
 pub enum LinkNotice {
     /// The hotspot was not started because of the firewall; the transfer stays on its first channel.
     WifiUpgradeBlocked(BlockReason),
+    /// Something the runtime learned by acting, for the requirements report.
+    Evidence(RuntimeEvidence),
 }
 
 pub struct NmLink<A = DbusNm> {
@@ -1065,6 +1108,9 @@ impl<A: NmApi> NmLink<A> {
         } else {
             BlockReason::FirewallDenied
         };
+        self.notify(LinkNotice::Evidence(RuntimeEvidence::FirewallRefused(
+            reason,
+        )));
         match (policy, reason) {
             (HotspotPolicy::AllowOpenZone, BlockReason::FirewallDenied) => {
                 tracing::warn!(
@@ -1190,6 +1236,7 @@ impl<A: NmApi> NmLink<A> {
         let zone = match self.api.open_port(port).await {
             Ok(()) => {
                 st.open_port = Some(port);
+                self.notify(LinkNotice::Evidence(RuntimeEvidence::FirewallPortOpened));
                 SHARED_ZONE
             }
             Err(e) => {
@@ -1391,6 +1438,17 @@ impl<A: NmApi> WifiLink for NmLink<A> {
         Box::pin(async move {
             let mut st = self.begin()?;
             let result = self.host_inner(&mut st, port).await;
+            // A refusal by the firewall and a missing Wi-Fi device are not a hotspot that failed
+            // to start: the report has rows for them.
+            match &result {
+                Ok(_) => self.notify(LinkNotice::Evidence(RuntimeEvidence::HotspotStarted)),
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::PermissionDenied | io::ErrorKind::NotFound
+                    ) => {}
+                Err(_) => self.notify(LinkNotice::Evidence(RuntimeEvidence::HotspotFailed)),
+            }
             if result.is_err() {
                 self.teardown(&mut st).await;
             }
@@ -1883,6 +1941,124 @@ mod tests {
         );
     }
 
+    /// The next notice that is not requirements evidence.
+    fn next_notice(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<LinkNotice>,
+    ) -> Option<LinkNotice> {
+        while let Ok(notice) = rx.try_recv() {
+            if !matches!(notice, LinkNotice::Evidence(_)) {
+                return Some(notice);
+            }
+        }
+        None
+    }
+
+    fn drain(rx: &mut tokio::sync::mpsc::UnboundedReceiver<LinkNotice>) -> Vec<LinkNotice> {
+        std::iter::from_fn(|| rx.try_recv().ok()).collect()
+    }
+
+    fn evidence(e: RuntimeEvidence) -> LinkNotice {
+        LinkNotice::Evidence(e)
+    }
+
+    #[tokio::test]
+    async fn a_successful_host_reports_the_port_then_the_hotspot() {
+        let (link, _) = fake().build();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = link.with_test_notices(tx);
+        link.host(4000).await.unwrap();
+        assert_eq!(
+            drain(&mut rx),
+            [
+                evidence(RuntimeEvidence::FirewallPortOpened),
+                evidence(RuntimeEvidence::HotspotStarted)
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refusal_reports_the_firewall_and_no_failed_hotspot() {
+        let (link, _) = fake().fail(|op, _| op == "open_port").build();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = link.with_test_notices(tx);
+        assert!(link.host(4000).await.is_err());
+        assert_eq!(
+            drain(&mut rx),
+            [
+                evidence(RuntimeEvidence::FirewallRefused(
+                    BlockReason::FirewallDenied
+                )),
+                LinkNotice::WifiUpgradeBlocked(BlockReason::FirewallDenied),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_hotspot_that_does_not_start_is_reported_but_a_missing_device_is_not() {
+        let (link, _) = fake().fail(|op, _| op == "add_and_activate").build();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = link.with_test_notices(tx);
+        assert!(link.host(4000).await.is_err());
+        assert_eq!(
+            drain(&mut rx).last(),
+            Some(&evidence(RuntimeEvidence::HotspotFailed))
+        );
+
+        let mut b = fake();
+        b.fail = Box::new(|op, _| {
+            (op == "wifi_device").then(|| io::Error::new(io::ErrorKind::NotFound, "gone"))
+        });
+        let (link, _) = b.build();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = link.with_test_notices(tx);
+        assert!(link.host(4000).await.is_err());
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_busy_link_reports_nothing() {
+        let (link, _) = fake().build();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = link.with_test_notices(tx);
+        let held = link.begin().unwrap();
+        assert!(link.host(4000).await.is_err());
+        drop(held);
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_wifi_device_is_the_first_of_type_2_and_later_ones_are_not_read() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        // (name, type or an error): a type that cannot be read is skipped; the P2P type 30 is
+        // not a Wi-Fi device; the device after the first Wi-Fi one is never asked for.
+        let devices: Vec<(&str, Option<u32>)> = vec![
+            ("lo", Some(14)),
+            ("gone", None),
+            ("p2p", Some(30)),
+            ("wlan0", Some(2)),
+            ("veth", None),
+            ("wlan1", Some(2)),
+        ];
+        let asked = AtomicUsize::new(0);
+        let (asked_ref, devices_ref) = (&asked, &devices);
+        let found = first_wifi(
+            devices.iter().map(|(n, _)| (*n).to_owned()).collect(),
+            |name: String| async move {
+                asked_ref.fetch_add(1, Ordering::SeqCst);
+                let kind = devices_ref
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .and_then(|(_, t)| *t);
+                kind.ok_or(zbus::Error::InvalidReply)
+            },
+        )
+        .await;
+        assert_eq!(found.as_deref(), Some("wlan0"));
+        assert_eq!(asked.load(Ordering::SeqCst), 4);
+        let none = first_wifi(vec!["a".to_owned()], |_: String| async { Ok(1) }).await;
+        assert_eq!(none, None);
+    }
+
     #[tokio::test]
     async fn the_refusal_is_reported_with_a_stable_reason() {
         let denied = || fake().fail(|op, _| op == "open_port");
@@ -1901,11 +2077,11 @@ mod tests {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let link = link.with_test_notices(tx);
             assert!(link.host(4000).await.is_err());
-            let Ok(LinkNotice::WifiUpgradeBlocked(reason)) = rx.try_recv() else {
+            let Some(LinkNotice::WifiUpgradeBlocked(reason)) = next_notice(&mut rx) else {
                 panic!("no notice for {code}");
             };
             assert_eq!(reason.code(), code);
-            assert!(rx.try_recv().is_err(), "one notice per refusal");
+            assert!(next_notice(&mut rx).is_none(), "one notice per refusal");
         }
     }
 
@@ -1917,7 +2093,7 @@ mod tests {
         link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
         link.host(4000).await.unwrap();
         assert_eq!(link.api.added.lock().unwrap()[0].1.zone, OPEN_ZONE);
-        assert!(rx.try_recv().is_err(), "nothing was blocked");
+        assert!(next_notice(&mut rx).is_none(), "nothing was blocked");
         link.release().await;
         // The port was never opened, so there is none to close.
         assert_eq!(count(&log, "close_port"), 0);

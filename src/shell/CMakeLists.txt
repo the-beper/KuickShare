@@ -74,6 +74,7 @@ qt_add_qml_module(kuickshare
         qml/ToastStack.qml
         qml/PairDialog.qml
         qml/IntegrationDialog.qml
+        qml/WifiRequirementsDialog.qml
 )
 
 target_link_libraries(kuickshare PRIVATE
@@ -163,4 +164,9 @@ if(BUILD_TESTING)
     target_include_directories(instance_test PRIVATE .)
     target_link_libraries(instance_test PRIVATE Qt6::Core Qt6::DBus Qt6::Test)
     add_test(NAME instance COMMAND instance_test)
+
+    qt_add_executable(requirementsreport_test ../../tests/shell/requirementsreport_test.cpp)
+    target_include_directories(requirementsreport_test PRIVATE .)
+    target_link_libraries(requirementsreport_test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME requirementsreport COMMAND requirementsreport_test)
 endif()

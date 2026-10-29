@@ -224,6 +224,25 @@ With **Settings → Wi-Fi Direct → Receive and send without a shared network**
 - A computer with one radio can lose its Wi-Fi connection while the link is up.
 - This was not tried with a phone since the firewall rule changed.
 
+### Checking the requirements
+
+Under **Settings → Wi-Fi Direct**, a line "System requirements" summarises what this computer can do: sending, receiving and joining networks, each Available, Limited, Unavailable or Unknown. **Check system requirements…** opens the dialog "System requirements"; it works also when the switch is disabled. Checking only reads: it never changes Bluetooth, Wi-Fi or the firewall. How each requirement is judged, and what is never verified, is in [wifi-direct.md](wifi-direct.md#checking-the-requirements).
+
+The dialog shows:
+
+- The three capabilities and when they were last checked. A box says when the result is out of date, or could not be read, or the service is unavailable.
+- Sections for Sending, Receiving and Join network, each listing only what limits it (or "Nothing limits this"), then "System components" with every item. Each item has a status (Ready, Warning, Blocked, Unknown), a short reason and a **Details** button with a hint, what it affects, how it was checked and, where useful, a command to copy (it is never run).
+- **Refresh** asks the core to check again (it may return a check made a moment ago); opening the dialog checks only when the last result is missing or out of date.
+- **Copy diagnostic report** puts plain text on the clipboard for a bug report: shell, core and schema versions, packaging, the check time (UTC), the three capabilities, and one line per item with its id, status, reason code, category and how it was checked. It leaves out the details and device fields and holds no network names (SSIDs), MAC or IP addresses, or device names.
+
+An "Available" result is not a promise: the check cannot tell whether a hotspot will start or the firewall will accept it (see the link above), and nothing here was hand-tested with real services.
+
+When you turn the switch on:
+
+- If neither sending nor receiving can work, the switch stays off and a prompt "Wi-Fi Direct is not fully available" offers **View requirements**.
+- If only one direction can work, the switch turns on and a warning says "Only sending works on this computer" or "Only receiving works on this computer".
+- If something could not be checked, the switch turns on and the summary shows Unknown.
+
 **Visibility**
 
 - While the setting is on, this computer is visible over Bluetooth, under its device name, to devices in range. Nothing is sent without your consent.
@@ -383,4 +402,4 @@ Also listed in the app under More, Shortcuts.
 | The same, in the Flatpak | `~/.var/app/io.github.the_beper.KuickShare/config/kuickshare/` and `.../data/kuickshare/` |
 | Logs | No log file. The service writes to the standard output of the window process, so they show in a terminal when you run `kuickshare` there. Where the desktop session keeps them otherwise is unverified |
 
-A settings or peers file that cannot be parsed is moved to a `.bak` copy next to it and defaults are used. An unparsable identity file stops the service from starting; it is never replaced. An unparsable history file is ignored and logged. The log level can be raised for one run: `RUST_LOG=debug kuickshare`, since the service inherits the environment.
+A settings, peers or history file that cannot be read or parsed is moved to a `.bak` copy next to it (`.bak.1`, `.bak.2`… if one exists) and defaults are used; if it cannot be moved, that file is not saved to during the run. An unparsable identity file stops the service from starting; it is never replaced. Details: [architecture.md](architecture.md#files-on-disk). The log level can be raised for one run: `RUST_LOG=debug kuickshare`, since the service inherits the environment.

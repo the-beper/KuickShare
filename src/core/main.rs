@@ -6,6 +6,7 @@ mod history;
 mod link;
 mod persist;
 mod ratelimit;
+mod requirements;
 mod safety;
 mod settings;
 mod trust;
@@ -17,7 +18,13 @@ use anyhow::Result;
 use tokio::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 
-use crate::{app::Core, history::History, settings::Settings, trust::Trust};
+use crate::{
+    app::Core,
+    history::History,
+    requirements::{EngineConfig, SystemEngine, SystemRequirementsProbe},
+    settings::Settings,
+    trust::Trust,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -49,13 +56,17 @@ async fn main() -> Result<()> {
         trust_rx,
     )));
     core.lock().await.set_handle(Arc::downgrade(&core));
+    // The Wi-Fi requirements: one engine for the report and for the gate on the upgrade setting.
+    let requirements = SystemEngine::new(SystemRequirementsProbe::new(), EngineConfig::default());
+    core.lock().await.set_requirements(requirements.clone());
     let consents = core.lock().await.consents();
     // Profiles a crash left behind (possibly in an open firewall zone) go first, whatever the
     // settings say, and before the bus name is taken: no request sees the service half-started.
     let release = core.lock().await.wifi_release();
     app::release_wifi(release, app::WIFI_START_SWEEP_BOUND).await;
-    let connection = dbus::serve(core.clone(), consents).await?;
+    let connection = dbus::serve(core.clone(), consents, requirements.clone()).await?;
     core.lock().await.start(connection).await?;
+    requirements::watch::spawn(requirements);
     tokio::spawn(app::watch_network(core.clone()));
 
     // The shell stops the daemon with SIGTERM; Ctrl+C is for running it by hand.

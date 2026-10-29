@@ -47,6 +47,32 @@ FormCard.FormCardPage {
         onTriggered: page.core.staticPort = portBox.value
     }
 
+    WifiRequirementsDialog {
+        id: requirementsDialog
+        core: page.core
+    }
+
+    // The summary shows the last report; the core answers from its cache while it is fresh.
+    Component.onCompleted: {
+        if (page.core.connected) {
+            page.core.loadWifiRequirements();
+        }
+    }
+    Connections {
+        target: page.core
+
+        function onConnectedChanged() {
+            if (page.core.connected) {
+                page.core.loadWifiRequirements();
+            }
+        }
+        function onWifiUpgradeRefused(reason) {
+            if (reason === "requirements_blocked") {
+                blockedDialog.open();
+            }
+        }
+    }
+
     SectionTitle {
         first: true
         text: KI18n.i18n("Visibility")
@@ -153,8 +179,44 @@ FormCard.FormCardPage {
                     // The core also takes back the consent for this session, if it was given.
                     page.core.wifiUpgrade = false;
                 }
+                // Show only what the core reports: the switch moves when the setting really changes.
+                wifiSwitch.checked = Qt.binding(() => page.core.wifiUpgrade);
             }
         }
+        FormCard.FormTextDelegate {
+            readonly property var wr: page.core.wifiRequirements
+
+            icon.name: "dialog-information-symbolic"
+            text: KI18n.i18n("System requirements")
+            description: {
+                if (!page.core.connected || wr.error === "unavailable") {
+                    return KI18n.i18n("KuickShare service unavailable");
+                }
+                if (wr.valid !== true) {
+                    return KI18n.i18n("Not checked yet");
+                }
+                return KI18n.i18n("Sending: %1, receiving: %2, joining networks: %3", wr.capabilities.sending.label, wr.capabilities.receiving.label, wr.capabilities.joinNetwork.label);
+            }
+        }
+        // Always reachable, also when the switch is disabled.
+        FormCard.FormButtonDelegate {
+            icon.name: "view-list-details"
+            text: KI18n.i18n("Check system requirements…")
+            description: KI18n.i18n("See what this computer needs for Wi-Fi Direct")
+            onClicked: requirementsDialog.open()
+        }
+    }
+    // One direction works: the switch stays usable, with this warning.
+    MessageBox {
+        readonly property var wr: page.core.wifiRequirements
+        readonly property bool canSend: wr.valid === true && wr.capabilities.sending.status !== "unavailable"
+        readonly property bool canReceive: wr.valid === true && wr.capabilities.receiving.status !== "unavailable"
+
+        visible: wr.valid === true && canSend !== canReceive
+        type: Kirigami.MessageType.Warning
+        text: canSend ? KI18n.i18n("Only sending works on this computer. See the system requirements") : KI18n.i18n("Only receiving works on this computer. See the system requirements")
+        Layout.fillWidth: true
+        Layout.topMargin: Kirigami.Units.largeSpacing
     }
     // Experimental and with side effects, so a warning box like the one under Trusted devices.
     MessageBox {
@@ -368,6 +430,28 @@ FormCard.FormCardPage {
         onAccepted: page.core.requestWifiUpgrade(true, true)
         // The switch was toggled by hand: show the real setting again.
         onClosed: wifiSwitch.checked = Qt.binding(() => page.core.wifiUpgrade)
+    }
+    // The core refused to turn the upgrade on: neither direction can work now.
+    Kirigami.PromptDialog {
+        id: blockedDialog
+        title: KI18n.i18n("Wi-Fi Direct is not fully available")
+        subtitle: KI18n.i18n("Neither sending nor receiving can work on this computer now. The system requirements show what is missing")
+        standardButtons: Kirigami.Dialog.NoButton
+        customFooterActions: [
+            Kirigami.Action {
+                text: KI18n.i18n("View requirements")
+                icon.name: "view-list-details"
+                onTriggered: {
+                    blockedDialog.close();
+                    requirementsDialog.open();
+                }
+            },
+            Kirigami.Action {
+                text: KI18n.i18n("Close")
+                icon.name: "window-close"
+                onTriggered: blockedDialog.close()
+            }
+        ]
     }
     Kirigami.PromptDialog {
         id: resetDialog
