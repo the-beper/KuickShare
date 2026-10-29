@@ -230,7 +230,9 @@ jobs:
       - name: Install flatpak and ostree
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak ostree appstream
+          # The release's signing job installs the first three; librsvg2-common lets the test's
+          # flatpak build-export validate the SVG icon of the re-exported tree.
+          sudo apt-get install -y --no-install-recommends flatpak ostree appstream librsvg2-common
           flatpak --version
           ostree --version | head -n 2
 

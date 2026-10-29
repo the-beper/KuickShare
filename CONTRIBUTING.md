@@ -194,7 +194,7 @@ These are GitHub settings; nothing in the workflows can do them.
 5. Settings, Actions: keep the default `GITHUB_TOKEN` read-only and the approval for first-time contributors; optionally require full-length commit SHAs for actions.
 6. Settings, Pages: deploy from the `gh-pages` branch (root), after the first release.
 
-Tool versions: the signing job is pinned to `ubuntu-24.04` and uses its flatpak and ostree. CI's `repo-update` job runs `build/flatpak/test-repo-update.sh` on the same runner image with the same apt packages, on the repository the `flatpak` job built, so the ephemeral-key proof that installed clients update covers the versions releases use. A runner image or package update can still change them: that job going red is the warning. The first release must still be checked with a real client (below).
+Tool versions: the signing job is pinned to `ubuntu-24.04` and uses its flatpak and ostree. CI's `repo-update` job runs `build/flatpak/test-repo-update.sh` on the same runner image with the same apt packages (plus `librsvg2-common`, which only the test's re-export needs), on the repository the `flatpak` job built, so the ephemeral-key proof that installed clients update covers the versions releases use. A runner image or package update can still change them: that job going red is the warning. The first release must still be checked with a real client (below).
 
 The `release` concurrency group keeps one running and one pending run: if three tags are pushed in quick succession, GitHub cancels the middle one. Re-run that tag's workflow from the Actions tab once the others have finished.
 
