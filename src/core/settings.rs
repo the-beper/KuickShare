@@ -32,6 +32,14 @@ pub struct Settings {
     pub trusted_devices: bool,
     /// Move transfers to a temporary Wi-Fi hotspot when the phone offers it.
     pub wifi_upgrade: bool,
+    /// Set once the list of trusted devices of older versions (name and MAC address only, which
+    /// another device on the network can copy) has been emptied. A file without it is from an older
+    /// version, whatever the other defaults say: the field-level default is `false`.
+    #[serde(default)]
+    pub allowed_reset_v1: bool,
+    /// The user has not yet been told that the trusted devices were removed; kept until the shell
+    /// acknowledges it, so a restart before the user saw the notice does not lose it.
+    pub trusted_devices_reset_notice: bool,
 }
 
 impl Default for Settings {
@@ -49,6 +57,9 @@ impl Default for Settings {
             dolphin_integration: true,
             trusted_devices: true,
             wifi_upgrade: false,
+            // A new install has nothing to reset.
+            allowed_reset_v1: true,
+            trusted_devices_reset_notice: false,
         }
     }
 }
@@ -76,19 +87,42 @@ pub fn default_device_name() -> String {
 
 impl Settings {
     /// A missing or unreadable file yields the defaults; the problem is logged, not fatal.
+    /// A file of an older version loses its trusted devices once (see `allowed_reset_v1`).
     pub fn load(path: &Path) -> Self {
         match fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
-                tracing::warn!("ignoring invalid settings file {}: {e}", path.display());
-                keep_aside(path);
-                Self::default()
-            }),
+            Ok(text) => {
+                let mut settings: Self = serde_json::from_str(&text).unwrap_or_else(|e| {
+                    tracing::warn!("ignoring invalid settings file {}: {e}", path.display());
+                    keep_aside(path);
+                    Self::default()
+                });
+                if settings.reset_old_trusted_devices()
+                    && let Err(e) = settings.save(path)
+                {
+                    tracing::warn!("cannot save settings: {e:#}");
+                }
+                settings
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
             Err(e) => {
                 tracing::warn!("cannot read settings file {}: {e}", path.display());
                 Self::default()
             }
         }
+    }
+
+    /// Empties the trusted devices of an older version, once. Returns true when `self` changed
+    /// (and so has to be saved). The notice is only due when there was something to remove.
+    fn reset_old_trusted_devices(&mut self) -> bool {
+        if self.allowed_reset_v1 {
+            return false;
+        }
+        self.allowed_reset_v1 = true;
+        if !self.allowed_devices.is_empty() {
+            self.allowed_devices.clear();
+            self.trusted_devices_reset_notice = true;
+        }
+        true
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -130,6 +164,8 @@ mod tests {
             dolphin_integration: false,
             trusted_devices: false,
             wifi_upgrade: true,
+            allowed_reset_v1: true,
+            trusted_devices_reset_notice: true,
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), settings);
@@ -179,6 +215,10 @@ mod tests {
             loaded.allowed_devices.is_empty(),
             "the old name+MAC list must be dropped on upgrade"
         );
+        assert!(
+            loaded.trusted_devices_reset_notice,
+            "the user has to be told about it"
+        );
         loaded.allowed_devices.push(AllowedDevice {
             name: "new phone".into(),
             mac: "aa:bb:cc:dd:ee:02".into(),
@@ -188,5 +228,30 @@ mod tests {
         let again = Settings::load(&path);
         assert_eq!(again.allowed_devices.len(), 1, "the reset must not repeat");
         assert_eq!(again.allowed_devices[0].name, "new phone");
+        assert!(
+            again.trusted_devices_reset_notice,
+            "the notice stays until it is acknowledged"
+        );
+    }
+
+    #[test]
+    fn nothing_to_announce_when_the_old_list_was_empty() {
+        let dir = temp_dir("allowed-reset-empty");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, r#"{"device_name":"x"}"#).unwrap();
+        let loaded = Settings::load(&path);
+        assert!(loaded.allowed_reset_v1 && !loaded.trusted_devices_reset_notice);
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .contains("allowed_reset_v1")
+        );
+    }
+
+    #[test]
+    fn a_fresh_install_has_nothing_to_reset() {
+        let defaults = Settings::default();
+        assert!(defaults.allowed_reset_v1 && !defaults.trusted_devices_reset_notice);
     }
 }

@@ -1,5 +1,6 @@
 mod allowed;
 mod app;
+mod consent;
 mod dbus;
 mod history;
 mod link;
@@ -47,8 +48,12 @@ async fn main() -> Result<()> {
         trust_rx,
     )));
     core.lock().await.set_handle(Arc::downgrade(&core));
-    let lib_actions = core.lock().await.lib_actions();
-    let connection = dbus::serve(core.clone(), lib_actions).await?;
+    let consents = core.lock().await.consents();
+    // Profiles a crash left behind (possibly in an open firewall zone) go first, whatever the
+    // settings say, and before the bus name is taken: no request sees the service half-started.
+    let release = core.lock().await.wifi_release();
+    app::release_wifi(release, app::WIFI_START_SWEEP_BOUND).await;
+    let connection = dbus::serve(core.clone(), consents).await?;
     core.lock().await.start(connection).await?;
     tokio::spawn(app::watch_network(core.clone()));
 
@@ -59,6 +64,8 @@ async fn main() -> Result<()> {
         _ = terminate.recv() => {}
     }
     tracing::info!("stopping");
-    core.lock().await.shutdown().await;
+    let release = core.lock().await.shutdown().await;
+    // Closes the firewall port and restores the connection a hotspot replaced, on the shared link.
+    app::release_wifi(release, app::WIFI_STOP_CLEANUP_BOUND).await;
     Ok(())
 }

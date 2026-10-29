@@ -148,8 +148,9 @@ FormCard.FormCardPage {
             enabled: page.core.connected
             onToggled: {
                 if (checked) {
-                    page.core.requestWifiUpgrade();
+                    page.core.enableWifiUpgrade();
                 } else {
+                    // The core also takes back the consent for this session, if it was given.
                     page.core.wifiUpgrade = false;
                 }
             }
@@ -246,7 +247,7 @@ FormCard.FormCardPage {
     MessageBox {
         visible: page.core.trustedDevicesEnabled
         type: Kirigami.MessageType.Warning
-        text: KI18n.i18n("Matched by name and MAC address. Another device that copies both would be accepted too. Use only if you trust all devices in your LAN")
+        text: KI18n.i18n("Devices are recognised by name and network address, which another device on the same network can copy: it would be accepted without asking too. Use only on a network where you trust every device")
         Layout.fillWidth: true
         Layout.topMargin: Kirigami.Units.largeSpacing
     }
@@ -361,9 +362,10 @@ FormCard.FormCardPage {
     Kirigami.PromptDialog {
         id: firewallDialog
         title: KI18n.i18n("Turn on without a firewall?")
-        subtitle: KI18n.i18n("firewalld is not running, so the firewall cannot be opened for a single port. While the hotspot is up, the phone that joins it can reach every service on this computer")
+        subtitle: KI18n.i18n("firewalld is not running, so the firewall cannot be opened for a single port. If you agree, then until KuickShare is closed, the phone that joins the hotspot can reach every service on this computer")
         standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
-        onAccepted: page.core.wifiUpgrade = true
+        // The explicit consent, valid for this session only.
+        onAccepted: page.core.requestWifiUpgrade(true, true)
         // The switch was toggled by hand: show the real setting again.
         onClosed: wifiSwitch.checked = Qt.binding(() => page.core.wifiUpgrade)
     }

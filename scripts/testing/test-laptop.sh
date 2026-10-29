@@ -97,7 +97,7 @@ cmd_run() {
     ) > "$logs/net-sampler.log" 2>&1 &
     pids+=($!)
 
-    RUST_LOG=info,rqs_lib::hdl::ble_receiver=debug,rqs_lib::hdl::ble_scan=debug,rqs_lib::hdl::ble_send=debug,rqs_lib::upgrade=debug,kuickshared::link=debug \
+    RUST_LOG=info,rqs_lib::hdl::ble_receiver=debug,rqs_lib::hdl::ble_scan=debug,rqs_lib::hdl::ble_send=debug,rqs_lib::upgrade=debug,kuickshared::link=debug,kuickshared::app=debug \
         XDG_CONFIG_HOME="$DIR/state/config" XDG_DATA_HOME="$DIR/state/data" \
         bg "$logs/daemon.log" "$DIR/kuickshared"
     local tries=0

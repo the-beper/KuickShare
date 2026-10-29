@@ -22,6 +22,8 @@ Kirigami.ApplicationWindow {
     // The send in progress: when it finishes the Send page is left clean, ready for the next one.
     // A failed send keeps the files and the text so that it can be tried again.
     property string pendingSendId: ""
+    // Why the firewall stopped the hotspot last (a code of the core).
+    property string wifiBlockedReason: ""
 
     title: KI18n.i18n("KuickShare")
     // Compact, fixed size (so it cannot be maximized or resized): the pages scroll when needed.
@@ -164,6 +166,11 @@ Kirigami.ApplicationWindow {
         target: root.core
         function onErrorOccurred(message) {
             toasts.show(Kirigami.MessageType.Error, message, 10000);
+        }
+        // The firewall did not allow the computer's hotspot: the transfer stays on Bluetooth.
+        function onWifiUpgradeBlocked(reason) {
+            root.wifiBlockedReason = reason;
+            wifiBlockedBox.visible = true;
         }
         function onNetworkJoined(ssid) {
             toasts.show(Kirigami.MessageType.Positive, KI18n.i18n("Connected to %1", ssid), 6000);
@@ -471,6 +478,70 @@ Kirigami.ApplicationWindow {
                 onTriggered: root.core.restartForUpdate()
             }
         ]
+    }
+
+    // Once, after an update: the trusted devices of the older version were removed (the core keeps the
+    // notice until it is acknowledged, so a restart before the user saw it does not lose it).
+    MessageBox {
+        parent: root.contentItem
+        z: 10
+        anchors {
+            top: parent.top
+            left: parent.left
+            right: parent.right
+            margins: Kirigami.Units.largeSpacing
+        }
+        visible: root.core.trustedDevicesReset && root.core.connected
+        type: Kirigami.MessageType.Information
+        text: KI18n.i18n("Trusted devices were removed: they were recognised only by name and network address, which another device on the same network can copy. Trust a device again from its next transfer")
+        actions: [
+            Kirigami.Action {
+                text: KI18n.i18n("Got it")
+                icon.name: "dialog-ok-apply"
+                onTriggered: root.core.acknowledgeTrustedDevicesReset()
+            }
+        ]
+    }
+
+    // The firewall refused the hotspot: say so, and offer the consent for this session (it is the core
+    // that decides and remembers it). Shown by `onWifiUpgradeBlocked`; the close button hides it.
+    MessageBox {
+        id: wifiBlockedBox
+        parent: root.contentItem
+        z: 10
+        anchors {
+            top: parent.top
+            left: parent.left
+            right: parent.right
+            margins: Kirigami.Units.largeSpacing
+        }
+        visible: false
+        showCloseButton: true
+        type: Kirigami.MessageType.Warning
+        // An unknown code is taken as a refusal.
+        text: root.wifiBlockedReason === "firewall_missing" ? KI18n.i18n("No firewall service that KuickShare can open a port in was found. The transfer continues over Bluetooth, which is very slow") : KI18n.i18n("The firewall did not allow the Wi-Fi link. The transfer continues over Bluetooth, which is very slow")
+        actions: [
+            Kirigami.Action {
+                text: KI18n.i18n("Allow for this session…")
+                icon.name: "security-medium"
+                enabled: root.core.connected
+                onTriggered: wifiConsentDialog.open()
+            }
+        ]
+    }
+    Kirigami.PromptDialog {
+        id: wifiConsentDialog
+        title: KI18n.i18n("Allow the hotspot without a firewall rule?")
+        subtitle: KI18n.i18n("If you agree, then until KuickShare is closed, the phone that joins the hotspot can reach every service on this computer. It applies to the next transfer, not to the one in progress")
+        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        // The explicit consent, valid for this session only.
+        onAccepted: {
+            // Turned off meanwhile: the consent must not turn it on again.
+            if (root.core.wifiUpgrade) {
+                root.core.requestWifiUpgrade(true, true);
+            }
+            wifiBlockedBox.visible = false;
+        }
     }
 
     DropArea {

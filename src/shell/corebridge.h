@@ -43,8 +43,12 @@ class CoreBridge : public QObject
     Q_PROPERTY(bool updateInstalled READ updateInstalled NOTIFY updateInstalledChanged)
     Q_PROPERTY(qulonglong historyBytes READ historyBytes NOTIFY historyBytesChanged)
     Q_PROPERTY(bool trustedDevicesEnabled READ trustedDevicesEnabled WRITE setTrustedDevicesEnabled NOTIFY trustedDevicesEnabledChanged)
+    /// The trusted devices of an older version were removed and the user has not been told yet (the core keeps this until `acknowledgeTrustedDevicesReset`).
+    Q_PROPERTY(bool trustedDevicesReset READ trustedDevicesReset NOTIFY trustedDevicesResetChanged)
     Q_PROPERTY(bool trayIcon READ trayIcon WRITE setTrayIcon NOTIFY trayIconChanged)
     Q_PROPERTY(bool wifiUpgrade READ wifiUpgrade WRITE setWifiUpgrade NOTIFY wifiUpgradeChanged)
+    /// The user allowed the computer's hotspot to use an open firewall zone for this session (the core forgets it at restart).
+    Q_PROPERTY(bool insecureHotspotAllowed READ insecureHotspotAllowed NOTIFY insecureHotspotAllowedChanged)
     Q_PROPERTY(bool dolphinIntegration READ dolphinIntegration WRITE setDolphinIntegration NOTIFY dolphinIntegrationChanged)
     Q_PROPERTY(bool appImage READ appImage CONSTANT)
     Q_PROPERTY(bool menuEntry READ menuEntry WRITE setMenuEntry NOTIFY menuEntryChanged)
@@ -85,7 +89,9 @@ public:
     bool clipboardHasFiles() const { return m_clipboardHasFiles; }
     qulonglong historyBytes() const { return m_historyBytes; }
     bool trustedDevicesEnabled() const { return m_trustedDevicesEnabled; }
+    bool trustedDevicesReset() const { return m_trustedDevicesReset; }
     bool wifiUpgrade() const { return m_wifiUpgrade; }
+    bool insecureHotspotAllowed() const { return m_insecureHotspotAllowed; }
     bool dolphinIntegration() const { return m_dolphinIntegration; }
     int historyKeepDays() const { return m_historyKeepDays; }
     bool appImage() const;
@@ -106,8 +112,11 @@ public:
     void setTrustedDevicesEnabled(bool enabled);
     void setWifiUpgrade(bool enabled);
     /// Turns the Wi-Fi upgrade on, or emits `firewallWarning` first when firewalld is not running (the
-    /// hotspot would then use a zone that lets the phone reach every port) and waits for the user.
-    Q_INVOKABLE void requestWifiUpgrade();
+    /// user must then agree to the hotspot using an open zone) and waits for the answer.
+    Q_INVOKABLE void enableWifiUpgrade();
+    /// The core's `RequestWifiUpgrade`: `enabled` is saved; `allowInsecure` allows the hotspot an open firewall zone for
+    /// this session only (needs `enabled`). Any write without it takes a given consent back.
+    Q_INVOKABLE void requestWifiUpgrade(bool enabled, bool allowInsecure);
     void setDolphinIntegration(bool enabled);
     /// AppImage only: writes or removes the application menu entry (no first-start question is asked afterwards).
     void setMenuEntry(bool enabled);
@@ -116,8 +125,20 @@ public:
     Q_INVOKABLE void removeTransfer(int row);
     void setSuspended(bool suspended);
 
-    Q_INVOKABLE void accept(const QString &id) { call(QStringLiteral("Accept"), {id}); }
-    Q_INVOKABLE void decline(const QString &id) { call(QStringLiteral("Decline"), {id}); }
+    /// Answer an incoming transfer with the token of the consent the core last reported for it (see `answerWithToken`).
+    Q_INVOKABLE void accept(const QString &id) { answerTransfer(id, QStringLiteral("accept")); }
+    Q_INVOKABLE void decline(const QString &id) { answerTransfer(id, QStringLiteral("decline")); }
+    /// Accepts and remembers the sender (name and the MAC address the core saw when the transfer arrived).
+    Q_INVOKABLE void acceptAndTrust(const QString &id) { answerTransfer(id, QStringLiteral("accept_and_trust")); }
+    /// The core's `AnswerTransfer`: `answer` is "accept", "accept_and_trust" or "decline" and `token` the one of the prompt
+    /// (`consent` in the transfer info), so a prompt of an older session cannot answer a transfer that got the same id.
+    /// When the core refuses, `answerRefused` or `answerNotApplied` is emitted and `errorOccurred` explains. A token of 0
+    /// (the core reports no consent) is refused without asking.
+    void answerWithToken(const QString &id, quint64 token, const QString &answer);
+    /// The user saw the notice of `trustedDevicesReset`.
+    Q_INVOKABLE void acknowledgeTrustedDevicesReset();
+    /// What to tell the user about an offer the core refused (`reason` of the transfer info); empty for no reason.
+    Q_INVOKABLE static QString refusalText(const QString &reason);
     /// Asks the core to cancel; a send the core has not reported yet ends as Cancelled right away.
     Q_INVOKABLE void cancel(const QString &id);
 
@@ -202,8 +223,13 @@ Q_SIGNALS:
     void historyEnabledChanged();
     void trayIconChanged();
     void trustedDevicesEnabledChanged();
+    void trustedDevicesResetChanged();
     void wifiUpgradeChanged();
+    void insecureHotspotAllowedChanged();
     void firewallWarning();
+    /// The firewall did not allow the hotspot, so the transfer stays on Bluetooth. `reason` is a code of the core
+    /// (`firewall_denied`, `firewall_missing`); unknown codes are possible.
+    void wifiUpgradeBlocked(const QString &reason);
     void dolphinIntegrationChanged();
     void menuEntryChanged();
     void historyKeepDaysChanged();
@@ -219,6 +245,13 @@ Q_SIGNALS:
     void sendRequested(const QString &deviceId, const QString &deviceName, int fileCount);
     /// The core refused the send request before a transfer existed.
     void sendRefused(const QString &deviceId);
+    /// The core did not take an answer because nothing waits for it any more (the transfer is gone, was answered, or
+    /// the time was over): its prompt is stale.
+    void answerRefused(const QString &id);
+    /// The core did not take an answer but the transfer still waits (the sender cannot be trusted): the prompt stays.
+    void answerNotApplied(const QString &id);
+    /// The transfers were forgotten because a core (re)started: nothing a prompt says about them holds any more.
+    void transfersReset();
 
 private Q_SLOTS:
     void onTransferUpdated(const QString &id, const QVariantMap &received);
@@ -227,6 +260,7 @@ private Q_SLOTS:
     void onPropertiesChanged(const QString &interface, const QVariantMap &changed, const QStringList &invalidated);
     void onPairingCode(const QString &code, const QString &peer) { emit pairingCode(code, plain(peer)); }
     void onPairingFinished(bool ok, const QString &peer, const QString &message) { emit pairingFinished(ok, plain(peer), plain(message)); }
+    void onWifiUpgradeBlocked(const QString &reason) { emit wifiUpgradeBlocked(reason); }
     void loadTrustedDevices();
     void loadAllowedDevices();
     void onServiceRegistered();
@@ -236,6 +270,8 @@ private:
     /// Adds the pending row for a send and calls `method`; `hasJob` is true when the shell tracks a Plasma job for it.
     void startSend(const QString &deviceId, QVariantMap row, const QString &method, const QVariantList &args, bool hasJob);
     void call(const QString &method, const QVariantList &args);
+    /// `answerWithToken` with the token the transfer model has for `id`.
+    void answerTransfer(const QString &id, const QString &answer);
     void callAsync(const QDBusMessage &message, const std::function<void()> &onSuccess = {}, const std::function<void()> &onError = {});
     void setRemoteProperty(const QString &name, const QVariant &value);
     void refreshProperties();
@@ -266,8 +302,10 @@ private:
     // Off until the core says otherwise: the tray icon stays hidden meanwhile.
     bool m_trayIcon = false;
     bool m_wifiUpgrade = false;
+    bool m_insecureHotspotAllowed = false;
     bool m_dolphinIntegration = true;
     bool m_trustedDevicesEnabled = true;
+    bool m_trustedDevicesReset = false;
     int m_historyKeepDays = 0;
     QVariantList m_trustedDevices;
     QVariantList m_allowedDevices;

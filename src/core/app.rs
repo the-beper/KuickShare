@@ -25,10 +25,11 @@ use tokio::{
 use zbus::Connection;
 
 use crate::{
-    allowed::{self, Allowed, AllowedDevice},
+    allowed::{Allowed, AllowedDevice},
+    consent::Consents,
     dbus::{self, TransferEvent},
     history::{self, History},
-    link::{NetworkEvent, NmLink},
+    link::{HotspotPolicy, LinkNotice, NetworkEvent, NmLink},
     settings::{self, Settings},
     trust::{self, Trust, TrustEvent},
     wifi_credentials,
@@ -55,7 +56,7 @@ pub struct LibActions {
 }
 
 impl LibActions {
-    fn set(&self, sender: Option<broadcast::Sender<ChannelMessage>>) {
+    pub(crate) fn set(&self, sender: Option<broadcast::Sender<ChannelMessage>>) {
         *self.sender.lock().unwrap() = sender;
     }
 
@@ -111,11 +112,15 @@ pub struct Core {
     endpoints: Endpoints,
     redirects: Redirects,
     lib_actions: LibActions,
+    /// Who may answer which incoming transfer (see `consent`); it has a lock of its own.
+    consents: Consents,
     active: ActiveTransfers,
     /// Wi-Fi networks received from phones, in memory only (see `wifi_credentials`).
     wifi_creds: wifi_credentials::Shared,
     /// The NetworkManager link, shared by the Wi-Fi upgrade and "Join this network".
     nm: Arc<NmLink>,
+    /// What the link reports (a hotspot the firewall did not allow); forwarded as a D-Bus signal.
+    link_notices: Option<mpsc::UnboundedReceiver<LinkNotice>>,
     history: SharedHistory,
     trust: Arc<Trust>,
     trust_events: Option<mpsc::UnboundedReceiver<TrustEvent>>,
@@ -146,6 +151,13 @@ impl Core {
         let mut history = history;
         history.set_policy(settings.history_enabled, settings.history_keep_days);
         let redirects = Redirects::default();
+        let lib_actions = LibActions {
+            sender: Arc::default(),
+            redirects: redirects.clone(),
+        };
+        let (notice_tx, link_notices) = mpsc::unbounded_channel();
+        // The firewall consent (`HotspotPolicy`) is never stored: every start begins without it,
+        // whatever `settings` hold, and only `request_wifi_upgrade` can grant it.
         Self {
             allowed: Allowed::new(StdMutex::new(settings.allowed_devices.clone())),
             trusted_enabled: Arc::new(AtomicBool::new(settings.trusted_devices)),
@@ -153,14 +165,13 @@ impl Core {
             settings_path,
             engine: None,
             endpoints: Endpoints::default(),
-            lib_actions: LibActions {
-                sender: Arc::default(),
-                redirects: redirects.clone(),
-            },
+            consents: Consents::new(lib_actions.clone()),
+            lib_actions,
             redirects,
             active: ActiveTransfers::default(),
             wifi_creds: wifi_credentials::Shared::default(),
-            nm: Arc::new(NmLink::new()),
+            nm: Arc::new(NmLink::new().with_notices(notice_tx)),
+            link_notices: Some(link_notices),
             history: Arc::new(StdMutex::new(history)),
             trust,
             trust_events: Some(trust_events),
@@ -183,26 +194,34 @@ impl Core {
         if let Some(events) = self.trust_events.take() {
             tokio::spawn(dbus::forward_trust_events(conn.clone(), events));
         }
+        if let Some(notices) = self.link_notices.take() {
+            tokio::spawn(dbus::forward_link_notices(conn.clone(), notices));
+        }
         let any = SocketAddr::from(([0, 0, 0, 0], trust::DEFAULT_PORT));
         if let Err(e) = self.trust.listen(any).await {
             // Trusted devices are optional: sharing works without them.
             tracing::warn!("trusted devices unavailable: {e:#}");
         }
         self.conn = Some(conn);
-        if self.settings.wifi_upgrade {
-            remove_stale_wifi_profiles().await;
-        }
         self.start_engine(false).await
     }
 
-    pub async fn shutdown(&mut self) {
+    /// Stops the service. The Wi-Fi link is released apart, without the `Core` lock (see
+    /// `release_wifi`): the caller gets what that needs.
+    pub async fn shutdown(&mut self) -> WifiRelease {
         self.lib_actions.set(None);
+        self.consents.clear();
         if let Some(engine) = self.engine.take() {
             engine.stop().await;
         }
         self.redirects.lock().unwrap().clear();
-        if self.settings.wifi_upgrade {
-            remove_stale_wifi_profiles().await;
+        self.wifi_release()
+    }
+
+    /// What `release_wifi` needs: the shared link.
+    pub fn wifi_release(&self) -> WifiRelease {
+        WifiRelease {
+            nm: self.nm.clone(),
         }
     }
 
@@ -236,21 +255,20 @@ impl Core {
         Ok(SocketAddr::new(ip.parse()?, trust::DEFAULT_PORT))
     }
 
-    /// Remembers the sender of a transfer in progress: from now on its transfers are accepted
-    /// without asking. Needs the device name and its MAC address (same network only).
+    /// Remembers the sender of an incoming transfer: from now on its transfers are accepted
+    /// without asking. Works only while the transfer waits for an answer, or within
+    /// `consent::TRUST_GRACE` after the user accepted it, and binds the device to the MAC address
+    /// read when the consent opened (same network only). Outbound and finished transfers are
+    /// refused. `AnswerTransfer` with `accept_and_trust` is the way that cannot race with the
+    /// accept.
     pub fn allow_device(&mut self, transfer_id: &str) -> Result<()> {
-        let name = self
-            .active
-            .lock()
-            .unwrap()
-            .get(transfer_id)
-            .map(|t| t.device().to_owned())
-            .filter(|n| !n.is_empty())
-            .context("unknown transfer or device without a name")?;
-        let mac = transfer_id
-            .rsplit_once(':')
-            .and_then(|(ip, _)| allowed::mac_for_ip(ip))
-            .context("cannot read the MAC address of this device (only devices on the same network can be trusted)")?;
+        let (name, mac) = self.consents.allow_trust(transfer_id, Instant::now())?;
+        self.remember_device(name, mac);
+        Ok(())
+    }
+
+    /// Adds a trusted device (name and the MAC address verified by the consent) and saves.
+    pub fn remember_device(&mut self, name: String, mac: String) {
         let device = AllowedDevice { name, mac };
         let mut list = self.allowed.lock().unwrap();
         if !list.contains(&device) {
@@ -259,7 +277,27 @@ impl Core {
         self.settings.allowed_devices = list.clone();
         drop(list);
         self.save();
-        Ok(())
+    }
+
+    /// The consent book, which the D-Bus service uses without taking the `Core` lock.
+    pub fn consents(&self) -> Consents {
+        self.consents.clone()
+    }
+
+    /// Whether the user still has to be told that the trusted devices of an older version were
+    /// removed (see `Settings::allowed_reset_v1`).
+    pub fn trusted_devices_reset(&self) -> bool {
+        self.settings.trusted_devices_reset_notice
+    }
+
+    /// The user saw the notice. Returns false when there was none.
+    pub fn acknowledge_trusted_devices_reset(&mut self) -> bool {
+        let pending = self.settings.trusted_devices_reset_notice;
+        if pending {
+            self.settings.trusted_devices_reset_notice = false;
+            self.save();
+        }
+        pending
     }
 
     pub fn forget_allowed(&mut self, name: &str, mac: &str) {
@@ -309,6 +347,7 @@ impl Core {
         let previous = self.settings.clone();
         self.settings = Settings {
             allowed_devices: previous.allowed_devices.clone(),
+            trusted_devices_reset_notice: previous.trusted_devices_reset_notice,
             ..Settings::default()
         };
         self.trusted_enabled
@@ -332,6 +371,8 @@ impl Core {
         if let Some(t) = temp {
             t.task.abort();
         }
+        // The defaults have the upgrade off, with its consent.
+        self.set_consent(false);
         self.trust.set_name(self.device_name());
         Ok(())
     }
@@ -342,12 +383,45 @@ impl Core {
         self.save();
     }
 
-    pub fn set_wifi_upgrade(&mut self, enabled: bool) {
+    /// The only writer of the Wi-Fi upgrade setting and of the firewall consent. `enabled` is
+    /// saved; `allow_insecure` (host the hotspot in an open firewall zone when its port cannot be
+    /// opened) is session-scoped: it lives in memory, and every write without it takes it back.
+    /// Consent without the upgrade makes no sense and is refused, changing nothing.
+    pub fn request_wifi_upgrade(
+        &mut self,
+        enabled: bool,
+        allow_insecure: bool,
+    ) -> Result<(), InsecureNeedsUpgrade> {
+        if allow_insecure && !enabled {
+            return Err(InsecureNeedsUpgrade);
+        }
         self.settings.wifi_upgrade = enabled;
+        self.set_consent(allow_insecure);
         if let Some(engine) = &self.engine {
             engine.rqs.set_wifi_link(wifi_link(enabled, &self.nm));
         }
         self.save();
+        Ok(())
+    }
+
+    /// Sets the firewall consent. Taking it back also stops a hotspot that already runs in an open
+    /// zone (in a task of its own: it waits for the link, and the `Core` lock is not held for it).
+    fn set_consent(&self, allow: bool) {
+        let had = self.insecure_hotspot_allowed();
+        self.nm.set_hotspot_policy(if allow {
+            HotspotPolicy::AllowOpenZone
+        } else {
+            HotspotPolicy::TargetedPortOnly
+        });
+        if had && !allow {
+            let nm = self.nm.clone();
+            tokio::spawn(async move { nm.drop_open_zone_hotspot().await });
+        }
+    }
+
+    /// Whether the user allowed the hotspot to use an open firewall zone for this session.
+    pub fn insecure_hotspot_allowed(&self) -> bool {
+        self.nm.hotspot_policy() == HotspotPolicy::AllowOpenZone
     }
 
     pub fn set_tray_icon(&mut self, show: bool) {
@@ -724,22 +798,28 @@ impl Core {
             if self.settings.wifi_upgrade {
                 ble = self.same_device(&picked, true);
                 if ble.is_none() {
-                    tracing::info!("{} is gone: looking for it over Bluetooth", picked.id);
+                    tracing::info!("send: the LAN device is gone, looking for it over Bluetooth");
+                    tracing::debug!("{} is gone: looking for it over Bluetooth", picked.id);
                     ble = self.look_up_bluetooth(&picked).await;
                 }
             }
             let Some(ble) = ble else {
                 if self.settings.wifi_upgrade {
-                    tracing::info!("{} is gone and has no Bluetooth entry", picked.id);
-                } else {
                     tracing::info!(
+                        "send refused: the LAN device is gone and has no Bluetooth entry"
+                    );
+                    tracing::debug!("{} is gone and has no Bluetooth entry", picked.id);
+                } else {
+                    tracing::info!("send refused: the LAN device is gone and Wi-Fi Direct is off");
+                    tracing::debug!(
                         "{} is gone (Wi-Fi Direct is off: no Bluetooth lookup)",
                         picked.id
                     );
                 }
                 bail!("The device is not reachable");
             };
-            tracing::info!("{} is gone, sending to {} (same name)", picked.id, ble.id);
+            tracing::info!("send goes over Bluetooth: the LAN device is gone");
+            tracing::debug!("{} is gone, sending to {} (same name)", picked.id, ble.id);
             return Ok(ble);
         }
         let mut lan = self.same_device(&picked, false);
@@ -749,25 +829,32 @@ impl Core {
         let name = picked.name.as_deref().unwrap_or_default();
         match lan {
             Some(lan) if probe_twice(&lan_addr(&lan)).await => {
-                tracing::info!(
+                tracing::info!("send goes over the LAN: the device answers there");
+                tracing::debug!(
                     "{} answers on the LAN, sending to {} (same name)",
                     picked.id,
                     lan.id
                 );
                 return Ok(lan);
             }
-            Some(_) => tracing::info!(
-                "{} stays on Bluetooth: the LAN entry did not answer",
-                picked.id
-            ),
-            None if self.lan_entries(&picked) > 1 => tracing::info!(
-                "{} stays on Bluetooth: more than one LAN entry has that name",
-                picked.id
-            ),
-            None => tracing::info!(
-                "{} stays on Bluetooth: no LAN entry named \"{name}\"",
-                picked.id
-            ),
+            Some(_) => {
+                tracing::info!("send stays on Bluetooth: LAN probe failed");
+                tracing::debug!(
+                    "{} stays on Bluetooth: the LAN entry did not answer",
+                    picked.id
+                );
+            }
+            None if self.lan_entries(&picked) > 1 => {
+                tracing::info!("send stays on Bluetooth: more than one LAN entry has that name");
+                tracing::debug!("{} stays on Bluetooth: ambiguous LAN entries", picked.id);
+            }
+            None => {
+                tracing::info!("send stays on Bluetooth: no LAN entry with that name");
+                tracing::debug!(
+                    "{} stays on Bluetooth: no LAN entry named \"{name}\"",
+                    picked.id
+                );
+            }
         }
         Ok(picked)
     }
@@ -817,10 +904,8 @@ impl Core {
             return None;
         }
         self.last_lan_lookup = Some(now);
-        tracing::info!(
-            "{} is not on the LAN list: restarting the search",
-            picked.id
-        );
+        tracing::info!("send: the device is not on the LAN list, restarting the search");
+        tracing::debug!("{} is not on the LAN list", picked.id);
         let deadline = tokio::time::Instant::now() + LAN_LOOKUP_TIMEOUT;
         loop {
             tokio::time::sleep(LAN_LOOKUP_POLL).await;
@@ -920,8 +1005,10 @@ impl Core {
     /// Rebuilds the service, keeping discovery on if it was on.
     async fn restart(&mut self) -> Result<()> {
         let discovery = self.engine.as_ref().is_some_and(|e| e.discovery_on);
-        // Accept and Decline fail at once from here: the restart ends the old transfers anyway.
+        // Accept and Decline fail at once from here: the restart ends the old transfers anyway,
+        // and their tokens must not answer a transfer that gets the same id later.
         self.lib_actions.set(None);
+        self.consents.clear();
         if let Some(engine) = self.engine.take() {
             engine.stop().await;
         }
@@ -958,7 +1045,8 @@ impl Core {
                 trusted_ips: self.trusted_ips.clone(),
                 allowed: self.allowed.clone(),
                 trusted_enabled: self.trusted_enabled.clone(),
-                lib_sender: rqs.message_sender.clone(),
+                consents: self.consents.clone(),
+                generation: self.consents.generation(),
                 core: self.handle.clone(),
             },
             rqs.message_sender.subscribe(),
@@ -1132,7 +1220,8 @@ async fn retry_lan(core: Weak<Mutex<Core>>, ble: EndpointInfo) {
         let now = Instant::now();
         if lookup_due(core.last_lan_lookup, now) && core.restart_discovery() {
             core.last_lan_lookup = Some(now);
-            tracing::info!("{} has no LAN entry yet: restarting the search", ble.id);
+            tracing::info!("a Bluetooth device has no LAN entry yet: restarting the search");
+            tracing::debug!("{} has no LAN entry yet", ble.id);
         }
     }
 }
@@ -1185,7 +1274,8 @@ async fn report_silent_send(
     if send_started(&mut events, &sent_as, within).await {
         return;
     }
-    tracing::info!("no answer from {sent_as}: reporting the send as failed");
+    tracing::info!("no answer to a send in time: reporting it as failed");
+    tracing::debug!("no answer from {sent_as}");
     // Stop the library's transfer too, or it would go on and a retry would offer the files twice.
     // No effect while it is still scanning or dialling (no request exists yet to receive it).
     let _ = bus.send(ChannelMessage {
@@ -1224,17 +1314,41 @@ fn drop_stale(active: &mut HashMap<String, TransferEvent>, now: i64) {
     active.retain(|_, transfer| now - transfer.last_event < STALE_AFTER_SECS);
 }
 
-/// Removes `kuickshare-*` Wi-Fi profiles left by a crash or by the shutdown, only when the Wi-Fi
-/// upgrade is on (it is the only user of NetworkManager). Quiet when NetworkManager is absent;
-/// bounded so it cannot hang the daemon.
-async fn remove_stale_wifi_profiles() {
-    let link = NmLink::new();
-    let sweep = link.cleanup_stale();
-    if tokio::time::timeout(Duration::from_secs(5), sweep)
-        .await
-        .is_err()
-    {
-        tracing::debug!("Wi-Fi profile cleanup timed out");
+/// `Core::request_wifi_upgrade` refused: the firewall consent needs the Wi-Fi upgrade to be on.
+#[derive(Debug, PartialEq, Eq)]
+pub struct InsecureNeedsUpgrade;
+
+impl std::fmt::Display for InsecureNeedsUpgrade {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("allowing the open firewall zone needs the Wi-Fi upgrade to be on")
+    }
+}
+
+impl std::error::Error for InsecureNeedsUpgrade {}
+
+/// What `release_wifi` works on, taken under the `Core` lock so the D-Bus calls run without it.
+#[must_use]
+pub struct WifiRelease {
+    nm: Arc<NmLink>,
+}
+
+/// Bound of the Wi-Fi cleanup when the daemon stops. The shell waits 3 s for the daemon to end
+/// after SIGTERM (`waitForFinished` in `corebridge.cpp`): this stays within it.
+pub const WIFI_STOP_CLEANUP_BOUND: Duration = Duration::from_secs(2);
+/// Bound of the sweep of leftover profiles at start, before the service takes its name.
+pub const WIFI_START_SWEEP_BOUND: Duration = Duration::from_secs(5);
+
+/// At daemon start and stop: closes the firewall port and restores the previous connection of a
+/// hotspot that is up or half-made, and removes `kuickshare-*` profiles left by a crash (whatever
+/// the settings say: the crashed run may have had the upgrade on), through the link the transfers
+/// use (a new one would not know the port or the connection). Quiet when NetworkManager is absent;
+/// stops waiting after `within`, so it cannot hang the daemon.
+pub async fn release_wifi(release: WifiRelease, within: Duration) {
+    let WifiRelease { nm } = release;
+    if tokio::time::timeout(within, nm.shutdown()).await.is_err() {
+        tracing::warn!(
+            "Wi-Fi cleanup did not finish in {within:?}: a hotspot or an open firewall port may remain"
+        );
     }
 }
 
@@ -1323,6 +1437,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn consent_needs_the_upgrade_and_every_other_write_takes_it_back() {
+        let mut core = test_core();
+        assert!(!core.insecure_hotspot_allowed());
+        assert_eq!(
+            core.request_wifi_upgrade(false, true),
+            Err(InsecureNeedsUpgrade)
+        );
+        assert!(!core.insecure_hotspot_allowed() && !core.settings().wifi_upgrade);
+
+        core.request_wifi_upgrade(true, true).unwrap();
+        assert!(core.insecure_hotspot_allowed() && core.settings().wifi_upgrade);
+        assert_eq!(core.nm.hotspot_policy(), HotspotPolicy::AllowOpenZone);
+
+        core.request_wifi_upgrade(true, false).unwrap();
+        assert!(!core.insecure_hotspot_allowed() && core.settings().wifi_upgrade);
+
+        core.request_wifi_upgrade(true, true).unwrap();
+        core.request_wifi_upgrade(false, false).unwrap();
+        assert!(!core.insecure_hotspot_allowed() && !core.settings().wifi_upgrade);
+    }
+
+    #[tokio::test]
     async fn lib_actions_do_not_wait_for_the_core_lock() {
         let core = Arc::new(Mutex::new(test_core()));
         let actions = core.lock().await.lib_actions();
@@ -1352,27 +1488,56 @@ mod tests {
     }
 
     /// Puts a transfer into `Core.active` the way the forwarder does.
-    /// Not possible today: the `TransferEvent` fields are private to `dbus.rs`
-    /// (needs a `#[cfg(test)]` constructor there). The fixer implements this.
-    fn seed_active(_core: &Core, _id: &str, _kind: &str, _state: &str, _device: &str) {
-        todo!("needs a test constructor for dbus::TransferEvent (kind, state, device)")
+    fn seed_active(core: &Core, id: &str, kind: &str, state: &str, device: &str) {
+        core.active.lock().unwrap().insert(
+            id.to_owned(),
+            TransferEvent::for_test(id, kind, state, device),
+        );
     }
 
-    /// REPRO (defect 7): `allow_device` must refuse an outbound transfer and an
-    /// inbound one that is already finished; it must say so by the transfer
-    /// state, before looking at the ARP table (so the error does not mention
-    /// the MAC address) and must not touch the allowed list.
+    /// `allow_device` must refuse an outbound transfer and an inbound one that is already
+    /// finished; it must say so by the transfer state, before looking at the ARP table (so the
+    /// error does not mention the MAC address) and must not touch the allowed list.
     #[test]
-    #[ignore = "needs a test constructor for dbus::TransferEvent to seed Core.active (fields are private to dbus.rs)"]
     fn allow_device_refuses_outbound_and_finished() {
         let mut core = test_core();
         seed_active(&core, "10.0.0.5:4000", "outbound", "SendingFiles", "phone");
         seed_active(&core, "10.0.0.6:4000", "inbound", "Finished", "tablet");
         for id in ["10.0.0.5:4000", "10.0.0.6:4000"] {
-            let err = core.allow_device(id).unwrap_err().to_string();
-            assert!(!err.contains("MAC"), "refused for the wrong reason: {err}");
+            let err = core.allow_device(id).unwrap_err();
+            assert_eq!(
+                err.downcast_ref::<crate::consent::ConsentError>(),
+                Some(&crate::consent::ConsentError::NotWaiting),
+                "refused for the wrong reason: {err}"
+            );
+            assert!(!err.to_string().contains("MAC"));
             assert!(core.allowed_json() == "[]", "nothing may be trusted");
         }
+    }
+
+    #[tokio::test]
+    async fn trusting_follows_the_consent_not_the_active_list() {
+        let mut core = test_core();
+        // Seen as incoming and active, but no consent waits for it: refused.
+        seed_active(&core, "10.0.0.7:4000", "inbound", "ReceivingFiles", "phone");
+        assert!(core.allow_device("10.0.0.7:4000").is_err());
+        assert_eq!(core.allowed_json(), "[]");
+        // Restarting forgets the consents.
+        let consents = core.consents();
+        consents.open_for_test("10.0.0.8:4000", "phone", None, Instant::now());
+        core.consents.clear();
+        assert_eq!(consents.token("10.0.0.8:4000"), None);
+    }
+
+    #[tokio::test]
+    async fn the_reset_notice_stays_until_it_is_acknowledged() {
+        let mut core = test_core();
+        assert!(!core.trusted_devices_reset());
+        assert!(!core.acknowledge_trusted_devices_reset());
+        core.settings.trusted_devices_reset_notice = true;
+        assert!(core.trusted_devices_reset());
+        assert!(core.acknowledge_trusted_devices_reset());
+        assert!(!core.trusted_devices_reset());
     }
 
     #[tokio::test]

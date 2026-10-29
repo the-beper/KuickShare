@@ -495,6 +495,8 @@ Kirigami.ScrollablePage {
             required property real time
             required property string trusted
             required property string alwaysAccepted
+            required property real consent
+            required property string reason
             required property int index
 
             // A vertical ListView positions its items itself and ignores side margins, so the card
@@ -590,6 +592,9 @@ Kirigami.ScrollablePage {
                 readonly property real time: cell.time
                 readonly property string trusted: cell.trusted
                 readonly property string alwaysAccepted: cell.alwaysAccepted
+                // The core's token of the consent that waits for an answer; without it the buttons would answer nothing.
+                readonly property real consent: cell.consent
+                readonly property string reason: cell.reason
                 readonly property int index: cell.index
 
                 readonly property bool awaitingConsent: kind === "inbound" && transferState === "WaitingForUserConsent"
@@ -709,7 +714,7 @@ Kirigami.ScrollablePage {
                                 Layout.fillWidth: true
 
                                 QQC2.Label {
-                                    readonly property string status: item.awaitingConsent && item.pin.length > 0 ? KI18n.i18n("Wants to share with you · PIN %1", item.pin) : item.inProgress ? item.progressText : page.stateText(item.transferState, item.kind, item.ackBytes, item.viaBluetooth)
+                                    readonly property string status: item.reason.length > 0 && !item.active ? page.core.refusalText(item.reason) : item.awaitingConsent && item.pin.length > 0 ? KI18n.i18n("Wants to share with you · PIN %1", item.pin) : item.inProgress ? item.progressText : page.stateText(item.transferState, item.kind, item.ackBytes, item.viaBluetooth)
                                     readonly property string stamp: page.when(item.time)
                                     text: stamp.length > 0 && !item.active ? page.joined(status, stamp) : status
                                     opacity: 0.7
@@ -756,13 +761,13 @@ Kirigami.ScrollablePage {
                                     }
                                 }
                                 QQC2.Button {
-                                    visible: item.awaitingConsent
+                                    visible: item.awaitingConsent && item.consent > 0
                                     text: KI18n.i18n("Accept")
                                     icon.name: "dialog-ok-apply"
                                     onClicked: page.core.accept(item.transferId)
                                 }
                                 QQC2.Button {
-                                    visible: item.awaitingConsent
+                                    visible: item.awaitingConsent && item.consent > 0
                                     text: KI18n.i18n("Decline")
                                     icon.name: "dialog-cancel"
                                     onClicked: page.core.decline(item.transferId)

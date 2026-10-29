@@ -27,10 +27,19 @@ struct Daemon {
 impl Daemon {
     /// `history` is written to the history file before the daemon starts.
     async fn start(name: &str, history: Option<&str>) -> Self {
+        Self::start_with(name, history, None).await
+    }
+
+    /// `settings` is written to the settings file before the daemon starts.
+    async fn start_with(name: &str, history: Option<&str>, settings: Option<&str>) -> Self {
         let dir = std::env::temp_dir().join(format!("kuickshare-it-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("config")).unwrap();
         fs::create_dir_all(dir.join("data/kuickshare")).unwrap();
+        if let Some(settings) = settings {
+            fs::create_dir_all(dir.join("config/kuickshare")).unwrap();
+            fs::write(dir.join("config/kuickshare/settings.json"), settings).unwrap();
+        }
         if let Some(history) = history {
             fs::write(dir.join("data/kuickshare/history.json"), history).unwrap();
         }
@@ -356,6 +365,79 @@ async fn decline_unknown_id_is_error() {
     );
 }
 
+/// A token alone does not make an answer valid: no transfer waits, whatever the token and the
+/// answer. (The same with a transfer that waits is `wrong_token_refused` and
+/// `answer_transfer_accepts_once` in `src/core/dbus.rs`: no phone can be made to send one here.)
+#[tokio::test]
+async fn wrong_token_refused() {
+    let daemon = Daemon::start("wrong-token", None).await;
+    for answer in ["accept", "accept_and_trust", "decline"] {
+        for token in [0u64, 1, u64::MAX] {
+            assert!(
+                daemon
+                    .call("AnswerTransfer", &("10.0.0.9:4000", token, answer))
+                    .await
+                    .is_err(),
+                "{answer} with token {token} must fail when nothing waits"
+            );
+        }
+    }
+    // An answer the API does not know is refused as such.
+    let e = daemon
+        .call("AnswerTransfer", &("10.0.0.9:4000", 1u64, "maybe"))
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("InvalidArgs"), "{e}");
+}
+
+#[tokio::test]
+async fn answer_transfer_without_a_waiting_transfer_is_refused_every_time() {
+    let daemon = Daemon::start("answer-none", None).await;
+    // Nothing waits, so nothing is accepted, the first time or the second, and the error says why.
+    for _ in 0..2 {
+        let e = daemon
+            .call("AnswerTransfer", &("10.0.0.9:4000", 7u64, "accept"))
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("Error.NotWaiting"), "{e}");
+    }
+}
+
+#[tokio::test]
+async fn the_trusted_devices_notice_is_pending_only_after_an_upgrade() {
+    let daemon = Daemon::start("reset-notice-none", None).await;
+    assert!(!daemon.get::<bool>("TrustedDevicesReset").await);
+    daemon
+        .call("AcknowledgeTrustedDevicesReset", &())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn old_trusted_devices_are_removed_once_and_the_notice_survives_a_restart() {
+    let old = r#"{"allowed_devices":[{"name":"old phone","mac":"aa:bb:cc:dd:ee:01"}]}"#;
+    let daemon = Daemon::start_with("reset-notice", None, Some(old)).await;
+    assert_eq!(daemon.json("AllowedDevices").await, serde_json::json!([]));
+    assert!(daemon.get::<bool>("TrustedDevicesReset").await);
+    // The file has the notice too: a restart before the user saw it keeps it.
+    let saved = daemon.file("config/kuickshare/settings.json");
+    assert!(
+        saved.contains("\"trusted_devices_reset_notice\": true"),
+        "{saved}"
+    );
+    daemon
+        .call("AcknowledgeTrustedDevicesReset", &())
+        .await
+        .unwrap();
+    assert!(!daemon.get::<bool>("TrustedDevicesReset").await);
+    let saved = daemon.file("config/kuickshare/settings.json");
+    assert!(
+        saved.contains("\"trusted_devices_reset_notice\": false"),
+        "{saved}"
+    );
+    assert!(saved.contains("\"allowed_reset_v1\": true"), "{saved}");
+}
+
 #[tokio::test]
 async fn joining_a_network_needs_credentials_from_a_finished_transfer() {
     let daemon = Daemon::start("join", None).await;
@@ -406,4 +488,101 @@ async fn the_firewall_check_answers_even_without_a_system_bus() {
         .await
         .unwrap();
     assert!(!reply.body().deserialize::<bool>().unwrap());
+}
+
+#[tokio::test]
+async fn legacy_wifi_upgrade_write_never_grants_consent() {
+    let daemon = Daemon::start("legacy-wifi", None).await;
+    assert!(!daemon.get::<bool>("InsecureHotspotAllowed").await);
+
+    // The legacy property cannot carry the consent: it never turns it on...
+    daemon.set("WifiUpgrade", Variant::from(true)).await;
+    assert!(daemon.get::<bool>("WifiUpgrade").await);
+    assert!(!daemon.get::<bool>("InsecureHotspotAllowed").await);
+
+    // ...and any write through it takes a given consent back.
+    daemon
+        .call("RequestWifiUpgrade", &(true, true))
+        .await
+        .unwrap();
+    assert!(daemon.get::<bool>("InsecureHotspotAllowed").await);
+    daemon.set("WifiUpgrade", Variant::from(true)).await;
+    assert!(daemon.get::<bool>("WifiUpgrade").await);
+    assert!(!daemon.get::<bool>("InsecureHotspotAllowed").await);
+}
+
+#[tokio::test]
+async fn consent_requires_enable() {
+    let daemon = Daemon::start("consent-needs-enable", None).await;
+
+    let err = daemon
+        .call("RequestWifiUpgrade", &(false, true))
+        .await
+        .expect_err("consent without the upgrade must be refused");
+    assert!(err.to_string().contains("InvalidArgs"), "{err}");
+    assert!(!daemon.get::<bool>("WifiUpgrade").await);
+    assert!(!daemon.get::<bool>("InsecureHotspotAllowed").await);
+
+    daemon
+        .call("RequestWifiUpgrade", &(true, true))
+        .await
+        .unwrap();
+    assert!(daemon.get::<bool>("WifiUpgrade").await);
+    assert!(daemon.get::<bool>("InsecureHotspotAllowed").await);
+
+    // Only the upgrade is saved: the consent never reaches a file.
+    let saved: serde_json::Value =
+        serde_json::from_str(&daemon.file("config/kuickshare/settings.json")).unwrap();
+    assert_eq!(saved["wifi_upgrade"], true);
+    assert!(
+        !saved.to_string().contains("insecure"),
+        "the consent must not be saved: {saved}"
+    );
+}
+
+#[tokio::test]
+async fn reset_clears_consent() {
+    let daemon = Daemon::start("reset-consent", None).await;
+    daemon
+        .call("RequestWifiUpgrade", &(true, true))
+        .await
+        .unwrap();
+    assert!(daemon.get::<bool>("InsecureHotspotAllowed").await);
+
+    daemon.call("ResetSettings", &()).await.unwrap();
+
+    assert!(!daemon.get::<bool>("InsecureHotspotAllowed").await);
+    assert!(!daemon.get::<bool>("WifiUpgrade").await);
+}
+
+#[tokio::test]
+async fn request_wifi_upgrade_disable_always_allowed() {
+    let daemon = Daemon::start("disable-wifi", None).await;
+
+    // Off while already off.
+    daemon
+        .call("RequestWifiUpgrade", &(false, false))
+        .await
+        .unwrap();
+    assert!(!daemon.get::<bool>("WifiUpgrade").await);
+
+    // Off takes the consent back.
+    daemon
+        .call("RequestWifiUpgrade", &(true, true))
+        .await
+        .unwrap();
+    daemon
+        .call("RequestWifiUpgrade", &(false, false))
+        .await
+        .unwrap();
+    assert!(!daemon.get::<bool>("WifiUpgrade").await);
+    assert!(!daemon.get::<bool>("InsecureHotspotAllowed").await);
+
+    // On without consent leaves it off.
+    daemon
+        .call("RequestWifiUpgrade", &(true, false))
+        .await
+        .unwrap();
+    assert!(daemon.get::<bool>("WifiUpgrade").await);
+    assert!(!daemon.get::<bool>("InsecureHotspotAllowed").await);
 }

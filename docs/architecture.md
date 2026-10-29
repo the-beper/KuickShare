@@ -70,18 +70,21 @@ flowchart LR
 | --- | --- |
 | `main.rs` | Loads settings, history and trust, serves D-Bus, starts the engine, waits for a signal |
 | `app.rs` | `Core`: owns the `rqs_lib` engine and the settings. Settings that change the device name or port rebuild the engine, and the old values are restored if that fails |
-| `dbus.rs` | The D-Bus interface, plus forwarder tasks that turn library events into signals, run the consent timeout, the name guard and auto-accept |
-| `link.rs` | `NmLink`: the Wi-Fi link of the upgrade over NetworkManager's D-Bus (access point or join) and the saved join of "Join network"; see [Wi-Fi upgrade](wifi-direct.md) |
+| `dbus.rs` | The D-Bus interface, plus forwarder tasks that turn library events into signals and take each incoming transfer through the consent book (name guard, open, auto-accept) |
+| `consent.rs` | `Consents`: the one book of incoming transfers that wait for an answer, see [Consent and the guard](#consent-and-the-guard). It has its own lock and never takes the `Core` lock |
+| `link.rs` | `NmLink`: the Wi-Fi link of the upgrade over NetworkManager's D-Bus (access point or join) and the saved join of "Join network"; it opens the hotspot's firewall port first and refuses the hotspot without it unless the session consent (`HotspotPolicy`) allows an open zone; see [Wi-Fi upgrade](wifi-direct.md) |
 | `trust.rs` | Noise XX channel on TCP 47891: probe, announce, pairing |
 | `allowed.rs` | Trusted devices by name and MAC |
-| `safety.rs` | File name guard |
+| `safety.rs` | The file name rule, re-exported from `rqs_lib::safety` so that the core's guard and the library cannot disagree |
 | `ratelimit.rs` | Per-address connection limit for the trust port |
 | `wifi_credentials.rs` | In-memory store of received Wi-Fi credentials for "Join network" |
 | `history.rs`, `settings.rs` | JSON persistence |
 
 Settings that restart the engine (device name, static port, reset) are refused while a transfer is active. A transfer with no event for 600 s counts as over, so a lost final event cannot block them forever.
 
-The core is behind one lock, held while a send chooses its route (up to about 8 s in the worst case, see the timeouts in `choose_route`) and during a restart, so other D-Bus calls wait meanwhile. Accept and Decline do not: they use the library's event channel directly. Cancel does wait, because a send that is still choosing its route has no library id to cancel yet.
+At start the core removes leftover `kuickshare-*` NetworkManager profiles (unconditionally, bounded at 5 s) before it takes its D-Bus name; at stop it releases the Wi-Fi link within 2 s ([timings](wifi-direct.md#timings-and-timeouts)).
+
+The core is behind one lock, held while a send chooses its route (up to about 8 s in the worst case, see the timeouts in `choose_route`) and during a restart, so other D-Bus calls wait meanwhile. Answering a transfer (`AnswerTransfer`, `Accept`, `Decline`) does not: it goes through the consent book and the library's event channel directly. Cancel does wait, because a send that is still choosing its route has no library id to cancel yet.
 
 ### Inside the shell
 
@@ -111,16 +114,17 @@ sequenceDiagram
 
     Note over P,U: Incoming
     P->>L: connection request, file names, size
+    L->>L: offer within the receive limits? else refuse with a reason
     L->>C: event WaitingForUserConsent
     C->>C: unsafe file name? then decline
-    C->>C: start consent timer
+    C->>C: open the consent (token, 300 s, MAC read now)
     C->>C: intent from paired peer, or allowed name+MAC? then accept
-    C->>S: signal TransferUpdated
+    C->>S: signal TransferUpdated (with the consent token)
     S->>U: notification: Accept / Accept and trust / Decline
     U->>S: Accept
-    S->>C: Accept(id)
+    S->>C: AnswerTransfer(id, consent, "accept")
     C->>L: ConsentAccept
-    L->>P: receive files into the download folder
+    L->>P: reserve the files, receive them into the download folder
     L->>C: events ReceivingFiles ... Finished
     C->>C: write history entry
     C->>S: TransferUpdated (final, history_uid)
@@ -158,7 +162,7 @@ sequenceDiagram
     P->>L: UKEY2, connection request (same events as above)
     L->>C: WaitingForUserConsent (always asks, no trust)
     L->>C: link.host() asks for a hotspot
-    C->>N: open the port in firewalld, then AddAndActivateConnection2 (AP, IPv4 shared: dnsmasq serves DHCP)
+    C->>N: open the port in firewalld (refused without it, unless allowed for the session), then AddAndActivateConnection2 (AP, IPv4 shared: dnsmasq serves DHCP)
     L->>P: UPGRADE_PATH_AVAILABLE (ssid, password)
     P->>L: joins, TCP connect, files continue there
 
@@ -179,7 +183,7 @@ The state names come from `rqs_lib` and are passed through unchanged as strings.
 
 | State | Meaning for KuickShare |
 | --- | --- |
-| `WaitingForUserConsent` (inbound) | Starts the consent timer; the only state where auto-accept is evaluated |
+| `WaitingForUserConsent` (inbound) | Opens the consent (token, deadline, MAC read); the only state where auto-accept is evaluated. Any later state closes it |
 | `SendingFiles`, `ReceivingFiles` | Counts as active for the shell (progress job, Do Not Disturb, blocking settings) |
 | `Finished`, `Cancelled`, `Rejected`, `Disconnected` | Final. The transfer leaves the active set and is written to the history |
 
@@ -198,7 +202,7 @@ Paths follow the XDG variables; defaults are shown. Writes go to `<name>.tmp` an
 | `identity.json` | `~/.local/share/kuickshare/` | Long-term Noise key pair, mode 0600, created on first start | The core refuses to start; the file is not touched |
 | `peers.json` | `~/.local/share/kuickshare/` | Paired computers: name, public key, SHA-256 fingerprint, pairing time | Renamed to `peers.json.bak`, no paired computers |
 | `history.json` | `~/.local/share/kuickshare/` | Finished transfers, newest first | Logged and treated as empty; no `.bak`, so the next save overwrites it |
-| Received files | Setting `download_dir`, else the library default (XDG download dir) | Written by `rqs_lib` | Not managed by KuickShare |
+| Received files | Setting `download_dir`, else the library default (XDG download dir) | Written by `rqs_lib`: each name is reserved when the transfer is accepted (never overwriting: `name (1).ext`) and written through a directory handle, at most one file open at a time; see [Receive limits](#receive-limits) | An incomplete file is removed on cancel, decline, error, disconnect and timeout, but not after a crash, SIGKILL or power loss |
 | Clipboard images | `<cache>/clipboard/` | PNGs saved to send a pasted image; the shell deletes those older than 1 h at startup | |
 | Autostart entry | `~/.config/autostart/io.github.the_beper.KuickShare.desktop` | Written by the shell setting | |
 | Installation | `~/.local/share/kuickshare/bin/`, `.desktop`, icons, `.mo`, service menu | See [Packaging](#packaging) | |
@@ -234,23 +238,54 @@ Pairing:
 
 Only one pairing may run at a time, so another host cannot take over the code on screen. Two computers count as trusted for sending only if each has the other's key; the probe checks both directions.
 
-Receiving: when an inbound transfer asks for consent, the core looks for a still valid intent from the same source IP. If there is one, it accepts. The match is by IP address, not by key, so the transfer itself is not authenticated to the Noise identity (see [SECURITY.md](../SECURITY.md)).
+Receiving: when an inbound transfer asks for consent, the core looks for a still valid intent from the same source IP. If there is one, it accepts. The match is by IP address, not by key, so the transfer itself is not authenticated to the Noise identity (see [SECURITY.md](../SECURITY.md)). An intent not yet used is void after `Unpair`.
 
 Sending: the core announces only to computers it saw as `trusted` in a probe.
 
 ### Trusted devices by name and MAC
 
-"Accept and trust" on a consent notification stores the sender's name and its MAC address in the allowed list. The MAC is read from the kernel ARP table (`/proc/net/arp`) for the transfer's source IP. This works only for IPv4 neighbours on the same link; an incomplete entry, another network or IPv6 gives no MAC, and the device is then asked about normally.
+"Accept and trust" on a consent notification (`AnswerTransfer` with `accept_and_trust`) stores the sender's name and its MAC address in the allowed list. The MAC is read from the kernel ARP table (`/proc/net/arp`) for the transfer's source IP **once, when the consent opens**, and stored with it; the answer binds that MAC, so it cannot be swapped between the prompt and the click. It fails, leaving the transfer waiting, if no MAC was read then (an incomplete entry, another network, IPv6, Bluetooth), if the address now has a different MAC, or if the sender has no name; the user can still accept without trusting. The legacy `AllowDevice` works only while the transfer waits, or within 30 s after the user accepted it (never after an automatic accept).
 
-A later transfer is accepted without asking if the option is on, the name is non-empty and both name and MAC match an entry. The MAC is looked up only when the option is on.
+A later transfer is accepted without asking if the option is on, the name is non-empty and both name and MAC (read when its consent opened) match an entry. The MAC is looked up only when the option is on.
+
+Older versions recognised a device by name and address alone. Because both can be copied, their lists were deleted once on upgrade, and the shell shows a notice until the user acknowledges it (`TrustedDevicesReset`, `AcknowledgeTrustedDevicesReset`). The feature stays: it is optional and now bound to the MAC read at the prompt, which still does not authenticate the sender.
 
 > [!WARNING]
-> Name and MAC are both set by the sender. Anyone on the same network who copies them is accepted without a prompt. The file name guard still applies, but the files are written to the download folder. Use this only on networks you trust.
+> Name and MAC are both set by the sender. Anyone on the same network who copies them is accepted without a prompt. The file name guard and the receive limits still apply, but the files are written to the download folder. Use this only on networks you trust.
 
 ### Consent and the guard
 
-- **Consent timeout.** An inbound transfer waiting for an answer is declined after 300 s.
-- **File name guard** (`safety.rs`). The library writes the names it is given straight into the download folder, so the core declines any inbound transfer with a name that is empty, `.` or `..`, longer than 255 bytes, or contains `/`, `\`, a control character or an invisible or direction-changing character (U+200B to U+200F, U+202A to U+202E, U+2060 to U+2064, U+2066 to U+2069, U+FEFF). It runs before consent and before auto-accept, so no rule can bypass it.
+- **One consent book** (`consent.rs`). Every incoming transfer that waits for the user has an entry with a random token, a 300 s deadline, and the device name, address and MAC address seen when it opened. Every way of accepting it goes through `Consents::resolve`: the D-Bus methods, the paired-computer and the trusted-device auto-accept. The entry is removed before the answer is sent, so a consent is answered once even when answers race, an expired consent is never accepted (an accept after the deadline declines it), and a prompt that outlived its transfer cannot answer a new one under the same id: the token (`consent` in `TransferUpdated`, the argument of `AnswerTransfer`) differs, as does a new PIN under the same id. Restarting the service clears the book, and events of the stopped engine are ignored. The legacy `Accept`, `Decline` and `AllowDevice` have no token and cannot tell a reused id.
+- **The token is not a secret.** It travels in a signal every client of the session bus can read, and `Accept` needs none: it guards against a stale prompt, not against another process of the same user (see the threat model).
+- **Caps.** At most 32 transfers wait at once, at most 4 from one network address, and 8 of the 32 places are kept for Bluetooth senders (`ble-N`), so a flood over the network cannot get the one phone that sends over Bluetooth declined. Past a cap the transfer is declined and the refusal is logged at most once in 10 s.
+- **Consent timeout.** An inbound transfer waiting for an answer is declined after 300 s, by one ticker in the core. The library has its own ceiling of 330 s on the wait, for a core that missed the event (see [Receive limits](#receive-limits)).
+- **File name guard** (`safety.rs`). The names are checked in the library (`rqs_lib::safety`, also when the files are created) and the core re-uses the same rule, so a transfer is declined for a name that is empty, `.` or `..`, longer than 255 bytes, or contains `/`, `\`, a control character or an invisible or direction-changing character (U+200B, U+200E and U+200F, U+202A to U+202E, U+2060 to U+2064, U+2066 to U+2069, U+FEFF). The zero-width joiners U+200C and U+200D are allowed: Persian text and emoji sequences need them. The core's check runs before consent and before auto-accept, so no rule can bypass it.
+
+### Receive limits
+
+`rqs_lib` checks an offer before the user is asked and bounds what an unknown sender can make a session do (`Limits` in `third_party/rqs_lib/src/safety.rs`; a refusal reaches the app as `reason`, see [dbus-api.md](dbus-api.md#refusal-reasons)).
+
+| Limit | Value |
+| --- | --- |
+| Files in one offer | 10,000; a larger offer is refused whole |
+| Declared sizes | Negative sizes and sums that overflow are refused; two files with one payload id are refused |
+| Free space | The offer must fit with 32 MiB left over; the download folder must be usable, and is not created by the offer |
+| In-memory payloads (text, URLs, Wi-Fi, sharing frames) | 5 MiB each; 1 open before the accept, 4 after |
+| Frame length | 5 MiB; a body is read as it arrives, not allocated from the announced length |
+| Handshake | 90 s from the start of a session to the offer |
+| Without a byte from the sender | 60 s; not counted while the user decides nor during a Wi-Fi upgrade |
+| Wait for the user | 330 s in the library; the core's 300 s comes first |
+| Frame writes | Each has a deadline; a stream whose write failed is not written again |
+| LAN sessions at once | 32, and 4 from one address (the LAN listener only; the Bluetooth receiver takes one session at a time) |
+| Files open at once | 1, and only while its data arrives |
+
+What a session does with files:
+
+- Nothing is written before consent: file data and text sent before the accept are refused.
+- Each file is reserved at accept (`O_CREAT | O_EXCL | O_NOFOLLOW`, relative to the download folder opened at the offer), so a transfer never overwrites a file and a folder replaced since the offer is refused.
+- `Finished` comes only after every file has its declared size and was synced.
+- A file that is not finished is removed on cancel, decline, error, disconnect, timeout and panic. Only SIGKILL and power loss can leave one behind.
+- The memory a session can hold before consent is about 10 MiB (one frame and one in-memory payload, 5 MiB each) *(inferred from the two limits, not measured)*.
 
 ### Limits on the trust port
 
@@ -313,16 +348,17 @@ Assumes the attacker is on the same LAN, or a malicious app runs as the same use
 | --- | --- | --- |
 | Sender uses a path in a file name to write outside the download folder | Name guard declines the transfer | Names that are valid but misleading (long, unusual Unicode) still pass |
 | Sender hides the real extension with direction characters | Guard rejects them in file names; the shell neutralises markup in names | The shell does not strip direction characters from device names |
-| Unknown sender floods the user with requests | Each request needs consent and expires after the consent timeout | No limit on the number of requests (unverified for the library) |
-| Partial files, no disk space check, any size | None in KuickShare | Documented in [SECURITY.md](../SECURITY.md) |
+| Unknown sender floods the user with requests | Each request needs consent and expires after the consent timeout; at most 32 wait at once (4 per address, 8 kept for Bluetooth), the rest are declined; the library holds at most 32 LAN sessions and 4 per address | Many addresses can hold the 32 LAN slots until the handshake and idle limits expire (90 s, 60 s); each session can hold about 10 MiB before consent |
+| Partial files, no disk space check, any size | The library refuses an offer that is too large, has too many files or does not fit the free space with a reserve; files are reserved at accept, never overwritten, and removed when not finished | A crash, SIGKILL or power loss can leave a partial file; a sender can still fill the disk up to the free space minus the reserve with a transfer the user accepts |
+| A stale prompt answers a newer transfer under the same id, or two answers race | One consent book: token per transfer, answered once, the entry removed before the answer is sent | The token is readable by any client of the session bus, so another process of the same user is not stopped by it |
 | Man in the middle during pairing | Noise XX plus an 8-digit code compared by both users | The user confirms without comparing |
 | Stranger starts a pairing | Pairing window must be opened by the user, expires, one at a time, needs both confirmations | While open, anyone on the LAN can make a code appear; the user must decline |
-| Copy of name and MAC of a trusted device | MAC from the ARP table, same link only, option can be turned off | A LAN attacker can set both and is accepted silently |
-| Hijack of the intent window of a paired computer | Intent needs a paired key, short-lived, used once | Matched by source IP, so a host that can take that IP and reach the Quick Share port in that time is accepted |
+| Copy of name and MAC of a trusted device | MAC from the ARP table read when the prompt opened, same link only, option can be turned off; the lists of older versions (name and address only) were deleted once, with a notice | A LAN attacker can set both and is accepted silently |
+| Hijack of the intent window of a paired computer | Intent needs a paired key, short-lived, used once, void after `Unpair` | Matched by source IP, so a host that can take that IP and reach the Quick Share port in that time is accepted |
 | Flood of the trust port | Per-address rate limit, per-address and global caps, 10 s timeouts | Many addresses can fill the 32 slots and delay probes and pairing; transfers by consent still work |
 | mDNS advert makes the core connect to an outside host | Probe only to local addresses | Any local address can be probed (a TCP connect to the trust port) |
 | Theft of the identity key | File mode 0600, written through a private temp file | Not encrypted; another process of the same user can read it |
-| Other process on the session bus calls the API (accept, trust, send) | None seen in the interface code: no check of the caller | Same trust boundary as the user's session |
+| Other process on the session bus calls the API (accept, trust, send, allow the open firewall zone) | None seen in the interface code: no check of the caller. The consent token only guards against stale prompts; `RequestWifiUpgrade` can grant the firewall consent to any caller | Same trust boundary as the user's session |
 | Huge metadata bloats the history | Caps on files and text per entry | Entry count is bounded only by age |
 | Rich-text or HTML injection through a remote name or text | Shell escapes names and text in notifications, labels use plain text | See next section |
 | Leak of Wi-Fi password through the history, D-Bus or logs | Only the network name is kept; the password is never written to disk and stays in a bounded in-memory store (`wifi_credentials.rs`) whose `Debug` output is redacted, also in `rqs_lib` | The password is in the core's memory for up to 10 minutes (a process of the same user could read it) |
@@ -330,7 +366,7 @@ Assumes the attacker is on the same LAN, or a malicious app runs as the same use
 | Forged "trusted" display on a card | The trust label comes from the core's probe, not from the advert | Depends on the probe being correct |
 | A nearby device uses the Bluetooth receiver (setting on) to read or cut a session | Only the device that opens the session with a valid connection request can write to it; one session at a time, new ones refused while one is live; a transfer still needs the user's consent and is never auto-accepted (ids `ble-N`) | A device can claim the slot in the instant between the phone's subscribe and its first write, and hold it while it keeps writing |
 | A peer's upgrade offer points the computer at a hostile network | SSID and password are validated, the gateway must be a private address, the profile never takes the default route or DNS and is kept in memory | The computer joins a network chosen by the peer |
-| The access point on the user's radio | Random 32-character key, profiles deleted afterwards and at start; NetworkManager's `dnsmasq` serves DHCP, so the daemon holds no extra privilege | Only the upgrade port is open to whoever joined (firewalld zone `nm-shared`); where firewalld cannot be changed the zone is `trusted` and every port is open |
+| The access point on the user's radio | Random 32-character key, profiles deleted afterwards and at start (unconditionally, before the D-Bus name is taken); NetworkManager's `dnsmasq` serves DHCP, so the daemon holds no extra privilege. The upgrade port is opened in firewalld's `nm-shared` zone first; if that fails the hotspot is refused before NetworkManager is touched and the transfer stays on Bluetooth (`WifiUpgradeBlocked`) | Only the upgrade port is open to whoever joined. With the user's consent for the session (memory only, revoked by a restart, `ResetSettings`, turning the upgrade off or the legacy `WifiUpgrade` write; revoking tears down an open-zone hotspot) a firewalld refusal uses the `trusted` zone and every port is open, and a missing firewalld leaves the zone to NetworkManager, where another firewall may still block the phone or leave the ports open. Cleanup at stop is bounded at 2 s, so after a timeout or a crash a hotspot or a port may remain until the next start. Not hand-tested with a phone |
 
 ## Display of remote names
 
@@ -360,7 +396,7 @@ The integration tests never touch the desktop's bus. Each test starts its own `d
 
 Not covered by automated tests:
 
-- Real Quick Share transfers (with a phone or between two instances): the consent, auto-accept and name-guard paths in `forward_transfers` have no test that feeds them library events.
+- Real Quick Share transfers (with a phone or between two instances): the consent book and `consent_step` (consent, auto-accept, name guard) are tested with events made by hand and a fake MAC reader, and the library's receive limits and file handling with in-memory sessions; none of that ran against a phone. BLE, Wi-Fi and NetworkManager have no automated test with a real device: the firewall refusal and consent of the hotspot are tested against a fake NetworkManager and firewalld only.
 - Pairing between two real computers; it is tested over loopback only.
 - `CoreBridge`, notifications, progress jobs and the QML UI, beyond `qmllint`.
 - The Flatpak: only the headless smoke test above. Notifications, job progress, the file chooser and Dolphin reading the entry are unverified.

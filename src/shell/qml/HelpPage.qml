@@ -55,7 +55,7 @@ FormCard.FormCardPage {
         Entry {
             icon.name: "security-high"
             text: KI18n.i18n("Trusted devices")
-            description: KI18n.i18n("“Accept and trust” on a notification accepts a phone without asking from then on. It is recognised by name and MAC address, so only on the same network, never for transfers over Bluetooth, which always ask.")
+            description: KI18n.i18n("“Accept and trust” on a notification accepts a phone without asking from then on. It is recognised by name and network address, so only on the same network, never for transfers over Bluetooth, which always ask. Another device on the same network can copy both, so use it only where you trust every device.")
         }
     }
 

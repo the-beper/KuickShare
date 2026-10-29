@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::{
         Arc, Mutex as StdMutex, Weak,
         atomic::{AtomicBool, Ordering},
@@ -28,10 +28,11 @@ use zbus::{
 use crate::{
     allowed::{self, Allowed},
     app::{
-        ActiveTransfers, Core, Endpoints, LibActions, Redirects, SharedHistory, TrustedIps,
-        needs_lan_retry,
+        ActiveTransfers, Core, Endpoints, Redirects, SharedHistory, TrustedIps, needs_lan_retry,
     },
+    consent::{Answer, By, ConsentError, Consents, Opened},
     history::{self, HistoryEntry},
+    link::LinkNotice,
     safety,
     trust::{self, Trust, TrustEvent},
     wifi_credentials,
@@ -44,29 +45,100 @@ type SharedCore = Arc<Mutex<Core>>;
 
 struct Service {
     core: SharedCore,
-    /// Accept and Decline go through this, not through the `Core` lock.
-    actions: LibActions,
+    /// Every answer to an incoming transfer goes through this, not through the `Core` lock.
+    consents: Consents,
 }
 
 fn failed(e: anyhow::Error) -> fdo::Error {
     fdo::Error::Failed(format!("{e:#}"))
 }
 
+/// Why an answer to a transfer was not taken, as D-Bus error names (`<interface>.Error.<Name>`).
+/// `NotWaiting`, `Expired` and `StaleToken` mean nothing waits for that answer any more; the
+/// others (`DeviceChanged`, `NoMac`, `NoName`) mean the sender cannot be trusted but the transfer
+/// still waits, so the user can accept it without trusting.
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "io.github.the_beper.KuickShare1.Error")]
+enum AnswerError {
+    #[zbus(error)]
+    ZBus(zbus::Error),
+    NotWaiting(String),
+    Expired(String),
+    StaleToken(String),
+    DeviceChanged(String),
+    NoMac(String),
+    NoName(String),
+    NotRunning(String),
+    InvalidArgs(String),
+}
+
+impl From<ConsentError> for AnswerError {
+    fn from(e: ConsentError) -> Self {
+        let text = e.to_string();
+        match e {
+            ConsentError::NotWaiting => Self::NotWaiting(text),
+            ConsentError::Expired => Self::Expired(text),
+            ConsentError::StaleToken => Self::StaleToken(text),
+            ConsentError::DeviceChanged => Self::DeviceChanged(text),
+            ConsentError::NoMac => Self::NoMac(text),
+            ConsentError::NoName => Self::NoName(text),
+            ConsentError::NotRunning => Self::NotRunning(text),
+        }
+    }
+}
+
 impl Service {
-    async fn send_action(&self, id: &str, action: TransferAction) -> fdo::Result<()> {
-        // Lib actions travel on the same broadcast channel the service listens to.
-        self.actions.send(id, action).map_err(failed)
+    /// The one way a user answer reaches the library. `token` is `None` for the legacy methods.
+    async fn answer(
+        &self,
+        id: &str,
+        token: Option<u64>,
+        answer: Answer,
+    ) -> Result<(), AnswerError> {
+        let resolved = self
+            .consents
+            .resolve(id, token, answer, By::User, Instant::now())?;
+        // The accept is on its way; saving the device may wait for the core lock, which a send
+        // can hold for seconds.
+        if let Some(mac) = resolved.mac {
+            let mut core = self.core.lock().await;
+            core.remember_device(resolved.device, mac);
+        }
+        Ok(())
     }
 }
 
 #[interface(name = "io.github.the_beper.KuickShare1")]
 impl Service {
-    async fn accept(&self, id: &str) -> fdo::Result<()> {
-        self.send_action(id, TransferAction::ConsentAccept).await
+    /// Accepts a transfer that waits for an answer. Fails when none does for `id` (unknown,
+    /// already answered, expired). It cannot tell a reused id from the original: prefer
+    /// `AnswerTransfer`.
+    async fn accept(&self, id: &str) -> Result<(), AnswerError> {
+        self.answer(id, None, Answer::Accept).await
     }
 
-    async fn decline(&self, id: &str) -> fdo::Result<()> {
-        self.send_action(id, TransferAction::ConsentDecline).await
+    /// Declines a transfer that waits for an answer; fails when none does for `id`.
+    async fn decline(&self, id: &str) -> Result<(), AnswerError> {
+        self.answer(id, None, Answer::Decline).await
+    }
+
+    /// Answers the transfer `id` whose `TransferUpdated` carried the key `consent`. `answer` is
+    /// "accept", "accept_and_trust" (accept and remember the sender by name and by the MAC
+    /// address seen when the transfer arrived; fails, leaving the transfer waiting, when that
+    /// cannot be verified) or "decline". Fails with the error `NotWaiting` when no transfer waits
+    /// for `id`, `StaleToken` when `consent` is not the one of the transfer that waits (the id
+    /// was reused), `Expired` when the time to answer is over; `accept_and_trust` fails with
+    /// `NoMac`, `NoName` or `DeviceChanged` and leaves the transfer waiting (all are under
+    /// `io.github.the_beper.KuickShare1.Error`).
+    async fn answer_transfer(
+        &self,
+        id: &str,
+        consent: u64,
+        answer: &str,
+    ) -> Result<(), AnswerError> {
+        let answer = Answer::parse(answer)
+            .ok_or_else(|| AnswerError::InvalidArgs(format!("unknown answer {answer:?}")))?;
+        self.answer(id, Some(consent), answer).await
     }
 
     /// Takes the `Core` lock on purpose: a send that is still choosing its route maps its ids
@@ -107,7 +179,8 @@ impl Service {
     }
 
     /// Whether firewalld runs on the system bus. Without it the Wi-Fi upgrade cannot open one port
-    /// in the firewall and lets the phone reach every port while the hotspot is up.
+    /// in the firewall: receiving over the computer's hotspot is refused, unless the user allowed
+    /// it for this session (`RequestWifiUpgrade`).
     async fn firewall_managed(&self) -> bool {
         crate::link::firewall_managed().await
     }
@@ -290,7 +363,9 @@ impl Service {
         self.core.lock().await.trust().peers_json()
     }
 
-    /// Trust the sender of this transfer (matched by name and MAC).
+    /// Trust the sender of this transfer (matched by name and MAC address, which another device on
+    /// the same network can copy). Works only while the transfer waits for an answer, or within
+    /// 30 s after the user accepted it; prefer `AnswerTransfer` with "accept_and_trust".
     async fn allow_device(&self, id: &str) -> fdo::Result<()> {
         self.core.lock().await.allow_device(id).map_err(failed)
     }
@@ -302,6 +377,25 @@ impl Service {
     /// Devices accepted without asking, as a JSON array of `{name, mac}`.
     async fn allowed_devices(&self) -> String {
         self.core.lock().await.allowed_json()
+    }
+
+    /// True until the shell acknowledges that the trusted devices of an older version were removed
+    /// (they were recognised by name and network address only, which can be copied). Saved, so a
+    /// restart before the user saw the notice keeps it.
+    #[zbus(property)]
+    async fn trusted_devices_reset(&self) -> bool {
+        self.core.lock().await.trusted_devices_reset()
+    }
+
+    /// The user saw the notice of `TrustedDevicesReset`.
+    async fn acknowledge_trusted_devices_reset(
+        &self,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) {
+        let changed = self.core.lock().await.acknowledge_trusted_devices_reset();
+        if changed {
+            let _ = self.trusted_devices_reset_changed(&emitter).await;
+        }
     }
 
     /// Whether transfers from trusted devices are accepted without asking.
@@ -321,9 +415,61 @@ impl Service {
         self.core.lock().await.settings().wifi_upgrade
     }
 
+    /// Legacy write: it cannot carry the firewall consent, so it never grants it and takes back
+    /// any given (see `RequestWifiUpgrade`).
     #[zbus(property)]
-    async fn set_wifi_upgrade(&self, enabled: bool) {
-        self.core.lock().await.set_wifi_upgrade(enabled);
+    async fn set_wifi_upgrade(
+        &self,
+        enabled: bool,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) {
+        let had_consent = {
+            let mut core = self.core.lock().await;
+            let had_consent = core.insecure_hotspot_allowed();
+            // Without consent the request is always valid.
+            let _ = core.request_wifi_upgrade(enabled, false);
+            had_consent
+        };
+        if had_consent {
+            let _ = self.insecure_hotspot_allowed_changed(&emitter).await;
+        }
+    }
+
+    /// The single way to change the Wi-Fi upgrade together with the firewall consent.
+    /// `enabled` is saved. `allow_insecure_hotspot` lets the computer's hotspot use an open
+    /// firewall zone when the firewall refuses to open its one port, for this session only: it is
+    /// kept in memory, and any other write to the upgrade (`WifiUpgrade`, `RequestWifiUpgrade`
+    /// without it, `ResetSettings`) takes it back. `(false, true)` fails with `InvalidArgs`.
+    async fn request_wifi_upgrade(
+        &self,
+        enabled: bool,
+        allow_insecure_hotspot: bool,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> fdo::Result<()> {
+        // The lock is released before the signals: the getters behind them take it again.
+        let (insecure_before, enabled_before, result) = {
+            let mut core = self.core.lock().await;
+            let insecure_before = core.insecure_hotspot_allowed();
+            let enabled_before = core.settings().wifi_upgrade;
+            let result = core.request_wifi_upgrade(enabled, allow_insecure_hotspot);
+            (insecure_before, enabled_before, result)
+        };
+        result.map_err(|e| fdo::Error::InvalidArgs(e.to_string()))?;
+        if enabled_before != enabled {
+            let _ = self.wifi_upgrade_changed(&emitter).await;
+        }
+        if insecure_before != allow_insecure_hotspot {
+            let _ = self.insecure_hotspot_allowed_changed(&emitter).await;
+        }
+        Ok(())
+    }
+
+    /// Whether the user allowed the computer's hotspot to use an open firewall zone for this
+    /// session. Never saved: it is false after every start, and `ResetSettings` and any write to
+    /// the Wi-Fi upgrade without consent make it false.
+    #[zbus(property)]
+    async fn insecure_hotspot_allowed(&self) -> bool {
+        self.core.lock().await.insecure_hotspot_allowed()
     }
 
     /// Puts every setting back to its default (the trusted devices list stays). Fails while a
@@ -351,6 +497,7 @@ impl Service {
         let _ = self.history_keep_days_changed(&emitter).await;
         let _ = self.trusted_devices_enabled_changed(&emitter).await;
         let _ = self.wifi_upgrade_changed(&emitter).await;
+        let _ = self.insecure_hotspot_allowed_changed(&emitter).await;
         let _ = self.tray_icon_changed(&emitter).await;
         let _ = self.dolphin_integration_changed(&emitter).await;
         let _ = self.hide_when_dnd_changed(&emitter).await;
@@ -401,7 +548,7 @@ impl Service {
         self.core.lock().await.set_suspended(suspended);
     }
 
-    /// `info` keys: kind, state, device, pin, preview, payload_kind, files, saved_paths, text, trusted, always_accepted (strings), history_uid, total_bytes, ack_bytes (u64).
+    /// `info` keys: kind, state, device, pin, preview, payload_kind, files, saved_paths, text, trusted, always_accepted (strings), history_uid, total_bytes, ack_bytes, consent (u64), reason (s). `reason` is a stable code when the library refused an incoming offer (bad_name, too_many_files, bad_size, duplicate_id, not_enough_space, destination; more may come), empty otherwise. `consent` is the token `AnswerTransfer` needs while the state is WaitingForUserConsent; 0 otherwise, or when the transfer was accepted automatically.
     #[zbus(signal)]
     async fn transfer_updated(
         emitter: &SignalEmitter<'_>,
@@ -432,6 +579,12 @@ impl Service {
     #[zbus(signal)]
     async fn trusted_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 
+    /// The firewall did not allow the computer's hotspot, so the transfer stays on its first
+    /// channel (Bluetooth: very slow). `reason`: "firewall_denied" (firewalld refused to open the
+    /// port) or "firewall_missing" (firewalld is not running). More codes may be added.
+    #[zbus(signal)]
+    async fn wifi_upgrade_blocked(emitter: &SignalEmitter<'_>, reason: &str) -> zbus::Result<()>;
+
     #[zbus(signal)]
     async fn device_lost(emitter: &SignalEmitter<'_>, id: &str) -> zbus::Result<()>;
 }
@@ -458,15 +611,15 @@ pub struct TransferEvent {
     always_accepted: String,
     /// `uid` of the history entry written when the transfer ended (0: none, or no history).
     history_uid: u64,
+    /// Token of the consent that waits for an answer (see `consent`); 0 when none does.
+    consent: u64,
+    /// Why the library refused an incoming offer (`Refusal::key`), empty otherwise.
+    reason: String,
     /// Unix time in seconds of the latest event seen for this transfer.
     pub(crate) last_event: i64,
 }
 
 impl TransferEvent {
-    pub fn device(&self) -> &str {
-        &self.device
-    }
-
     fn from_client(id: &str, client: &MessageClient) -> Self {
         let meta = client.metadata.as_ref();
         let (files, text) = match meta.and_then(|m| m.payload.as_ref()) {
@@ -506,7 +659,29 @@ impl TransferEvent {
             trusted: String::new(),
             always_accepted: String::new(),
             history_uid: 0,
+            consent: 0,
+            reason: meta
+                .and_then(|m| m.refusal.as_ref())
+                .map(|r| r.key().to_owned())
+                .unwrap_or_default(),
             last_event: 0,
+        }
+    }
+
+    /// A transfer for the tests of other modules.
+    #[cfg(test)]
+    pub(crate) fn for_test(id: &str, kind: &str, state: &str, device: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            kind: if kind == "inbound" {
+                "inbound"
+            } else {
+                "outbound"
+            },
+            state: state.to_owned(),
+            device: device.to_owned(),
+            last_event: history::now(),
+            ..Self::default()
         }
     }
 
@@ -522,6 +697,7 @@ impl TransferEvent {
             (&mut self.text, &newer.text),
             (&mut self.trusted, &newer.trusted),
             (&mut self.always_accepted, &newer.always_accepted),
+            (&mut self.reason, &newer.reason),
         ] {
             if !new.is_empty() {
                 old.clone_from(new);
@@ -534,6 +710,7 @@ impl TransferEvent {
             self.saved_paths.clone_from(&newer.saved_paths);
         }
         self.history_uid = self.history_uid.max(newer.history_uid);
+        self.consent = newer.consent;
         self.last_event = self.last_event.max(newer.last_event);
         self.total_bytes = self.total_bytes.max(newer.total_bytes);
         self.ack_bytes = self.ack_bytes.max(newer.ack_bytes);
@@ -575,6 +752,8 @@ impl TransferEvent {
             ("text", Variant::from(self.text.as_str())),
             ("trusted", Variant::from(self.trusted.as_str())),
             ("history_uid", Variant::from(self.history_uid)),
+            ("consent", Variant::from(self.consent)),
+            ("reason", Variant::from(self.reason.as_str())),
             (
                 "always_accepted",
                 Variant::from(self.always_accepted.as_str()),
@@ -593,10 +772,10 @@ fn is_final(state: &TransferState) -> bool {
     )
 }
 
-pub async fn serve(core: SharedCore, actions: LibActions) -> Result<Connection> {
+pub async fn serve(core: SharedCore, consents: Consents) -> Result<Connection> {
     connection::Builder::session()
         .name(BUS_NAME)
-        .serve_at(OBJECT_PATH, Service { core, actions })
+        .serve_at(OBJECT_PATH, Service { core, consents })
         .build()
         .await
         .with_context(|| format!("failed to own {BUS_NAME} on the session bus"))
@@ -621,7 +800,9 @@ pub struct Forwarding {
     pub trusted_ips: TrustedIps,
     pub allowed: Allowed,
     pub trusted_enabled: Arc<AtomicBool>,
-    pub lib_sender: broadcast::Sender<ChannelMessage>,
+    pub consents: Consents,
+    /// `Consents::generation` of the engine these forwarders belong to.
+    pub generation: u64,
     pub core: Weak<Mutex<Core>>,
 }
 
@@ -632,6 +813,7 @@ pub fn spawn_forwarders(
     devices: broadcast::Receiver<EndpointInfo>,
 ) -> Vec<JoinHandle<()>> {
     vec![
+        tokio::spawn(expire_consents(shared.consents.clone())),
         tokio::spawn(forward_transfers(shared.clone(), transfers)),
         tokio::spawn(forward_devices(
             shared.connection,
@@ -642,6 +824,110 @@ pub fn spawn_forwarders(
             shared.core,
         )),
     ]
+}
+
+/// What `consent_step` needs, apart from the transfer.
+struct ConsentCtx<'a> {
+    consents: &'a Consents,
+    /// The `Consents::generation` of the engine the event comes from.
+    generation: u64,
+    trust: &'a Trust,
+    allowed: &'a Allowed,
+    trusted_enabled: bool,
+}
+
+/// The consent part of one transfer event, before it is reported. Returns false when the event
+/// must not be reported: it comes from an engine that was stopped, or the transfer was declined
+/// (unsafe file name, too many waiting).
+///
+/// For an incoming transfer that waits for the user it opens the consent, accepts it at once when
+/// a paired computer announced it or the sender is on the allowed list (same name and the MAC
+/// address read when the consent opened), and sets the token on `event`. Any later state closes
+/// the consent, a final one forgets the transfer.
+fn consent_step(
+    ctx: &ConsentCtx<'_>,
+    id: &str,
+    client: &MessageClient,
+    event: &mut TransferEvent,
+    now: Instant,
+) -> bool {
+    let consents = ctx.consents;
+    if ctx.generation != consents.generation() {
+        return false;
+    }
+    if !matches!(client.kind, TransferKind::Inbound) {
+        return true;
+    }
+    let is_final_state = client.state.as_ref().is_some_and(is_final);
+
+    // The sender chooses the file names and the library trusts them: refuse a transfer that tries
+    // to write outside the download folder before anything can accept it.
+    // Checked on every event that carries the names, not only the one asking for consent.
+    if !is_final_state
+        && let Some(name) = incoming_file_names(client)
+            .iter()
+            .find(|n| safety::unsafe_file_name(n))
+    {
+        tracing::info!("declined a transfer: unsafe file name");
+        tracing::debug!("declined {id}: unsafe file name {name:?}");
+        consents.force_decline(id);
+        return false;
+    }
+
+    if client.state != Some(TransferState::WaitingForUserConsent) {
+        if is_final_state {
+            consents.finish(id);
+        } else {
+            // It moved on: nobody answers it any more.
+            consents.close(id);
+        }
+        return true;
+    }
+
+    // From here on only `consents` can answer this transfer, whoever does.
+    let ip = ip_of_id(id);
+    let token = match consents.open(ctx.generation, id, &event.device, &event.pin, ip, now) {
+        Opened::Token(token) => token,
+        Opened::Stale => return false,
+        Opened::Full => {
+            if consents.note_refusal(now) {
+                tracing::warn!("declined transfers: too many are waiting for an answer");
+            }
+            consents.force_decline(id);
+            return false;
+        }
+    };
+
+    // A paired computer announced this transfer, or a phone the user trusts sends it (same name
+    // and same MAC address as when the consent opened, only while the option is on): accept it
+    // without asking.
+    let auto = ip.and_then(|ip| {
+        ctx.trust
+            .take_intent(&ip.to_string())
+            .map(|peer| (peer, By::PairedComputer))
+            .or_else(|| {
+                allowed::trusted_sender(
+                    &ctx.allowed.lock().unwrap(),
+                    ctx.trusted_enabled,
+                    &event.device,
+                    || consents.opened_mac(id),
+                )
+                .then(|| (event.device.clone(), By::TrustedDevice))
+            })
+    });
+    if let Some((name, by)) = auto
+        && consents
+            .resolve(id, Some(token), Answer::Accept, by, now)
+            .is_ok()
+    {
+        if by == By::TrustedDevice {
+            event.always_accepted.clone_from(&name);
+        }
+        event.trusted = name;
+    }
+    // Zero when it was accepted just now: there is nothing left to answer.
+    event.consent = consents.token(id).unwrap_or(0);
+    true
 }
 
 async fn forward_transfers(shared: Forwarding, mut events: broadcast::Receiver<ChannelMessage>) {
@@ -655,11 +941,10 @@ async fn forward_transfers(shared: Forwarding, mut events: broadcast::Receiver<C
         trust,
         allowed,
         trusted_enabled,
-        lib_sender,
+        consents,
+        generation,
         ..
     } = shared;
-    // Transfers waiting for an answer: each is declined if nobody answers in time.
-    let mut consent_timers: HashMap<String, JoinHandle<()>> = HashMap::new();
     loop {
         let mut message = match events.recv().await {
             Ok(message) => message,
@@ -681,52 +966,7 @@ async fn forward_transfers(shared: Forwarding, mut events: broadcast::Receiver<C
         let Message::Client(client) = &message.msg else {
             continue;
         };
-        let decline = |id: &str| {
-            let _ = lib_sender.send(ChannelMessage {
-                id: id.to_owned(),
-                msg: Message::Lib {
-                    action: TransferAction::ConsentDecline,
-                },
-            });
-        };
-
-        // The sender chooses the file names and the library trusts them: refuse a transfer that tries
-        // to write outside the download folder before anything can accept it.
-        // Checked on every event that carries the names, not only the one asking for consent.
-        if matches!(client.kind, TransferKind::Inbound)
-            && !client.state.as_ref().is_some_and(is_final)
-            && let Some(name) = incoming_file_names(client)
-                .iter()
-                .find(|n| safety::unsafe_file_name(n))
-        {
-            tracing::warn!(
-                "declined a transfer from {}: unsafe file name {name:?}",
-                message.id
-            );
-            decline(&message.id);
-            continue;
-        }
-        if matches!(client.kind, TransferKind::Inbound)
-            && client.state == Some(TransferState::WaitingForUserConsent)
-        {
-            consent_timers.entry(message.id.clone()).or_insert_with(|| {
-                let id = message.id.clone();
-                let sender = lib_sender.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(CONSENT_TIMEOUT).await;
-                    tracing::info!("declined {id}: no answer within the time limit");
-                    let _ = sender.send(ChannelMessage {
-                        id,
-                        msg: Message::Lib {
-                            action: TransferAction::ConsentDecline,
-                        },
-                    });
-                })
-            });
-        } else if let Some(timer) = consent_timers.remove(&message.id) {
-            timer.abort();
-        }
-
+        let inbound = matches!(client.kind, TransferKind::Inbound);
         let mut event = TransferEvent::from_client(&message.id, client);
         event.last_event = history::now();
         if event.device.is_empty()
@@ -738,40 +978,21 @@ async fn forward_transfers(shared: Forwarding, mut events: broadcast::Receiver<C
         {
             event.device = name;
         }
-
-        // A paired computer announced this transfer: accept it without asking.
-        if matches!(client.kind, TransferKind::Inbound)
-            && event.state == "WaitingForUserConsent"
-            && let Some((ip, _)) = message.id.rsplit_once(':')
-            && let Some(by) = trust.take_intent(ip).map(|peer| (peer, false)).or_else(|| {
-                // A phone the user trusts: same name and same MAC (only while the option is on).
-                allowed::trusted_sender(
-                    &allowed.lock().unwrap(),
-                    trusted_enabled.load(Ordering::Relaxed),
-                    &event.device,
-                    || allowed::mac_for_ip(ip),
-                )
-                .then(|| (event.device.clone(), true))
-            })
-        {
-            let (name, always) = by;
-            if always {
-                event.always_accepted.clone_from(&name);
-            }
-            event.trusted = name;
-            let _ = lib_sender.send(ChannelMessage {
-                id: message.id.clone(),
-                msg: Message::Lib {
-                    action: TransferAction::ConsentAccept,
-                },
-            });
+        let ctx = ConsentCtx {
+            consents: &consents,
+            generation,
+            trust: &trust,
+            allowed: &allowed,
+            trusted_enabled: trusted_enabled.load(Ordering::Relaxed),
+        };
+        if !consent_step(&ctx, &message.id, client, &mut event, Instant::now()) {
+            continue;
         }
 
         // Received Wi-Fi credentials are kept in memory for "Join this network" until used,
         // declined, cancelled or expired. The password is not part of `event`.
         if let Some(state) = &client.state {
             let payload = client.metadata.as_ref().and_then(|m| m.payload.as_ref());
-            let inbound = matches!(client.kind, TransferKind::Inbound);
             let stored = wifi_creds.lock().unwrap().on_event(
                 &message.id,
                 state,
@@ -808,7 +1029,8 @@ async fn forward_transfers(shared: Forwarding, mut events: broadcast::Receiver<C
                     .or_insert_with(|| event.clone());
             }
         }
-        tracing::debug!(?event, "transfer event");
+        // No device name, PIN, text or token here.
+        tracing::debug!(kind = event.kind, state = %event.state, "transfer event");
 
         let emitted = async {
             let iface = interface_ref(&connection).await?;
@@ -840,7 +1062,33 @@ fn is_local_address(ip: &str) -> bool {
 const MAX_HISTORY_FILES: usize = 200;
 const MAX_HISTORY_TEXT: usize = 10_000;
 
-const CONSENT_TIMEOUT: Duration = Duration::from_secs(300);
+/// How often the consents whose time is over are declined.
+const CONSENT_TICK: Duration = Duration::from_secs(5);
+
+/// The only place that declines a transfer nobody answered within `consent::CONSENT_TIMEOUT`.
+async fn expire_consents(consents: Consents) {
+    let mut tick = tokio::time::interval(CONSENT_TICK);
+    loop {
+        tick.tick().await;
+        let expired = consents.expire(Instant::now());
+        if !expired.is_empty() {
+            tracing::info!(
+                "declined {} transfer(s): no answer within the time limit",
+                expired.len()
+            );
+            tracing::debug!("declined for want of an answer: {expired:?}");
+        }
+    }
+}
+
+/// The address in the id of an incoming transfer (`ip:port`, or `[ip]:port` for IPv6).
+fn ip_of_id(id: &str) -> Option<IpAddr> {
+    let (ip, _) = id.rsplit_once(':')?;
+    ip.trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse()
+        .ok()
+}
 
 /// The names of the files a sender wants to put in the download folder (empty for text and the like).
 fn incoming_file_names(client: &MessageClient) -> &[String] {
@@ -1167,6 +1415,26 @@ pub async fn forward_trust_events(
     }
 }
 
+/// Re-emits what the Wi-Fi link reports as D-Bus signals.
+pub async fn forward_link_notices(
+    connection: Connection,
+    mut notices: mpsc::UnboundedReceiver<LinkNotice>,
+) {
+    while let Some(notice) = notices.recv().await {
+        let emitted = async {
+            let iface = interface_ref(&connection).await?;
+            match notice {
+                LinkNotice::WifiUpgradeBlocked(reason) => {
+                    Service::wifi_upgrade_blocked(iface.signal_emitter(), reason.code()).await
+                }
+            }
+        };
+        if let Err(e) = emitted.await {
+            tracing::warn!("failed to emit WifiUpgradeBlocked: {e}");
+        }
+    }
+}
+
 fn failed_transfer_event(id: &str, device: &str) -> TransferEvent {
     TransferEvent {
         id: id.to_owned(),
@@ -1234,6 +1502,438 @@ mod tests {
     };
 
     use super::*;
+    use rqs_lib::safety::Refusal;
+
+    use crate::{allowed::AllowedDevice, app::LibActions, history::History, settings::Settings};
+
+    /// A service on a core without an engine, and what it sends to the library.
+    fn test_service() -> (Service, broadcast::Receiver<ChannelMessage>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let trust = Trust::load(None, "test".into(), tx).unwrap();
+        let core = Core::new(Settings::default(), None, History::load(None), trust, rx);
+        let (lib_tx, lib_rx) = broadcast::channel(16);
+        core.lib_actions().set(Some(lib_tx));
+        let consents = core.consents();
+        let core = Arc::new(Mutex::new(core));
+        (Service { core, consents }, lib_rx)
+    }
+
+    fn accepted(message: &ChannelMessage) -> Option<bool> {
+        match &message.msg {
+            Message::Lib {
+                action: TransferAction::ConsentAccept,
+            } => Some(true),
+            Message::Lib {
+                action: TransferAction::ConsentDecline,
+            } => Some(false),
+            _ => None,
+        }
+    }
+
+    const WAITING: &str = "10.0.0.5:4000";
+    const MAC: &str = "aa:bb:cc:dd:ee:01";
+
+    /// What `consent_step` works with, around a library channel the test can read.
+    struct Harness {
+        consents: Consents,
+        trust: Arc<Trust>,
+        allowed: Allowed,
+        sent: broadcast::Receiver<ChannelMessage>,
+        _trust_events: mpsc::UnboundedReceiver<TrustEvent>,
+        trusted_enabled: bool,
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            let actions = LibActions::default();
+            let (tx, sent) = broadcast::channel(64);
+            actions.set(Some(tx));
+            let (trust_tx, _trust_events) = mpsc::unbounded_channel();
+            Self {
+                consents: Consents::with_mac_reader(actions, |_| Some(MAC.to_owned())),
+                trust: Trust::load(None, "me".into(), trust_tx).unwrap(),
+                allowed: Allowed::default(),
+                sent,
+                _trust_events,
+                trusted_enabled: true,
+            }
+        }
+
+        fn step(&self, id: &str, client: &MessageClient, event: &mut TransferEvent) -> bool {
+            self.step_in(self.consents.generation(), id, client, event)
+        }
+
+        fn step_in(
+            &self,
+            generation: u64,
+            id: &str,
+            client: &MessageClient,
+            event: &mut TransferEvent,
+        ) -> bool {
+            let ctx = ConsentCtx {
+                consents: &self.consents,
+                generation,
+                trust: &self.trust,
+                allowed: &self.allowed,
+                trusted_enabled: self.trusted_enabled,
+            };
+            consent_step(&ctx, id, client, event, Instant::now())
+        }
+
+        /// The actions that reached the library: (id, accepted).
+        fn sent(&mut self) -> Vec<(String, bool)> {
+            let mut out = Vec::new();
+            while let Ok(message) = self.sent.try_recv() {
+                if let Some(accepted) = accepted(&message) {
+                    out.push((message.id, accepted));
+                }
+            }
+            out
+        }
+    }
+
+    fn client(kind: TransferKind, state: TransferState, files: &[&str]) -> MessageClient {
+        MessageClient {
+            kind,
+            state: Some(state),
+            metadata: Some(TransferMetadata {
+                id: "t".into(),
+                source: None,
+                pin_code: None,
+                payload_kind: TransferPayloadKind::Files,
+                payload_preview: None,
+                payload: Some(TransferPayload::Files(
+                    files.iter().map(|f| (*f).to_owned()).collect(),
+                )),
+                total_bytes: 0,
+                ack_bytes: 0,
+                saved_paths: Vec::new(),
+                refusal: None,
+            }),
+        }
+    }
+
+    fn waiting() -> MessageClient {
+        client(
+            TransferKind::Inbound,
+            TransferState::WaitingForUserConsent,
+            &["a.txt"],
+        )
+    }
+
+    fn event(id: &str, state: &str, pin: &str) -> TransferEvent {
+        let mut event = TransferEvent::for_test(id, "inbound", state, "Pixel");
+        event.pin = pin.to_owned();
+        event
+    }
+
+    #[test]
+    fn a_waiting_transfer_gets_a_token_on_its_event() {
+        let h = Harness::new();
+        let mut e = event(WAITING, "WaitingForUserConsent", "1111");
+        assert!(h.step(WAITING, &waiting(), &mut e));
+        assert_ne!(e.consent, 0);
+        assert_eq!(h.consents.token(WAITING), Some(e.consent));
+        assert_eq!(e.info()["consent"], Variant::from(e.consent));
+        // The same event again: the same consent.
+        let mut again = event(WAITING, "WaitingForUserConsent", "1111");
+        assert!(h.step(WAITING, &waiting(), &mut again));
+        assert_eq!(again.consent, e.consent);
+    }
+
+    #[test]
+    fn a_paired_computers_intent_accepts_once_and_gives_no_token() {
+        let mut h = Harness::new();
+        h.trust
+            .plant_intent_for_test("10.0.0.5".parse().unwrap(), "alice");
+        let mut e = event(WAITING, "WaitingForUserConsent", "1111");
+        assert!(h.step(WAITING, &waiting(), &mut e));
+        assert_eq!((e.trusted.as_str(), e.consent), ("alice", 0));
+        assert_eq!(h.sent(), [(WAITING.to_owned(), true)]);
+        // The intent was used up: the next transfer of that address asks.
+        let mut next = event("10.0.0.5:4001", "WaitingForUserConsent", "2222");
+        assert!(h.step("10.0.0.5:4001", &waiting(), &mut next));
+        assert!(next.trusted.is_empty() && next.consent != 0);
+        assert!(h.sent().is_empty());
+    }
+
+    #[test]
+    fn the_allowed_list_accepts_only_the_same_name_and_address_while_on() {
+        let mut h = Harness::new();
+        let device = |name: &str, mac: &str| AllowedDevice {
+            name: name.into(),
+            mac: mac.into(),
+        };
+        *h.allowed.lock().unwrap() =
+            vec![device("Other", MAC), device("Pixel", "aa:bb:cc:dd:ee:02")];
+        let mut e = event(WAITING, "WaitingForUserConsent", "1111");
+        assert!(h.step(WAITING, &waiting(), &mut e));
+        assert!(e.trusted.is_empty(), "name and address must both match");
+        assert!(h.sent().is_empty());
+
+        h.allowed.lock().unwrap().push(device("Pixel", MAC));
+        let mut e = event("10.0.0.5:4001", "WaitingForUserConsent", "2222");
+        assert!(h.step("10.0.0.5:4001", &waiting(), &mut e));
+        assert_eq!(e.always_accepted, "Pixel");
+        assert_eq!(e.consent, 0);
+        assert_eq!(h.sent(), [("10.0.0.5:4001".to_owned(), true)]);
+
+        h.trusted_enabled = false;
+        let mut e = event("10.0.0.5:4002", "WaitingForUserConsent", "3333");
+        assert!(h.step("10.0.0.5:4002", &waiting(), &mut e));
+        assert!(e.trusted.is_empty() && e.consent != 0);
+    }
+
+    #[test]
+    fn later_events_close_the_consent_and_a_final_one_forgets_the_transfer() {
+        let h = Harness::new();
+        let mut e = event(WAITING, "WaitingForUserConsent", "1111");
+        h.step(WAITING, &waiting(), &mut e);
+        // An outgoing event under the same id is not this transfer.
+        let outgoing = client(TransferKind::Outbound, TransferState::SendingFiles, &[]);
+        let mut o = TransferEvent::for_test(WAITING, "outbound", "SendingFiles", "x");
+        assert!(h.step(WAITING, &outgoing, &mut o));
+        assert!(h.consents.token(WAITING).is_some());
+
+        let receiving = client(TransferKind::Inbound, TransferState::ReceivingFiles, &["a"]);
+        let mut e = event(WAITING, "ReceivingFiles", "1111");
+        assert!(h.step(WAITING, &receiving, &mut e));
+        assert_eq!((e.consent, h.consents.token(WAITING)), (0, None));
+
+        // Accepted by the user, it can still be trusted until it ends.
+        let mut e = event("10.0.0.5:4001", "WaitingForUserConsent", "2222");
+        h.step("10.0.0.5:4001", &waiting(), &mut e);
+        h.consents
+            .resolve(
+                "10.0.0.5:4001",
+                Some(e.consent),
+                Answer::Accept,
+                By::User,
+                Instant::now(),
+            )
+            .unwrap();
+        let finished = client(TransferKind::Inbound, TransferState::Finished, &["a"]);
+        let mut e = event("10.0.0.5:4001", "Finished", "2222");
+        assert!(h.step("10.0.0.5:4001", &finished, &mut e));
+        assert!(
+            h.consents
+                .allow_trust("10.0.0.5:4001", Instant::now())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_name_that_escapes_the_download_folder_is_declined_and_not_reported() {
+        let mut h = Harness::new();
+        let evil = client(
+            TransferKind::Inbound,
+            TransferState::WaitingForUserConsent,
+            &["../evil"],
+        );
+        let mut e = event(WAITING, "WaitingForUserConsent", "1111");
+        assert!(!h.step(WAITING, &evil, &mut e));
+        assert_eq!(h.sent(), [(WAITING.to_owned(), false)]);
+        assert_eq!(h.consents.token(WAITING), None);
+    }
+
+    #[test]
+    fn one_address_and_the_network_in_all_are_capped_and_bluetooth_keeps_room() {
+        let mut h = Harness::new();
+        for n in 0..4 {
+            let id = format!("10.0.0.5:{n}");
+            let mut e = event(&id, "WaitingForUserConsent", "1111");
+            assert!(h.step(&id, &waiting(), &mut e), "{id}");
+        }
+        let mut e = event("10.0.0.5:9", "WaitingForUserConsent", "1111");
+        assert!(!h.step("10.0.0.5:9", &waiting(), &mut e));
+        assert_eq!(h.sent(), [("10.0.0.5:9".to_owned(), false)]);
+        // Many other addresses fill the network share; Bluetooth is still taken.
+        for n in 0..40 {
+            let id = format!("10.1.{n}.1:1");
+            let mut e = event(&id, "WaitingForUserConsent", "1111");
+            h.step(&id, &waiting(), &mut e);
+        }
+        let mut e = event("ble-1", "WaitingForUserConsent", "1111");
+        assert!(h.step("ble-1", &waiting(), &mut e));
+        assert_ne!(e.consent, 0);
+    }
+
+    #[test]
+    fn a_new_session_under_a_reused_id_replaces_the_old_consent() {
+        let h = Harness::new();
+        let mut old = event("ble-1", "WaitingForUserConsent", "1111");
+        h.step("ble-1", &waiting(), &mut old);
+        let mut new = event("ble-1", "WaitingForUserConsent", "2222");
+        h.step("ble-1", &waiting(), &mut new);
+        assert_ne!(old.consent, new.consent);
+        assert_eq!(h.consents.token("ble-1"), Some(new.consent));
+    }
+
+    #[test]
+    fn events_of_a_stopped_engine_change_nothing() {
+        let mut h = Harness::new();
+        let old = h.consents.generation();
+        h.consents.clear();
+        let mut e = event(WAITING, "WaitingForUserConsent", "1111");
+        assert!(!h.step_in(old, WAITING, &waiting(), &mut e));
+        assert_eq!(h.consents.token(WAITING), None);
+        assert!(h.sent().is_empty());
+    }
+
+    #[test]
+    fn a_refusal_of_the_library_is_reported_with_its_code() {
+        let mut c = client(TransferKind::Inbound, TransferState::Rejected, &[]);
+        c.metadata.as_mut().unwrap().refusal = Some(Refusal::TooManyFiles);
+        let e = TransferEvent::from_client("x", &c);
+        assert_eq!(e.reason, "too_many_files");
+        assert_eq!(e.info()["reason"], Variant::from("too_many_files"));
+        // Later events carry no refusal: the code stays.
+        let mut merged = e.clone();
+        merged.merge(&TransferEvent::default());
+        assert_eq!(merged.reason, "too_many_files");
+        assert_eq!(TransferEvent::default().info()["reason"], Variant::from(""));
+    }
+
+    #[tokio::test]
+    async fn answers_are_refused_with_distinct_errors() {
+        let (service, _sent) = test_service();
+        let token = service
+            .consents
+            .open_for_test(WAITING, "Pixel", None, Instant::now())
+            .unwrap();
+        assert!(matches!(
+            service.answer_transfer("10.9.9.9:1", 1, "accept").await,
+            Err(AnswerError::NotWaiting(_))
+        ));
+        assert!(matches!(
+            service
+                .answer_transfer(WAITING, token.wrapping_add(1), "accept")
+                .await,
+            Err(AnswerError::StaleToken(_))
+        ));
+        // No address: the sender cannot be trusted, and the transfer still waits.
+        assert!(matches!(
+            service
+                .answer_transfer(WAITING, token, "accept_and_trust")
+                .await,
+            Err(AnswerError::NoMac(_))
+        ));
+        assert_eq!(service.consents.token(WAITING), Some(token));
+        assert!(matches!(
+            service.answer_transfer(WAITING, token, "maybe").await,
+            Err(AnswerError::InvalidArgs(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn answer_transfer_accepts_once() {
+        let (service, mut sent) = test_service();
+        let token = service
+            .consents
+            .open_for_test(WAITING, "Pixel", None, Instant::now())
+            .unwrap();
+        service
+            .answer_transfer(WAITING, token, "accept")
+            .await
+            .unwrap();
+        assert!(
+            service
+                .answer_transfer(WAITING, token, "accept")
+                .await
+                .is_err()
+        );
+        assert!(service.accept(WAITING).await.is_err());
+        assert!(service.decline(WAITING).await.is_err());
+        assert_eq!(accepted(&sent.try_recv().unwrap()), Some(true));
+        assert!(sent.try_recv().is_err(), "one answer, one action");
+    }
+
+    #[tokio::test]
+    async fn wrong_token_refused() {
+        let (service, mut sent) = test_service();
+        let token = service
+            .consents
+            .open_for_test(WAITING, "Pixel", None, Instant::now())
+            .unwrap();
+        for answer in ["accept", "accept_and_trust", "decline"] {
+            let wrong = token.wrapping_add(1);
+            assert!(
+                service
+                    .answer_transfer(WAITING, wrong, answer)
+                    .await
+                    .is_err()
+            );
+            assert!(service.answer_transfer(WAITING, 0, answer).await.is_err());
+        }
+        assert!(
+            service
+                .answer_transfer(WAITING, token, "maybe")
+                .await
+                .is_err()
+        );
+        assert!(sent.try_recv().is_err(), "nothing may reach the library");
+        // The transfer still waits for its own prompt.
+        service
+            .answer_transfer(WAITING, token, "decline")
+            .await
+            .unwrap();
+        assert_eq!(accepted(&sent.try_recv().unwrap()), Some(false));
+    }
+
+    #[tokio::test]
+    async fn legacy_answers_work_only_while_a_transfer_waits() {
+        let (service, mut sent) = test_service();
+        assert!(service.accept("10.0.0.9:1").await.is_err());
+        assert!(service.decline("10.0.0.9:1").await.is_err());
+        service
+            .consents
+            .open_for_test(WAITING, "Pixel", None, Instant::now());
+        service.decline(WAITING).await.unwrap();
+        assert_eq!(accepted(&sent.try_recv().unwrap()), Some(false));
+        assert!(sent.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn trusting_needs_a_verified_address_and_leaves_the_transfer_waiting() {
+        let (service, mut sent) = test_service();
+        // No address, so no MAC to bind the device to.
+        let token = service
+            .consents
+            .open_for_test(WAITING, "Pixel", None, Instant::now())
+            .unwrap();
+        assert!(
+            service
+                .answer_transfer(WAITING, token, "accept_and_trust")
+                .await
+                .is_err()
+        );
+        assert!(sent.try_recv().is_err());
+        assert_eq!(service.core.lock().await.allowed_json(), "[]");
+        service
+            .answer_transfer(WAITING, token, "accept")
+            .await
+            .unwrap();
+        assert_eq!(service.core.lock().await.allowed_json(), "[]");
+    }
+
+    #[test]
+    fn a_consent_token_travels_with_the_event() {
+        let mut event = TransferEvent::for_test(WAITING, "inbound", "WaitingForUserConsent", "x");
+        event.consent = 42;
+        assert_eq!(event.info()["consent"], Variant::from(42u64));
+        assert_eq!(
+            TransferEvent::default().info()["consent"],
+            Variant::from(0u64)
+        );
+    }
+
+    #[test]
+    fn the_address_comes_from_the_transfer_id() {
+        assert_eq!(ip_of_id("10.0.0.5:4000"), "10.0.0.5".parse().ok());
+        assert_eq!(ip_of_id("[fe80::1]:4000"), "fe80::1".parse().ok());
+        assert_eq!(ip_of_id("ble:G483"), None);
+        assert_eq!(ip_of_id("nonsense"), None);
+    }
 
     #[test]
     fn a_new_announcement_replaces_the_old_ones_of_the_same_device() {
@@ -1342,7 +2042,7 @@ mod tests {
         assert_eq!(event.pin, "1234");
         assert_eq!((event.total_bytes, event.ack_bytes), (100, 40));
         let info = event.info();
-        assert_eq!(info.len(), 14);
+        assert_eq!(info.len(), 16);
         assert_eq!(info["ack_bytes"], Variant::from(40u64));
     }
 

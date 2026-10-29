@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-26 15:31+0000\n"
+"POT-Creation-Date: 2026-10-29 12:46+0000\n"
 "PO-Revision-Date: 2026-10-25 22:10+0300\n"
 "Last-Translator: dosulu <eray.ulu@tutamail.com>\n"
 "Language-Team: Turkish\n"
@@ -16,23 +16,65 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: src/shell/corebridge.cpp:571
+#: src/shell/corebridge.cpp:535
+msgid "This transfer is no longer waiting for an answer"
+msgstr "Bu paylaşım artık yanıt beklemiyor"
+
+#: src/shell/corebridge.cpp:542
+msgid "This device cannot be trusted: its network address is not known"
+msgstr "Bu cihaza güvenilemiyor: ağ adresi bilinmiyor"
+
+#: src/shell/corebridge.cpp:544
+msgid "This device cannot be trusted: it sent no name"
+msgstr "Bu cihaza güvenilemiyor: hiç isim göndermedi"
+
+#: src/shell/corebridge.cpp:546
+msgid ""
+"This device cannot be trusted: its network address now belongs to another "
+"device"
+msgstr "Bu cihaza güvenilemiyor: ağ adresi artık başka bir cihaza ait"
+
+#: src/shell/corebridge.cpp:557
+msgid "The offer has too many files"
+msgstr "Teklif çok fazla dosya içeriyor"
+
+#: src/shell/corebridge.cpp:561
+msgid "There is not enough free space in the download folder"
+msgstr "İndirme klasöründe yeterli boş alan yok"
+
+#: src/shell/corebridge.cpp:565
+msgid "The download folder cannot be used"
+msgstr "İndirme klasörü kullanılamıyor"
+
+#: src/shell/corebridge.cpp:569
+msgid "A file name in the offer cannot be saved"
+msgstr "Teklifteki bir dosya adı kaydedilemiyor"
+
+#: src/shell/corebridge.cpp:573
+msgid "The offer is malformed"
+msgstr "Teklif geçersiz"
+
+#: src/shell/corebridge.cpp:576
+msgid "The offer was refused"
+msgstr "Teklif reddedildi"
+
+#: src/shell/corebridge.cpp:678
 msgid "Could not update Dolphin's context menu"
 msgstr "Dolphin’in bağlam menüsü güncellenemedi"
 
-#: src/shell/corebridge.cpp:595
+#: src/shell/corebridge.cpp:702
 msgid "Could not update the application menu"
 msgstr "Uygulama menüsü güncellenemedi"
 
-#: src/shell/corebridge.cpp:606
+#: src/shell/corebridge.cpp:713
 msgid "Could not add KuickShare to the menus"
 msgstr "KuickShare menülere eklenemedi"
 
-#: src/shell/corebridge.cpp:663 src/shell/corebridge.cpp:670
+#: src/shell/corebridge.cpp:770 src/shell/corebridge.cpp:777
 msgid "The sharing service did not accept the request"
 msgstr "Paylaşım hizmeti isteği kabul etmedi"
 
-#: src/shell/corebridge.cpp:767
+#: src/shell/corebridge.cpp:874
 msgid ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
@@ -40,19 +82,19 @@ msgstr ""
 "Flatpak ın %1 konumuna erişimi yok. Erişim vermek için: flatpak override --"
 "user --filesystem=\"%1\" %2"
 
-#: src/shell/corebridge.cpp:814
+#: src/shell/corebridge.cpp:921
 msgid "Could not update the autostart entry"
 msgstr "Otomatik başlatma girdisi güncellenemedi"
 
-#: src/shell/corebridge.cpp:928
+#: src/shell/corebridge.cpp:1035
 msgid "The folder %1 has more than %2 files"
 msgstr "%1 klasörü %2 dosyadan fazla içeriyor"
 
-#: src/shell/corebridge.cpp:932
+#: src/shell/corebridge.cpp:1039
 msgid "The folder %1 has no files to send"
 msgstr "%1 klasöründe gönderilecek dosya yok"
 
-#: src/shell/corebridge.cpp:967
+#: src/shell/corebridge.cpp:1074
 msgid "Only local files and folders can be shared"
 msgstr "Yalnızca yerel dosyalar ve klasörler paylaşılabilir"
 
@@ -121,16 +163,16 @@ msgstr[0] "%1 dakika daha görünür (durdurmak için tıklayın)"
 msgid "Visible for 10 minutes"
 msgstr "10 dakika görünür"
 
-#: src/shell/main.cpp:454 src/shell/qml/Main.qml:287
+#: src/shell/main.cpp:454 src/shell/qml/Main.qml:294
 #: src/shell/qml/SettingsPage.qml:16 src/shell/qml/ShortcutsDialog.qml:17
 msgid "Preferences"
 msgstr "Tercihler"
 
-#: src/shell/main.cpp:457 src/shell/qml/Main.qml:301
+#: src/shell/main.cpp:457 src/shell/qml/Main.qml:308
 msgid "Quit"
 msgstr "Çık"
 
-#: src/shell/qml/AboutDialog.qml:75 src/shell/qml/Main.qml:315
+#: src/shell/qml/AboutDialog.qml:75 src/shell/qml/Main.qml:322
 msgid "About"
 msgstr "Hakkında"
 
@@ -201,7 +243,7 @@ msgstr "KDE Frameworks %1"
 msgid "Kirigami, notifications, jobs and the other KDE libraries"
 msgstr "Kirigami, bildirimler, işler ve diğer KDE kütüphaneleri"
 
-#: src/shell/qml/HelpPage.qml:11 src/shell/qml/Main.qml:308
+#: src/shell/qml/HelpPage.qml:11 src/shell/qml/Main.qml:315
 #: src/shell/qml/ShortcutsDialog.qml:18 src/shell/qml/ShortcutsDialog.qml:19
 msgid "Help"
 msgstr "Yardım"
@@ -210,7 +252,7 @@ msgstr "Yardım"
 msgid "Getting started"
 msgstr "Başlarken"
 
-#: src/shell/qml/HelpPage.qml:30 src/shell/qml/Main.qml:246
+#: src/shell/qml/HelpPage.qml:30 src/shell/qml/Main.qml:253
 #: src/shell/qml/SendPage.qml:39 src/shell/qml/ShortcutsDialog.qml:14
 msgid "Send"
 msgstr "Gönder"
@@ -265,20 +307,24 @@ msgstr ""
 "sonrasında birbirlerine onay gerekmeksizin paylaşım yapabilirler. 47891 "
 "Portunun erişilebilir olması gerekir."
 
-#: src/shell/qml/HelpPage.qml:57 src/shell/qml/SettingsPage.qml:209
+#: src/shell/qml/HelpPage.qml:57 src/shell/qml/SettingsPage.qml:210
 msgid "Trusted devices"
 msgstr "Güvenilen cihazlar"
 
 #: src/shell/qml/HelpPage.qml:58
 msgid ""
 "“Accept and trust” on a notification accepts a phone without asking from "
-"then on. It is recognised by name and MAC address, so only on the same "
-"network, never for transfers over Bluetooth, which always ask."
+"then on. It is recognised by name and network address, so only on the same "
+"network, never for transfers over Bluetooth, which always ask. Another "
+"device on the same network can copy both, so use it only where you trust "
+"every device."
 msgstr ""
-"Bir bildirimdeki “Kabul et ve güven”, bir telefonu bundan böyle sormadan "
-"kabul eder. Telefon adı ve MAC adresiyle tanınır, bu nedenle yalnızca aynı "
-"ağdayken geçerlidir; Bluetooth üzerinden yapılan aktarımlarda asla geçerli "
-"değildir, bunlar her zaman sorar."
+"Bir bildirimdeki “Güven ve kabul et”, o andan itibaren bir telefonu sormadan "
+"kabul eder. Telefon isim ve ağ adresiyle tanınır, bu yüzden yalnızca aynı "
+"ağda geçerlidir ve Bluetooth üzerinden yapılan paylaşımlarda hiçbir zaman "
+"geçerli değildir; onlar her zaman sorar. Aynı ağdaki başka bir cihaz ikisini "
+"de kopyalayabilir, bu yüzden yalnızca her cihaza güvendiğiniz bir ağda "
+"kullanın."
 
 #: src/shell/qml/HelpPage.qml:63
 msgid "Wi-Fi Direct (experimental)"
@@ -383,52 +429,52 @@ msgstr "KuickShare menülere eklensin mi?"
 msgid "It will appear in the application menu and in Dolphin's context menu"
 msgstr "Uygulama menüsünde ve Dolphin'in bağlam menüsünde görünecek"
 
-#: src/shell/qml/Main.qml:26
+#: src/shell/qml/Main.qml:28
 msgid "KuickShare"
 msgstr "KuickShare"
 
-#: src/shell/qml/Main.qml:124
+#: src/shell/qml/Main.qml:126
 msgid "Quit KuickShare?"
 msgstr "KuickShare'dan çıkılsın mı?"
 
-#: src/shell/qml/Main.qml:125
+#: src/shell/qml/Main.qml:127
 msgid "A transfer is in progress. Quitting stops it"
 msgstr "Bir paylaşım sürüyor. Çıkmak paylaşımı durduracak"
 
-#: src/shell/qml/Main.qml:169
+#: src/shell/qml/Main.qml:176
 msgid "Connected to %1"
 msgstr "%1 ağına bağlanıldı"
 
-#: src/shell/qml/Main.qml:176
+#: src/shell/qml/Main.qml:183
 msgid "Transfer completed"
 msgstr "Paylaşım tamamlandı"
 
-#: src/shell/qml/Main.qml:179
+#: src/shell/qml/Main.qml:186
 msgid "The transfer failed"
 msgstr "Paylaşım başarısız oldu"
 
-#: src/shell/qml/Main.qml:182
+#: src/shell/qml/Main.qml:189
 msgid "The transfer was declined"
 msgstr "Paylaşım reddedildi"
 
-#: src/shell/qml/Main.qml:185
+#: src/shell/qml/Main.qml:192
 msgid "The transfer was cancelled"
 msgstr "Paylaşım iptal edildi"
 
-#: src/shell/qml/Main.qml:253 src/shell/qml/ShortcutsDialog.qml:15
+#: src/shell/qml/Main.qml:260 src/shell/qml/ShortcutsDialog.qml:15
 #: src/shell/qml/TransfersPage.qml:15
 msgid "Transfers"
 msgstr "Paylaşımlar"
 
-#: src/shell/qml/Main.qml:271
+#: src/shell/qml/Main.qml:278
 msgid "More"
 msgstr "Daha fazla"
 
-#: src/shell/qml/Main.qml:294 src/shell/qml/ShortcutsDialog.qml:44
+#: src/shell/qml/Main.qml:301 src/shell/qml/ShortcutsDialog.qml:44
 msgid "Shortcuts"
 msgstr "Kısayollar"
 
-#: src/shell/qml/Main.qml:443
+#: src/shell/qml/Main.qml:450
 msgid ""
 "The sharing service is not running. Nothing can be sent or received until it "
 "is started"
@@ -436,17 +482,65 @@ msgstr ""
 "Paylaşım servisi şuan çalışmıyor. Başlatılana kadar hiçbirşey alınamaz ya da "
 "gönderilemez"
 
-#: src/shell/qml/Main.qml:446
+#: src/shell/qml/Main.qml:453
 msgid "Start service"
 msgstr "Servisi başlat"
 
-#: src/shell/qml/Main.qml:465
+#: src/shell/qml/Main.qml:472
 msgid "A new version of KuickShare is installed"
 msgstr "KuickShare’in yeni bir sürümü kuruldu"
 
-#: src/shell/qml/Main.qml:468
+#: src/shell/qml/Main.qml:475
 msgid "Restart"
 msgstr "Yeniden başlat"
+
+#: src/shell/qml/Main.qml:496
+msgid ""
+"Trusted devices were removed: they were recognised only by name and network "
+"address, which another device on the same network can copy. Trust a device "
+"again from its next transfer"
+msgstr ""
+"Güvenilen cihazlar kaldırıldı: yalnızca isim ve ağ adresiyle tanınıyorlardı; "
+"aynı ağdaki başka bir cihaz bunları kopyalayabilir. Bir cihaza bir sonraki "
+"paylaşımında yeniden güvenin"
+
+#: src/shell/qml/Main.qml:499
+msgid "Got it"
+msgstr "Anladım"
+
+#: src/shell/qml/Main.qml:522
+msgid ""
+"No firewall service that KuickShare can open a port in was found. The "
+"transfer continues over Bluetooth, which is very slow"
+msgstr ""
+"KuickShare’in bağlantı noktası açabileceği bir güvenlik duvarı hizmeti "
+"bulunamadı. Paylaşım, çok yavaş olan Bluetooth üzerinden devam ediyor"
+
+#: src/shell/qml/Main.qml:522
+msgid ""
+"The firewall did not allow the Wi-Fi link. The transfer continues over "
+"Bluetooth, which is very slow"
+msgstr ""
+"Güvenlik duvarı Wi-Fi bağlantısına izin vermedi. Paylaşım, çok yavaş olan "
+"Bluetooth üzerinden devam ediyor"
+
+#: src/shell/qml/Main.qml:525
+msgid "Allow for this session…"
+msgstr "Bu oturum için izin ver…"
+
+#: src/shell/qml/Main.qml:534
+msgid "Allow the hotspot without a firewall rule?"
+msgstr "Hotspot’a güvenlik duvarı kuralı olmadan izin verilsin mi?"
+
+#: src/shell/qml/Main.qml:535
+msgid ""
+"If you agree, then until KuickShare is closed, the phone that joins the "
+"hotspot can reach every service on this computer. It applies to the next "
+"transfer, not to the one in progress"
+msgstr ""
+"Kabul ederseniz, KuickShare kapatılana kadar hotspot’a katılan telefon bu "
+"bilgisayardaki tüm hizmetlere erişebilir. Bu, devam eden paylaşım için "
+"değil, bir sonraki paylaşım için geçerlidir"
 
 #: src/shell/qml/PairDialog.qml:22
 msgid "Pair a device"
@@ -502,8 +596,8 @@ msgstr "Bu bilgisayarlar arasındaki paylaşımlar onaysız kabul ediliyor."
 msgid "Pairing did not complete"
 msgstr "Eşleştirme tamamlanmadı"
 
-#: src/shell/qml/SendPage.qml:142 src/shell/qml/SettingsPage.qml:184
-#: src/shell/qml/SettingsPage.qml:234
+#: src/shell/qml/SendPage.qml:142 src/shell/qml/SettingsPage.qml:185
+#: src/shell/qml/SettingsPage.qml:235
 msgid "Remove"
 msgstr "Kaldır"
 
@@ -556,7 +650,7 @@ msgid "Paste from clipboard"
 msgstr "Panodan yapıştır"
 
 #: src/shell/qml/SendPage.qml:290 src/shell/qml/TransfersPage.qml:405
-#: src/shell/transferwatcher.cpp:51 src/shell/transferwatcher.cpp:140
+#: src/shell/transferwatcher.cpp:103 src/shell/transferwatcher.cpp:202
 msgid "%1 file"
 msgid_plural "%1 files"
 msgstr[0] "%1 dosya"
@@ -705,7 +799,7 @@ msgid "Be found over Bluetooth and move the transfer to a temporary Wi-Fi link"
 msgstr ""
 "Bluetooth üzerinden bulunun ve aktarımı geçici bir Wi-Fi bağlantısına taşıyın"
 
-#: src/shell/qml/SettingsPage.qml:161
+#: src/shell/qml/SettingsPage.qml:162
 msgid ""
 "Experimental. Needs NetworkManager, its dnsmasq package and Bluetooth. While "
 "on, this computer is visible over Bluetooth to devices in range, and its Wi-"
@@ -716,97 +810,99 @@ msgstr ""
 "bilgisayar menzildeki cihazlara Bluetooth üzerinden görünür olur ve geçici "
 "Wi-Fi bağlantısı etkinken Wi-Fi bağlantısı kopabilir. Belgelere bakın"
 
-#: src/shell/qml/SettingsPage.qml:167
+#: src/shell/qml/SettingsPage.qml:168
 msgid "Paired devices"
 msgstr "Eşleştirilmiş cihazlar"
 
-#: src/shell/qml/SettingsPage.qml:180
+#: src/shell/qml/SettingsPage.qml:181
 msgid "Fingerprint %1"
 msgstr "Parmak izi %1"
 
-#: src/shell/qml/SettingsPage.qml:191
+#: src/shell/qml/SettingsPage.qml:192
 msgid "No paired computers yet"
 msgstr "Henüz eşleştirilmiş bilgisayar yok"
 
-#: src/shell/qml/SettingsPage.qml:192
+#: src/shell/qml/SettingsPage.qml:193
 msgid "Paired computers can send to each other without asking"
 msgstr ""
 "Eşleştirilmiş bilgisayarlar onay gerekmeksizin dosya alışverişi yapabilir"
 
-#: src/shell/qml/SettingsPage.qml:196
+#: src/shell/qml/SettingsPage.qml:197
 msgid "Pair a device…"
 msgstr "Cihaz eşleştir…"
 
-#: src/shell/qml/SettingsPage.qml:203
+#: src/shell/qml/SettingsPage.qml:204
 msgid "Pairing works only between computers on the same local network"
 msgstr "Eşleştirme yalnızca aynı yerel ağdaki bilgisayarlar arasında çalışır"
 
-#: src/shell/qml/SettingsPage.qml:215
+#: src/shell/qml/SettingsPage.qml:216
 msgid "Trust devices"
 msgstr "Cihazlara güven"
 
-#: src/shell/qml/SettingsPage.qml:216
+#: src/shell/qml/SettingsPage.qml:217
 msgid "Accept transfers from trusted devices without asking"
 msgstr "Güvenilen cihazlardan onay sormadan paylaşım kabul et"
 
-#: src/shell/qml/SettingsPage.qml:230
+#: src/shell/qml/SettingsPage.qml:231
 msgid "MAC address %1"
 msgstr "MAC adresi %1"
 
-#: src/shell/qml/SettingsPage.qml:241
+#: src/shell/qml/SettingsPage.qml:242
 msgid "No devices yet"
 msgstr "Henüz cihaz yok"
 
-#: src/shell/qml/SettingsPage.qml:242
+#: src/shell/qml/SettingsPage.qml:243
 msgid "Use “Accept and trust” on an incoming transfer notification to add one"
 msgstr ""
 "Eklemek için gelen bir paylaşım bildiriminde “Kabul et ve güven”e tıklayın"
 
-#: src/shell/qml/SettingsPage.qml:249
+#: src/shell/qml/SettingsPage.qml:250
 msgid ""
-"Matched by name and MAC address. Another device that copies both would be "
-"accepted too. Use only if you trust all devices in your LAN"
+"Devices are recognised by name and network address, which another device on "
+"the same network can copy: it would be accepted without asking too. Use only "
+"on a network where you trust every device"
 msgstr ""
-"MAC adresi ve isim ile eşleştirilir. Bunları kopyalayan başka bir cihaz da "
-"kabul edilir. Sadece tamamen güvendiğiniz LAN ağlarında kullanın."
+"Cihazlar isim ve ağ adresiyle tanınır; aynı ağdaki başka bir cihaz bunları "
+"kopyalayabilir ve o da sormadan kabul edilirdi. Yalnızca her cihaza "
+"güvendiğiniz bir ağda kullanın"
 
-#: src/shell/qml/SettingsPage.qml:255
+#: src/shell/qml/SettingsPage.qml:256
 msgid "History"
 msgstr "Geçmiş"
 
-#: src/shell/qml/SettingsPage.qml:261
+#: src/shell/qml/SettingsPage.qml:262
 msgid "Save transfer history"
 msgstr "Paylaşım geçmişini kaydet"
 
-#: src/shell/qml/SettingsPage.qml:262
+#: src/shell/qml/SettingsPage.qml:263
 msgid "Keep a list of sent and received transfers"
 msgstr "Alınan ve gönderilen paylaşımların listesini tut"
 
-#: src/shell/qml/SettingsPage.qml:284
+#: src/shell/qml/SettingsPage.qml:285
 msgid "Delete entries after"
 msgstr "Sonrasında girdileri sil"
 
-#: src/shell/qml/SettingsPage.qml:292
+#: src/shell/qml/SettingsPage.qml:293
 msgid "Never"
 msgstr "Asla"
 
-#: src/shell/qml/SettingsPage.qml:292
+#: src/shell/qml/SettingsPage.qml:293
 msgid "1 day"
 msgstr "1 gün"
 
-#: src/shell/qml/SettingsPage.qml:292
+#: src/shell/qml/SettingsPage.qml:293
 msgid "7 days"
 msgstr "7 gün"
 
-#: src/shell/qml/SettingsPage.qml:292
+#: src/shell/qml/SettingsPage.qml:293
 msgid "30 days"
 msgstr "30 gün"
 
-#: src/shell/qml/SettingsPage.qml:292
+#: src/shell/qml/SettingsPage.qml:293
 msgid "90 days"
 msgstr "90 gün"
 
-#: src/shell/qml/SettingsPage.qml:301
+#: src/shell/qml/SettingsPage.qml:302
 msgid ""
 "With the history turned off nothing is saved. Entries already saved stay "
 "until they expire or you clear them."
@@ -814,47 +910,47 @@ msgstr ""
 "Geçmiş kapalıyken hiçbirşey kaydedilmez. Önceden kaydedilmiş girdiler siz "
 "onları silene yada Süreleri dolana kadar kalır."
 
-#: src/shell/qml/SettingsPage.qml:305
+#: src/shell/qml/SettingsPage.qml:306
 msgid "Startup"
 msgstr "Başlangıç"
 
-#: src/shell/qml/SettingsPage.qml:311
+#: src/shell/qml/SettingsPage.qml:312
 msgid "Start at login"
 msgstr "Oturum açıldığında başlat"
 
-#: src/shell/qml/SettingsPage.qml:312
+#: src/shell/qml/SettingsPage.qml:313
 msgid "Starts hidden, in the system tray if it is shown"
 msgstr "Gösteriliyorsa sistem tepsisinde gizli olarak başlar"
 
-#: src/shell/qml/SettingsPage.qml:318
+#: src/shell/qml/SettingsPage.qml:319
 msgid "Integration"
 msgstr "Entegrasyon"
 
-#: src/shell/qml/SettingsPage.qml:324
+#: src/shell/qml/SettingsPage.qml:325
 msgid "Show tray icon"
 msgstr "Tepsi simgesini göster"
 
-#: src/shell/qml/SettingsPage.qml:325
+#: src/shell/qml/SettingsPage.qml:326
 msgid "Keep KuickShare in the system tray"
 msgstr "KuickShare’i sistem tepsisinde tut"
 
-#: src/shell/qml/SettingsPage.qml:332
+#: src/shell/qml/SettingsPage.qml:333
 msgid "Dolphin context menu"
 msgstr "Dolphin bağlam menüsü"
 
-#: src/shell/qml/SettingsPage.qml:333
+#: src/shell/qml/SettingsPage.qml:334
 msgid "Add “Send with KuickShare” to the menu of files"
 msgstr "Dosyaların menüsüne “KuickShare ile gönder” seçeneğini ekle"
 
-#: src/shell/qml/SettingsPage.qml:341
+#: src/shell/qml/SettingsPage.qml:342
 msgid "Application menu entry"
 msgstr "Uygulama menüsü girdisi"
 
-#: src/shell/qml/SettingsPage.qml:342
+#: src/shell/qml/SettingsPage.qml:343
 msgid "Add KuickShare to the application menu"
 msgstr "KuickShare'i uygulama menüsüne ekle"
 
-#: src/shell/qml/SettingsPage.qml:350
+#: src/shell/qml/SettingsPage.qml:351
 msgid ""
 "Without the tray icon, closing the window quits KuickShare, and nothing can "
 "be received until you open it again. At login it starts hidden: open "
@@ -864,25 +960,25 @@ msgstr ""
 "uygulamayı tekrar açana kadar hiçbir şey alınamaz. Oturum açıldığında gizli "
 "olarak başlar: Pencereyi göstermek için KuickShare'i tekrar açın"
 
-#: src/shell/qml/SettingsPage.qml:363
+#: src/shell/qml/SettingsPage.qml:364
 msgid "Turn on without a firewall?"
 msgstr "Güvenlik duvarı olmadan açılsın mı?"
 
-#: src/shell/qml/SettingsPage.qml:364
+#: src/shell/qml/SettingsPage.qml:365
 msgid ""
 "firewalld is not running, so the firewall cannot be opened for a single "
-"port. While the hotspot is up, the phone that joins it can reach every "
-"service on this computer"
+"port. If you agree, then until KuickShare is closed, the phone that joins "
+"the hotspot can reach every service on this computer"
 msgstr ""
 "firewalld çalışmıyor, bu yüzden güvenlik duvarı tek bir bağlantı noktası "
-"için açılamıyor. Hotspot açıkken ona katılan telefon bu bilgisayardaki tüm "
-"hizmetlere erişebilir"
+"için açılamıyor. Kabul ederseniz, KuickShare kapatılana kadar hotspot’a "
+"katılan telefon bu bilgisayardaki tüm hizmetlere erişebilir"
 
-#: src/shell/qml/SettingsPage.qml:372
+#: src/shell/qml/SettingsPage.qml:374
 msgid "Reset preferences?"
 msgstr "Tercihler sıfırlansın mı?"
 
-#: src/shell/qml/SettingsPage.qml:373
+#: src/shell/qml/SettingsPage.qml:375
 msgid ""
 "Every setting goes back to its default. The history and the paired and "
 "trusted devices are kept"
@@ -890,15 +986,15 @@ msgstr ""
 "Her ayar varsayılan değerine döner. Geçmiş ile eşleştirilmiş ve güvenilir "
 "cihazlar korunur"
 
-#: src/shell/qml/SettingsPage.qml:379
+#: src/shell/qml/SettingsPage.qml:381
 msgid "Reset"
 msgstr "Sıfırla"
 
-#: src/shell/qml/SettingsPage.qml:385
+#: src/shell/qml/SettingsPage.qml:387
 msgid "Reset preferences…"
 msgstr "Tercihleri sıfırla…"
 
-#: src/shell/qml/SettingsPage.qml:386
+#: src/shell/qml/SettingsPage.qml:388
 msgid "Go back to the default preferences"
 msgstr "Varsayılan tercihlere dön"
 
@@ -1011,15 +1107,15 @@ msgstr "Sonuç"
 msgid "Size"
 msgstr "Boyut"
 
-#: src/shell/qml/TransfersPage.qml:253 src/shell/transferwatcher.cpp:248
+#: src/shell/qml/TransfersPage.qml:253 src/shell/transferwatcher.cpp:319
 msgid "Open link"
 msgstr "Linki aç"
 
-#: src/shell/qml/TransfersPage.qml:260 src/shell/qml/TransfersPage.qml:788
+#: src/shell/qml/TransfersPage.qml:260 src/shell/qml/TransfersPage.qml:793
 msgid "Copy"
 msgstr "Kopyala"
 
-#: src/shell/qml/TransfersPage.qml:265 src/shell/qml/TransfersPage.qml:792
+#: src/shell/qml/TransfersPage.qml:265 src/shell/qml/TransfersPage.qml:797
 msgid "Copied to clipboard"
 msgstr "Panoya kopyalandı"
 
@@ -1027,13 +1123,13 @@ msgstr "Panoya kopyalandı"
 msgid "Open"
 msgstr "Aç"
 
-#: src/shell/qml/TransfersPage.qml:379 src/shell/transferwatcher.cpp:52
+#: src/shell/qml/TransfersPage.qml:379 src/shell/transferwatcher.cpp:104
 msgid "Looking for the device…"
 msgstr "Cihaz aranıyor…"
 
 #: src/shell/qml/TransfersPage.qml:379 src/shell/qml/TransfersPage.qml:385
-#: src/shell/qml/TransfersPage.qml:399 src/shell/transferwatcher.cpp:52
-#: src/shell/transferwatcher.cpp:111
+#: src/shell/qml/TransfersPage.qml:399 src/shell/transferwatcher.cpp:104
+#: src/shell/transferwatcher.cpp:173
 msgid "Connecting…"
 msgstr "Bağlanılıyor…"
 
@@ -1045,11 +1141,11 @@ msgstr "Onayınız bekleniyor"
 msgid "Receiving…"
 msgstr "Alınıyor…"
 
-#: src/shell/qml/TransfersPage.qml:385 src/shell/transferwatcher.cpp:111
+#: src/shell/qml/TransfersPage.qml:385 src/shell/transferwatcher.cpp:173
 msgid "Waiting for the other device to accept"
 msgstr "Diğer cihazın kabul etmesi bekleniyor"
 
-#: src/shell/qml/TransfersPage.qml:388 src/shell/transferwatcher.cpp:127
+#: src/shell/qml/TransfersPage.qml:388 src/shell/transferwatcher.cpp:189
 msgid "Switching to Wi-Fi…"
 msgstr "Wi-Fi'ye geçiliyor…"
 
@@ -1135,51 +1231,51 @@ msgid ""
 msgstr ""
 "Geçmiş kapalı olduğu için paylaşımlar yalnızca uygulama açıkken listelenir."
 
-#: src/shell/qml/TransfersPage.qml:602
+#: src/shell/qml/TransfersPage.qml:607
 msgid "%1/s"
 msgstr "%1/s"
 
-#: src/shell/qml/TransfersPage.qml:654
+#: src/shell/qml/TransfersPage.qml:659
 msgid "Unknown device"
 msgstr "Bilinmeyen cihaz"
 
-#: src/shell/qml/TransfersPage.qml:679
+#: src/shell/qml/TransfersPage.qml:684
 msgid "Trusted"
 msgstr "Güvenilen"
 
-#: src/shell/qml/TransfersPage.qml:688
+#: src/shell/qml/TransfersPage.qml:693
 msgid "%1%"
 msgstr "%1%"
 
-#: src/shell/qml/TransfersPage.qml:695
+#: src/shell/qml/TransfersPage.qml:700
 msgid "Cancel"
 msgstr "İptal"
 
-#: src/shell/qml/TransfersPage.qml:702
+#: src/shell/qml/TransfersPage.qml:707
 msgid "Remove from list"
 msgstr "Listeden kaldır"
 
-#: src/shell/qml/TransfersPage.qml:712
+#: src/shell/qml/TransfersPage.qml:717
 msgid "Wants to share with you · PIN %1"
 msgstr "Seninle paylaşmak istiyor · PIN %1"
 
-#: src/shell/qml/TransfersPage.qml:721
+#: src/shell/qml/TransfersPage.qml:726
 msgid "More details"
 msgstr "Daha çok detay"
 
-#: src/shell/qml/TransfersPage.qml:760 src/shell/transferwatcher.cpp:206
+#: src/shell/qml/TransfersPage.qml:765 src/shell/transferwatcher.cpp:276
 msgid "Accept"
 msgstr "Kabul et"
 
-#: src/shell/qml/TransfersPage.qml:766 src/shell/transferwatcher.cpp:221
+#: src/shell/qml/TransfersPage.qml:771 src/shell/transferwatcher.cpp:291
 msgid "Decline"
 msgstr "Reddet"
 
-#: src/shell/qml/TransfersPage.qml:772 src/shell/transferwatcher.cpp:269
+#: src/shell/qml/TransfersPage.qml:777 src/shell/transferwatcher.cpp:340
 msgid "Open folder"
 msgstr "Klasörü aç"
 
-#: src/shell/qml/TransfersPage.qml:778
+#: src/shell/qml/TransfersPage.qml:783
 msgid "Join network"
 msgstr "Ağa bağlan"
 
@@ -1207,43 +1303,51 @@ msgstr "Dosyalar"
 msgid "The transfer was interrupted"
 msgstr "Paylaşım kesintiye uğradı"
 
-#: src/shell/transferwatcher.cpp:178
+#: src/shell/transferwatcher.cpp:240
 msgid "a nearby device"
 msgstr "yakındaki bir cihaz"
 
-#: src/shell/transferwatcher.cpp:188
+#: src/shell/transferwatcher.cpp:245
+msgid "Offer refused"
+msgstr "Teklif reddedildi"
+
+#: src/shell/transferwatcher.cpp:245
+msgid "From %1: %2"
+msgstr "Gönderen %1: %2"
+
+#: src/shell/transferwatcher.cpp:256
 msgid "Could not start the transfer to %1 over Bluetooth"
 msgstr "%1 cihazına Bluetooth üzerinden paylaşım başlatılamadı"
 
-#: src/shell/transferwatcher.cpp:189
+#: src/shell/transferwatcher.cpp:257
 msgid "%1 declined the transfer or could not receive it"
 msgstr "%1 paylaşımı reddetti yada alamadı"
 
-#: src/shell/transferwatcher.cpp:190
+#: src/shell/transferwatcher.cpp:258
 msgid "Transfer not accepted"
 msgstr "Paylaşım reddedildi"
 
-#: src/shell/transferwatcher.cpp:194
+#: src/shell/transferwatcher.cpp:262
 msgid "Transfer interrupted"
 msgstr "Paylaşım kesintiye uğradı"
 
-#: src/shell/transferwatcher.cpp:194
+#: src/shell/transferwatcher.cpp:262
 msgid "The connection with %1 was lost"
 msgstr "%1 ile bağlantı koptu"
 
-#: src/shell/transferwatcher.cpp:202
+#: src/shell/transferwatcher.cpp:270
 msgid "Incoming transfer"
 msgstr "Gelen paylaşım"
 
-#: src/shell/transferwatcher.cpp:203
+#: src/shell/transferwatcher.cpp:271
 msgid "A nearby device"
 msgstr "Yakındaki bir cihaz"
 
-#: src/shell/transferwatcher.cpp:204
+#: src/shell/transferwatcher.cpp:272
 msgid "%1 wants to share with you"
 msgstr "%1 seninle paylaşmak istiyor"
 
-#: src/shell/transferwatcher.cpp:204
+#: src/shell/transferwatcher.cpp:272
 msgid ""
 "%1 wants to share with you\n"
 "PIN: %2"
@@ -1251,19 +1355,27 @@ msgstr ""
 "%1 seninle paylaşmak istiyor\n"
 "PIN: %2"
 
-#: src/shell/transferwatcher.cpp:215
+#: src/shell/transferwatcher.cpp:285
 msgid "Accept and trust"
 msgstr "Güven ve kabul et"
 
-#: src/shell/transferwatcher.cpp:241
+#: src/shell/transferwatcher.cpp:289
+msgid ""
+"“Accept and trust” recognises this device by its name and network address, "
+"which another device on the same network can copy"
+msgstr ""
+"“Güven ve kabul et”, bu cihazı isim ve ağ adresiyle tanır; aynı ağdaki başka "
+"bir cihaz bunları kopyalayabilir"
+
+#: src/shell/transferwatcher.cpp:312
 msgid "Link received"
 msgstr "Link alındı"
 
-#: src/shell/transferwatcher.cpp:241
+#: src/shell/transferwatcher.cpp:312
 msgid "Text received"
 msgstr "Metin alındı"
 
-#: src/shell/transferwatcher.cpp:242
+#: src/shell/transferwatcher.cpp:313
 msgid ""
 "From %1:\n"
 "%2"
@@ -1271,26 +1383,26 @@ msgstr ""
 "Gönderen: %1\n"
 "%2"
 
-#: src/shell/transferwatcher.cpp:243
+#: src/shell/transferwatcher.cpp:314
 msgid "Copy link"
 msgstr "Linki kopyala"
 
-#: src/shell/transferwatcher.cpp:243
+#: src/shell/transferwatcher.cpp:314
 msgid "Copy text"
 msgstr "Metni kopyala"
 
-#: src/shell/transferwatcher.cpp:252
+#: src/shell/transferwatcher.cpp:323
 msgid "View"
 msgstr "Görüntüle"
 
-#: src/shell/transferwatcher.cpp:259
+#: src/shell/transferwatcher.cpp:330
 msgid "Files received"
 msgstr "Dosyalar alındı"
 
-#: src/shell/transferwatcher.cpp:260
+#: src/shell/transferwatcher.cpp:331
 msgid "From %1"
 msgstr "Gönderen: %1"
 
-#: src/shell/transferwatcher.cpp:265
+#: src/shell/transferwatcher.cpp:336
 msgid "Open file"
 msgstr "Dosyayı aç"

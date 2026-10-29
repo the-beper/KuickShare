@@ -28,6 +28,8 @@ private:
     {
         QPointer<TransferJob> job;
         QPointer<KNotification> consent;
+        quint64 consentToken = 0; // the core's token of the consent the prompt answers
+        bool noTrust = false;     // the core could not trust this sender: the prompt does not offer it again
         bool finished = false;
         bool started = false; // data started to move
         qint64 sampleMs = 0;
@@ -38,7 +40,13 @@ private:
     void onTransferChanged(const QString &id);
     void onSendRequested(const QString &id, const QString &device, int files);
     void onSendRefused(const QString &id);
-    void notifyConsent(const QString &id, const QString &device, const QString &pin, Tracked &tracked);
+    /// The core did not take an answer: the prompt is stale.
+    void onAnswerRefused(const QString &id);
+    /// The core did not take the answer but the transfer still waits: show the prompt again.
+    void onAnswerNotApplied(const QString &id);
+    /// The core went away or restarted: no prompt may answer anything of the new session.
+    void closeConsents();
+    void notifyConsent(const QString &id, const QString &device, const QString &pin, quint64 token, Tracked &tracked);
     void notifyReceived(const QString &id, const QString &device, const QVariantMap &info, bool isText);
     void notifyProblem(const QString &eventId, const QString &title, const QString &text);
 

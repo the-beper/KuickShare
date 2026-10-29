@@ -98,7 +98,7 @@ bg "$LOGS/jobview.log" dbus-monitor --session \
     "interface='org.kde.JobViewV3'" "interface='org.kde.kuiserver'"
 
 # Daemon first so its log is ours; the GUI then finds it on the session bus
-RUST_LOG=info,rqs_lib::hdl::ble_receiver=debug,rqs_lib::hdl::ble_scan=debug,rqs_lib::hdl::ble_send=debug,rqs_lib::upgrade=debug,kuickshared::link=debug \
+RUST_LOG=info,rqs_lib::hdl::ble_receiver=debug,rqs_lib::hdl::ble_scan=debug,rqs_lib::hdl::ble_send=debug,rqs_lib::upgrade=debug,kuickshared::link=debug,kuickshared::app=debug \
     bg "$LOGS/daemon.log" env "${SANDBOX_ENV[@]}" "$DAEMON"
 sleep 2
 bg "$LOGS/gui.log" env "${SANDBOX_ENV[@]}" "$GUI" --page settings

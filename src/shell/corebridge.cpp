@@ -73,6 +73,7 @@ CoreBridge::CoreBridge(QObject *parent)
     bus.connect(service, path, iface, QStringLiteral("DeviceLost"), this, SLOT(onDeviceLost(QString)));
     bus.connect(service, path, iface, QStringLiteral("PairingCode"), this, SLOT(onPairingCode(QString, QString)));
     bus.connect(service, path, iface, QStringLiteral("PairingFinished"), this, SLOT(onPairingFinished(bool, QString, QString)));
+    bus.connect(service, path, iface, QStringLiteral("WifiUpgradeBlocked"), this, SLOT(onWifiUpgradeBlocked(QString)));
     bus.connect(service, path, QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("PropertiesChanged"), this, SLOT(onPropertiesChanged(QString, QVariantMap, QStringList)));
     bus.connect(service, path, iface, QStringLiteral("TrustedChanged"), this, SLOT(loadTrustedDevices()));
 
@@ -257,6 +258,7 @@ void CoreBridge::onServiceRegistered()
     emit connectedChanged();
     refreshProperties();
     m_transfers.clearAll();
+    emit transfersReset();
     loadHistory();
     loadHistorySize();
     loadTrustedDevices();
@@ -349,9 +351,15 @@ void CoreBridge::refreshProperties()
         const bool trusted = props.value(QStringLiteral("TrustedDevicesEnabled"), m_trustedDevicesEnabled).toBool();
         const bool trustedChanged = trusted != m_trustedDevicesEnabled;
         m_trustedDevicesEnabled = trusted;
+        const bool reset = props.value(QStringLiteral("TrustedDevicesReset"), m_trustedDevicesReset).toBool();
+        const bool resetChanged = reset != m_trustedDevicesReset;
+        m_trustedDevicesReset = reset;
         const bool wifiUpgrade = props.value(QStringLiteral("WifiUpgrade"), m_wifiUpgrade).toBool();
         const bool wifiChanged = wifiUpgrade != m_wifiUpgrade;
         m_wifiUpgrade = wifiUpgrade;
+        const bool insecure = props.value(QStringLiteral("InsecureHotspotAllowed"), m_insecureHotspotAllowed).toBool();
+        const bool insecureChanged = insecure != m_insecureHotspotAllowed;
+        m_insecureHotspotAllowed = insecure;
         const bool trayChanged = tray != m_trayIcon;
         const bool dolphinChanged = dolphin != m_dolphinIntegration;
         m_trayIcon = tray;
@@ -388,11 +396,17 @@ void CoreBridge::refreshProperties()
         if (trustedChanged) {
             emit trustedDevicesEnabledChanged();
         }
+        if (resetChanged) {
+            emit trustedDevicesResetChanged();
+        }
         if (dolphinChanged) {
             emit dolphinIntegrationChanged();
         }
         if (wifiChanged) {
             emit wifiUpgradeChanged();
+        }
+        if (insecureChanged) {
+            emit insecureHotspotAllowedChanged();
         }
         if (keepChanged) {
             emit historyKeepDaysChanged();
@@ -490,6 +504,90 @@ void CoreBridge::loadAllowedDevices()
         emit allowedDevicesChanged(); });
 }
 
+void CoreBridge::answerTransfer(const QString &id, const QString &answer)
+{
+    answerWithToken(id, m_transfers.info(id).value(QStringLiteral("consent")).toULongLong(), answer);
+}
+
+void CoreBridge::answerWithToken(const QString &id, quint64 token, const QString &answer)
+{
+    if (token == 0)
+    {
+        // The core reported no consent for this transfer: nothing waits for an answer.
+        emit answerRefused(id);
+        return;
+    }
+    auto msg = methodCall(iface, QStringLiteral("AnswerTransfer"));
+    msg << id << token << answer;
+    auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(msg), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, id](QDBusPendingCallWatcher *w)
+            {
+        w->deleteLater();
+        const QDBusPendingReply<> reply = *w;
+        if (!reply.isError()) {
+            return;
+        }
+        // The core names why it refused (`<interface>.Error.<Name>`).
+        const QString name = reply.error().name();
+        const auto is = [&name](const char *suffix) { return name.endsWith(QLatin1String(suffix)); };
+        if (is(".Error.NotWaiting") || is(".Error.Expired") || is(".Error.StaleToken")) {
+            // Nothing waits for this answer any more: the prompt is stale.
+            emit errorOccurred(i18n("This transfer is no longer waiting for an answer"));
+            emit answerRefused(id);
+            return;
+        }
+        // The transfer still waits (the sender cannot be trusted, or something else went wrong):
+        // the prompt stays, so the user can accept it without trusting.
+        if (is(".Error.NoMac")) {
+            emit errorOccurred(i18n("This device cannot be trusted: its network address is not known"));
+        } else if (is(".Error.NoName")) {
+            emit errorOccurred(i18n("This device cannot be trusted: it sent no name"));
+        } else if (is(".Error.DeviceChanged")) {
+            emit errorOccurred(i18n("This device cannot be trusted: its network address now belongs to another device"));
+        } else {
+            emit errorOccurred(reply.error().message());
+        }
+        emit answerNotApplied(id); });
+}
+
+QString CoreBridge::refusalText(const QString &reason)
+{
+    if (reason == QLatin1String("too_many_files"))
+    {
+        return i18n("The offer has too many files");
+    }
+    if (reason == QLatin1String("not_enough_space"))
+    {
+        return i18n("There is not enough free space in the download folder");
+    }
+    if (reason == QLatin1String("destination"))
+    {
+        return i18n("The download folder cannot be used");
+    }
+    if (reason == QLatin1String("bad_name"))
+    {
+        return i18n("A file name in the offer cannot be saved");
+    }
+    if (reason == QLatin1String("bad_size") || reason == QLatin1String("duplicate_id"))
+    {
+        return i18n("The offer is malformed");
+    }
+    // A code this version does not know.
+    return reason.isEmpty() ? QString() : i18n("The offer was refused");
+}
+
+void CoreBridge::acknowledgeTrustedDevicesReset()
+{
+    if (!m_trustedDevicesReset)
+    {
+        return;
+    }
+    m_trustedDevicesReset = false;
+    emit trustedDevicesResetChanged();
+    // A failure reads the property again, which brings the notice back.
+    callAsync(methodCall(iface, QStringLiteral("AcknowledgeTrustedDevicesReset")));
+}
+
 void CoreBridge::allowDevice(const QString &transferId)
 {
     auto msg = methodCall(iface, QStringLiteral("AllowDevice"));
@@ -547,7 +645,16 @@ void CoreBridge::setWifiUpgrade(bool enabled)
     setRemoteProperty(QStringLiteral("WifiUpgrade"), enabled);
 }
 
-void CoreBridge::requestWifiUpgrade()
+void CoreBridge::requestWifiUpgrade(bool enabled, bool allowInsecure)
+{
+    auto msg = methodCall(iface, QStringLiteral("RequestWifiUpgrade"));
+    msg << enabled << allowInsecure;
+    // An error is shown by `callAsync`, which also reads the settings again; so does a success.
+    callAsync(msg, [this]
+              { refreshProperties(); });
+}
+
+void CoreBridge::enableWifiUpgrade()
 {
     auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(methodCall(iface, QStringLiteral("FirewallManaged"))), this);
     connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *w)
@@ -556,7 +663,7 @@ void CoreBridge::requestWifiUpgrade()
         const QDBusPendingReply<bool> reply = *w;
         // A core that cannot answer is not a reason to refuse the setting.
         if (reply.isError() || reply.value()) {
-            setWifiUpgrade(true);
+            requestWifiUpgrade(true, false);
         } else {
             emit firewallWarning();
         } });

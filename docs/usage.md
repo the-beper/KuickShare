@@ -187,16 +187,18 @@ When a nearby device wants to send, a persistent notification titled "Incoming t
 | Action | Effect |
 |---|---|
 | Accept | Receive the transfer |
-| Accept and trust | Accept, and add the sender to the trusted devices (only if trusted devices are on; see [below](#trusted-devices)) |
+| Accept and trust | Accept, and add the sender to the trusted devices (only if trusted devices are on; see [below](#trusted-devices)). It binds the MAC address read when the request arrived; if that cannot be checked (another network, a changed address, no name) the transfer keeps waiting, now with Accept and Decline only |
 | Decline | Refuse the transfer |
 
 The same request is also listed on the Transfers page with Accept and Decline buttons. Compare the PIN with the one on the phone before accepting.
 
-A request nobody answers is declined after 5 minutes.
+A request nobody answers is declined after 5 minutes. A request is answered once: a notification left over from an earlier transfer closes by itself and cannot answer a newer one. If many requests wait at once (32, or 4 from one address) the new ones are declined.
 
 Files go to the download folder, `~/Downloads` unless you chose another one in Preferences. Progress and a cancel button appear in Plasma's job tracker. When it finishes you get a "Files received" notification with **Open folder**. Text arrives as a "Text received" notification with **Copy**, and **Open link** when the text is a single `http://` or `https://` address.
 
 A sender can propose file names that would write outside the download folder. KuickShare declines such a transfer before asking you. A name is refused if it is empty, is `.` or `..`, is longer than 255 bytes, or contains a `/`, a `\`, a control character, or an invisible character such as a zero-width space or a right-to-left override. The decision is logged and no notification is shown; how the Transfers page then shows the row was not checked (unverified).
+
+An offer is also checked before you are asked: more than 10,000 files, impossible sizes, or not enough free space in the download folder (it must fit with 32 MiB to spare) are refused, and an "Offer refused" notification names the reason. Nothing is written before you accept. A file never overwrites an existing one (the new one gets ` (1)`, ` (2)`, … before the extension), and a file that did not arrive complete (cancelled, declined, error, connection lost) is removed. After a crash or a power cut a partial file can stay in the download folder.
 
 **Wi-Fi networks.** When a phone shares a Wi-Fi network, the finished transfer's row shows its name and a **Join network** button. After you confirm, KuickShare connects this computer through NetworkManager and saves the network, so it connects again by itself; the current Wi-Fi connection is replaced. Only WPA/WPA2 (a passphrase, not a 64-hex key) and open networks work, and not names starting with `kuickshare-`. If you already have a connection for that network, a second one is added. The password is never written to disk; it is kept in memory for 10 minutes at most, so the button stops working after that, after the transfer is declined, or when the sharing service restarts (the error says so); rows from earlier sessions have no button. It is refused while another transfer or a Wi-Fi upgrade is running. Not tried against a real NetworkManager or phone *(inferred)*.
 
@@ -216,9 +218,11 @@ With **Settings → Wi-Fi Direct → Receive and send without a shared network**
 **Requirements and firewall**
 
 - NetworkManager and Bluetooth; no privileges.
-- With firewalld the computer opens only the port of the transfer.
-- Without firewalld (ufw, nftables or none) the Wi-Fi hotspot is put in a zone that lets the phone reach every service of the computer, so turning the setting on asks you to confirm.
+- With firewalld the computer opens only the port of the transfer, and closes it afterwards.
+- If the port cannot be opened (firewalld is not running, as with ufw, nftables or no firewall, or it refuses), the hotspot is not started and the transfer stays on Bluetooth, which is very slow. A box then says so and offers **Allow for this session…**.
+- Turning the setting on while firewalld is not running asks first. If you agree, then until KuickShare is closed the hotspot may run without a rule for its port: with firewalld refusing, the phone that joins can reach every service of this computer; without firewalld, the zone is left to NetworkManager and another firewall may still block the phone. The permission is not saved, and it is taken back when KuickShare restarts, when you reset the preferences, and when you turn the setting off. It applies to the next transfer, not the one in progress.
 - A computer with one radio can lose its Wi-Fi connection while the link is up.
+- This was not tried with a phone since the firewall rule changed.
 
 **Visibility**
 
@@ -293,10 +297,12 @@ Once paired, a transfer from the other computer is accepted without a notificati
 
 Phones cannot pair, so KuickShare can remember them instead. Tap **Accept and trust** on the notification of an incoming transfer, and that device is accepted without asking from then on.
 
-A device is recognised by its advertised name **and** its MAC address together. The MAC is read from the kernel's ARP table for the sender's IP address, so this works on the local network only. If the MAC cannot be read, you are asked as usual. Android uses a different MAC for each Wi-Fi network, so the same phone on another network is asked about again.
+A device is recognised by its advertised name **and** its MAC address together. The MAC is read from the kernel's ARP table for the sender's IP address when the request arrives, so this works on the local network only. If the MAC cannot be read, you are asked as usual. Android uses a different MAC for each Wi-Fi network, so the same phone on another network is asked about again.
 
 > [!WARNING]
-> Someone on your network who copies both the name and the MAC is accepted too. Use trusted devices only on networks where you trust every device.
+> Name and MAC address can both be copied by anyone on your network, and that device is then accepted without asking. Use trusted devices only on networks where you trust every device.
+
+**After an update.** Older versions recognised a device by name and network address only, which is easy to copy. The first start of this version deleted those trusted devices (once, and only if there were any) and shows a notice, "Trusted devices were removed…", until you press **Got it**; the notice survives a restart. Trust each device again with **Accept and trust** on its next transfer. The switch and the feature stay.
 
 Preferences has a **Trusted devices** section with the list (name and MAC address, each with **Remove**) and a **Trust devices** switch. Switched off, listed devices are asked about again and the notification has no **Accept and trust** action. The list is kept for when the switch is turned on again.
 

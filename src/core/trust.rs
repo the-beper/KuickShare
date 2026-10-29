@@ -82,13 +82,20 @@ pub struct Trust {
     peers_path: Option<PathBuf>,
     peers: Mutex<Vec<Peer>>,
     name: Mutex<String>,
-    intents: Mutex<HashMap<IpAddr, (String, Instant)>>,
+    intents: Mutex<HashMap<IpAddr, Intent>>,
     pairing_until: Mutex<Option<Instant>>,
     pending: Mutex<Option<oneshot::Sender<bool>>>,
     events: mpsc::UnboundedSender<TrustEvent>,
     limit: Mutex<RateLimit>,
     slots: Arc<Semaphore>,
     open: Arc<Mutex<HashMap<IpAddr, usize>>>,
+}
+
+/// A transfer a paired computer announced: valid for `INTENT_TTL`, once, and only while that
+/// computer is still paired.
+struct Intent {
+    fingerprint: String,
+    at: Instant,
 }
 
 struct Admission {
@@ -280,6 +287,11 @@ impl Trust {
             .lock()
             .unwrap()
             .retain(|p| p.fingerprint != fingerprint);
+        // What the computer announced before is void: it must not get a transfer accepted now.
+        self.intents
+            .lock()
+            .unwrap()
+            .retain(|_, intent| intent.fingerprint != fingerprint);
         self.save_peers();
         let _ = self.events.send(TrustEvent::PeersChanged);
     }
@@ -340,11 +352,33 @@ impl Trust {
         }
     }
 
-    /// Consumes a fresh announcement from this IP, returning the name of the paired device.
+    /// Pairs with a made-up computer and plants its announcement, for the tests of other modules.
+    #[cfg(test)]
+    pub(crate) fn plant_intent_for_test(&self, ip: IpAddr, name: &str) {
+        let peer = self.add_peer(name, name.as_bytes());
+        self.intents.lock().unwrap().insert(
+            ip,
+            Intent {
+                fingerprint: peer.fingerprint,
+                at: Instant::now(),
+            },
+        );
+    }
+
+    /// Consumes a fresh announcement from this IP, returning the name of the paired device. The
+    /// computer must still be paired: an announcement does not outlive `unpair`.
     pub fn take_intent(&self, ip: &str) -> Option<String> {
         let ip: IpAddr = ip.parse().ok()?;
-        let (name, at) = self.intents.lock().unwrap().remove(&ip)?;
-        (at.elapsed() < INTENT_TTL).then_some(name)
+        let intent = self.intents.lock().unwrap().remove(&ip)?;
+        if intent.at.elapsed() >= INTENT_TTL {
+            return None;
+        }
+        self.peers
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|p| p.fingerprint == intent.fingerprint)
+            .map(|p| p.name.clone())
     }
 
     pub async fn listen(self: &Arc<Self>, addr: SocketAddr) -> Result<SocketAddr> {
@@ -438,10 +472,13 @@ impl Trust {
             }
             Some(HELLO_INTENT) => match known {
                 Some(peer) => {
-                    self.intents
-                        .lock()
-                        .unwrap()
-                        .insert(remote, (peer.name, Instant::now()));
+                    self.intents.lock().unwrap().insert(
+                        remote,
+                        Intent {
+                            fingerprint: peer.fingerprint,
+                            at: Instant::now(),
+                        },
+                    );
                     session.send(&[1]).await
                 }
                 None => session.send(&[0]).await,
