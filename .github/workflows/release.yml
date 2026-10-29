@@ -1,128 +1,368 @@
 name: Release
 
+# Pushing a tag vX.Y.Z builds, verifies, signs and publishes the release in separate jobs of one run, all for the same
+# commit (github.sha). See CONTRIBUTING.md, Releases, for the order and for how to recover from a failed run.
+#
+#   validate        the tag names the version of the sources and the commit, which is on main
+#   ci-gate         CI's `required` check is green on that commit
+#   build-*         build and test the AppImage, the tarball and the Flatpak. No secret, no write permission; the Flatpak
+#                   commits are exported unsigned
+#   verify          the exact set of files, their hashes, their version
+#   sign-flatpak    the only job with the signing key (environment release-signing): signs the Flatpak commits and finishes
+#                   the repository, pushes nothing
+#   publish         the only job with write permission: draft release, assets, gh-pages, then publishes the release.
+#                   It rebuilds nothing and can be run again after a failure
 on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
+permissions: {}
+
+# One release at a time, and a running release is never cancelled (it may have written something already).
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  SITE_URL: https://the-beper.github.io/KuickShare
 
 jobs:
-  appimage:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Check the tag matches Cargo.toml, CMakeLists.txt and the metainfo
-        run: |
-          v="${GITHUB_REF_NAME#v}"
-          test "$(sed -n 's/^version = "\(.*\)"/\1/p;/^\[dependencies\]/q' Cargo.toml | head -1)" = "$v"
-          test "$(sed -n 's/^project(kuickshare VERSION \([0-9.]*\).*/\1/p' src/shell/CMakeLists.txt)" = "$v"
-          grep -q "<release version=\"$v\"" data/io.github.the_beper.KuickShare.metainfo.xml
-
-      - name: Install Rust (stable)
-        run: rustup toolchain install stable --profile minimal && rustup default stable
-
-      - name: Build the AppImage and the tarball
-        run: |
-          build/build-appimage.sh
-          build/build-tarball.sh
-
-      - name: Check the tag matches the built version
-        run: |
-          test "$(sed -n 's/^project(kuickshare VERSION \([0-9.]*\).*/\1/p' src/shell/CMakeLists.txt)" = "${GITHUB_REF_NAME#v}"
-          test -f dist/KuickShare-x86_64.AppImage
-          test -f dist/KuickShare-x86_64.AppImage.zsync
-          test -f dist/KuickShare-x86_64.tar.gz
-
-      - name: Test
-        run: |
-          build/appimage/test-appimage.sh dist/KuickShare-x86_64.AppImage
-          build/test-tarball.sh dist/KuickShare-x86_64.tar.gz
-
-      - name: Checksum
-        run: |
-          cd dist
-          sha256sum KuickShare-x86_64.AppImage KuickShare-x86_64.tar.gz > SHA256SUMS
-
-      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          files: |
-            dist/KuickShare-x86_64.AppImage
-            dist/KuickShare-x86_64.AppImage.zsync
-            dist/KuickShare-x86_64.tar.gz
-            dist/SHA256SUMS
-
-  flatpak:
-    needs: appimage
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 5
     permissions:
-      contents: write
-    container:
-      image: ghcr.io/the-beper/kuickshare-flatpak:fedora45
-      options: --privileged
-    env:
-      SITE_URL: https://the-beper.github.io/KuickShare
+      contents: read
+    outputs:
+      version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
 
-      - name: Fetch the published repository
+      - name: Check the tag, the version and the commit
+        id: check
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: build/release/check-version.sh
+
+  # CI does not run on a tag. The release needs its `required` check green on the very commit that is tagged.
+  ci-gate:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - name: Wait for the required check of CI
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git config --global --add safe.directory '*'
-          remote="https://x-access-token:$GH_TOKEN@github.com/${GITHUB_REPOSITORY}.git"
-          if git ls-remote --exit-code --heads "$remote" gh-pages >/dev/null; then
-            git clone --quiet --depth 1 --branch gh-pages "$remote" pages
+          deadline=$(( $(date +%s) + 1200 ))
+          while :; do
+            state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=required&per_page=100" \
+              --jq '[.check_runs[] | select(.app.slug == "github-actions")] | sort_by(.id) | last | if . == null then "none" else "\(.status) \(.conclusion)" end')
+            echo "required on $GITHUB_SHA: $state"
+            case $state in
+              "completed success") exit 0 ;;
+              "completed "*) echo "CI failed on this commit: fix it, push to main, and tag the new commit" >&2; exit 1 ;;
+            esac
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "CI has no finished 'required' check on this commit after 20 minutes: push the commit to main and wait for it, then run this job again" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+
+  build-appimage:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      appimage_sha256: ${{ steps.hash.outputs.appimage }}
+      zsync_sha256: ${{ steps.hash.outputs.zsync }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # The Arch image published by images.yml (public, pulled without credentials): the one CI tested. A failed pull fails the job.
+      - name: Pull the build image
+        run: |
+          podman pull ghcr.io/the-beper/kuickshare-appimage:arch
+          podman tag ghcr.io/the-beper/kuickshare-appimage:arch localhost/kuickshare-appimage:arch
+
+      - name: Build the AppImage
+        run: build/build-appimage.sh
+
+      - name: Test
+        env:
+          KUICKSHARE_EXPECT_VERSION: ${{ needs.validate.outputs.version }}
+        run: build/appimage/test-appimage.sh dist/KuickShare-x86_64.AppImage
+
+      - name: Hash
+        id: hash
+        run: |
+          cd dist
+          {
+            echo "appimage=$(sha256sum KuickShare-x86_64.AppImage | cut -d' ' -f1)"
+            echo "zsync=$(sha256sum KuickShare-x86_64.AppImage.zsync | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-appimage
+          path: |
+            dist/KuickShare-x86_64.AppImage
+            dist/KuickShare-x86_64.AppImage.zsync
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  build-tarball:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    container:
+      image: ghcr.io/the-beper/kuickshare-build:fedora45
+    outputs:
+      tarball_sha256: ${{ steps.hash.outputs.tarball }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Rust (stable)
+        run: |
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      # The scripts start the build container themselves unless they find /run/.containerenv: this job already runs in it.
+      - name: Build and test the tarball
+        env:
+          KUICKSHARE_EXPECT_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          touch /run/.containerenv
+          build/build-tarball.sh
+          build/test-tarball.sh dist/KuickShare-x86_64.tar.gz
+
+      - name: Hash
+        id: hash
+        run: echo "tarball=$(sha256sum dist/KuickShare-x86_64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-tarball
+          path: dist/KuickShare-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  # Builds the bundle and exports the commits WITHOUT a signature, onto an anonymous clone of the published repository (so that
+  # they keep their parent). --privileged is what bubblewrap needs inside the container; this job has no secret and no write token.
+  build-flatpak:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    container:
+      image: ghcr.io/the-beper/kuickshare-flatpak:fedora45
+      options: --privileged
+    outputs:
+      flatpak_sha256: ${{ steps.hash.outputs.flatpak }}
+      commits_sha256: ${{ steps.hash.outputs.commits }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # Anonymous: the repository is public. No gh-pages yet means the first release; any other failure fails the job.
+      - name: Fetch the published repository
+        run: |
+          url="https://github.com/$GITHUB_REPOSITORY.git"
+          heads=$(git ls-remote --heads "$url" gh-pages)
+          if [ -n "$heads" ]; then
+            git clone --quiet --depth 1 --branch gh-pages "$url" pages
           else
             mkdir pages
           fi
 
-      - name: Import the signing key
-        env:
-          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
-        run: |
-          test -n "$FLATPAK_GPG_PRIVATE_KEY" || { echo "secret FLATPAK_GPG_PRIVATE_KEY is not set (see CONTRIBUTING.md)"; exit 1; }
-          printf '%s\n' "$FLATPAK_GPG_PRIVATE_KEY" | gpg --batch --import
-          echo "GPG_KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')" >> "$GITHUB_ENV"
-
-      - name: Build and sign
+      - name: Build the Flatpak (unsigned)
         run: |
           touch /run/.containerenv
-          KUICKSHARE_FLATPAK_REPO="$PWD/pages/repo" build/flatpak/build-flatpak.sh --gpg-sign="$GPG_KEY_ID"
-
-      - name: Finish the repository
-        run: build/flatpak/publish-repo.sh pages "$SITE_URL"
-
-      - name: Check the tag matches the built version
-        run: |
-          test "$(sed -n 's/^project(kuickshare VERSION \([0-9.]*\).*/\1/p' src/shell/CMakeLists.txt)" = "${GITHUB_REF_NAME#v}"
-          test -f dist/KuickShare-x86_64.flatpak
+          KUICKSHARE_FLATPAK_REPO="$PWD/pages/repo" build/flatpak/build-flatpak.sh
 
       - name: Smoke test
+        env:
+          KUICKSHARE_EXPECT_VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          mkdir -p -m 700 /run/user/0
+          mkdir -p /run/user/0
+          chmod 700 /run/user/0
           XDG_RUNTIME_DIR=/run/user/0 dbus-run-session -- build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
 
-      - name: Publish to GitHub Pages
+      - name: Export the new commits
+        run: build/release/export-flatpak-commits.sh pages dist/flatpak-commits
+
+      - name: Hash
+        id: hash
+        run: |
+          {
+            echo "flatpak=$(sha256sum dist/KuickShare-x86_64.flatpak | cut -d' ' -f1)"
+            echo "commits=$(sha256sum dist/flatpak-commits/flatpak-commits.tar | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-flatpak
+          path: dist/KuickShare-x86_64.flatpak
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flatpak-commits
+          path: dist/flatpak-commits/flatpak-commits.tar
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  verify:
+    needs: [validate, build-appimage, build-tarball, build-flatpak]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      sums_sha256: ${{ steps.verify.outputs.sums }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: asset-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Verify the files and write SHA256SUMS
+        id: verify
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          EXPECT_SHA256_APPIMAGE: ${{ needs.build-appimage.outputs.appimage_sha256 }}
+          EXPECT_SHA256_ZSYNC: ${{ needs.build-appimage.outputs.zsync_sha256 }}
+          EXPECT_SHA256_TARBALL: ${{ needs.build-tarball.outputs.tarball_sha256 }}
+          EXPECT_SHA256_FLATPAK: ${{ needs.build-flatpak.outputs.flatpak_sha256 }}
+        run: |
+          build/release/verify-assets.sh release-assets
+          echo "sums=$(sha256sum release-assets/SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  # The only job that sees the signing key. The environment release-signing must exist with the secret
+  # FLATPAK_GPG_PRIVATE_KEY and a required reviewer (CONTRIBUTING.md, Releases, one-time setup): a job that names an environment
+  # that does not exist makes GitHub create it unprotected, and then the repository secret of the same name is readable here.
+  # The secret is given to one step only. No --privileged: signing and checking as a client need no sandbox.
+  sign-flatpak:
+    needs: [validate, verify, build-flatpak]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release-signing
+    permissions:
+      contents: read
+    container:
+      image: ghcr.io/the-beper/kuickshare-flatpak:fedora45
+    outputs:
+      site_sha256: ${{ steps.sign.outputs.site_sha256 }}
+      base_sha: ${{ steps.sign.outputs.base_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # The container runs as root and the workspace belongs to the runner user: trust this one directory, not all of them.
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: flatpak-commits
+          path: flatpak-commits
+
+      - name: Sign the Flatpak repository
+        id: sign
+        env:
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+          EXPECT_COMMITS_SHA256: ${{ needs.build-flatpak.outputs.commits_sha256 }}
+        run: build/release/sign-flatpak-repo.sh flatpak-commits/flatpak-commits.tar flatpak-site
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flatpak-site
+          path: |
+            flatpak-site/site.tar
+            flatpak-site/refs.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  # The only job with write permission. It uploads what verify and sign-flatpak produced and rebuilds nothing. Re-run it
+  # ("Re-run failed jobs") after any failure: it does only what is missing.
+  publish:
+    needs: [validate, ci-gate, verify, sign-flatpak]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: release-assets
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: flatpak-site
+          path: flatpak-site
+
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          cd pages
-          rm -rf .git repo/tmp
-          git init --quiet --initial-branch=gh-pages
-          git config user.name "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-          git add --all
-          git commit --quiet -m "Flatpak repository for ${GITHUB_REF_NAME}"
-          git push --force "https://x-access-token:$GH_TOKEN@github.com/${GITHUB_REPOSITORY}.git" gh-pages
-
-      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          files: dist/KuickShare-x86_64.flatpak
+          RELEASE_TAG: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ASSETS_DIR: release-assets
+          EXPECT_SUMS_SHA256: ${{ needs.verify.outputs.sums_sha256 }}
+          SITE_TAR: flatpak-site/site.tar
+          EXPECT_SITE_SHA256: ${{ needs.sign-flatpak.outputs.site_sha256 }}
+          SITE_BASE_SHA: ${{ needs.sign-flatpak.outputs.base_sha }}
+          REFS_FILE: flatpak-site/refs.txt
+        run: build/release/publish.sh

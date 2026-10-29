@@ -196,7 +196,8 @@ jobs:
 
       - name: Smoke test
         run: |
-          mkdir -p -m 700 /run/user/0
+          mkdir -p /run/user/0
+          chmod 700 /run/user/0
           XDG_RUNTIME_DIR=/run/user/0 dbus-run-session -- build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
 
       # An installed client must still update to a repository finished by the release's separate signing job: ephemeral keys,
