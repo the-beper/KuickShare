@@ -11,7 +11,7 @@ name = "core_bin"
 path = "src/bin.rs"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-bluer = { version = "0.17", features = ["full"], optional = true }
+bluer = { version = "0.17", features = ["bluetoothd", "l2cap"], optional = true }
 
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
 dbus = { version = "0.9", features = ["vendored"] }
@@ -20,7 +20,7 @@ dbus = { version = "0.9", features = ["vendored"] }
 anyhow = "1.0"
 base64 = "0.23"
 bytes = "1.10"
-directories = "6.0"
+dirs = "7"
 futures = "0.3"
 hex = "0.4"
 hkdf = "0.13"
@@ -35,7 +35,7 @@ once_cell = "1.20"
 p256 = { version = "0.14", features = ["ecdh"] }
 prost = "0.14"
 rand = "0.10"
-serde = { version = "1.0", features = ["derive"] }
+rustix = { version = "1.1", features = ["fs"] }
 sha2 = "0.11"
 tokio = { version = "1.54", features = [
     "macros",

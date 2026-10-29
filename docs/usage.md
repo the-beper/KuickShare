@@ -187,16 +187,18 @@ When a nearby device wants to send, a persistent notification titled "Incoming t
 | Action | Effect |
 |---|---|
 | Accept | Receive the transfer |
-| Accept and trust | Accept, and add the sender to the trusted devices (only if trusted devices are on; see [below](#trusted-devices)) |
+| Accept and trust | Accept, and add the sender to the trusted devices (only if trusted devices are on; see [below](#trusted-devices)). It binds the MAC address read when the request arrived; if that cannot be checked (another network, a changed address, no name) the transfer keeps waiting, now with Accept and Decline only |
 | Decline | Refuse the transfer |
 
 The same request is also listed on the Transfers page with Accept and Decline buttons. Compare the PIN with the one on the phone before accepting.
 
-A request nobody answers is declined after 5 minutes.
+A request nobody answers is declined after 5 minutes. A request is answered once: a notification left over from an earlier transfer closes by itself and cannot answer a newer one. If many requests wait at once (32, or 4 from one address) the new ones are declined.
 
 Files go to the download folder, `~/Downloads` unless you chose another one in Preferences. Progress and a cancel button appear in Plasma's job tracker. When it finishes you get a "Files received" notification with **Open folder**. Text arrives as a "Text received" notification with **Copy**, and **Open link** when the text is a single `http://` or `https://` address.
 
 A sender can propose file names that would write outside the download folder. KuickShare declines such a transfer before asking you. A name is refused if it is empty, is `.` or `..`, is longer than 255 bytes, or contains a `/`, a `\`, a control character, or an invisible character such as a zero-width space or a right-to-left override. The decision is logged and no notification is shown; how the Transfers page then shows the row was not checked (unverified).
+
+An offer is also checked before you are asked: more than 10,000 files, impossible sizes, or not enough free space in the download folder (it must fit with 32 MiB to spare) are refused, and an "Offer refused" notification names the reason. Nothing is written before you accept. A file never overwrites an existing one (the new one gets ` (1)`, ` (2)`, … before the extension), and a file that did not arrive complete (cancelled, declined, error, connection lost) is removed. After a crash or a power cut a partial file can stay in the download folder.
 
 **Wi-Fi networks.** When a phone shares a Wi-Fi network, the finished transfer's row shows its name and a **Join network** button. After you confirm, KuickShare connects this computer through NetworkManager and saves the network, so it connects again by itself; the current Wi-Fi connection is replaced. Only WPA/WPA2 (a passphrase, not a 64-hex key) and open networks work, and not names starting with `kuickshare-`. If you already have a connection for that network, a second one is added. The password is never written to disk; it is kept in memory for 10 minutes at most, so the button stops working after that, after the transfer is declined, or when the sharing service restarts (the error says so); rows from earlier sessions have no button. It is refused while another transfer or a Wi-Fi upgrade is running. Not tried against a real NetworkManager or phone *(inferred)*.
 
@@ -216,9 +218,30 @@ With **Settings → Wi-Fi Direct → Receive and send without a shared network**
 **Requirements and firewall**
 
 - NetworkManager and Bluetooth; no privileges.
-- With firewalld the computer opens only the port of the transfer.
-- Without firewalld (ufw, nftables or none) the Wi-Fi hotspot is put in a zone that lets the phone reach every service of the computer, so turning the setting on asks you to confirm.
+- With firewalld the computer opens only the port of the transfer, and closes it afterwards.
+- If the port cannot be opened (firewalld is not running, as with ufw, nftables or no firewall, or it refuses), the hotspot is not started and the transfer stays on Bluetooth, which is very slow. A box then says so and offers **Allow for this session…**.
+- Turning the setting on while firewalld is not running asks first. If you agree, then until KuickShare is closed the hotspot may run without a rule for its port: with firewalld refusing, the phone that joins can reach every service of this computer; without firewalld, the zone is left to NetworkManager and another firewall may still block the phone. The permission is not saved, and it is taken back when KuickShare restarts, when you reset the preferences, and when you turn the setting off. It applies to the next transfer, not the one in progress.
 - A computer with one radio can lose its Wi-Fi connection while the link is up.
+- This was not tried with a phone since the firewall rule changed.
+
+### Checking the requirements
+
+Under **Settings → Wi-Fi Direct**, a line "System requirements" summarises what this computer can do: sending, receiving and joining networks, each Available, Limited, Unavailable or Unknown. **Check system requirements…** opens the dialog "System requirements"; it works also when the switch is disabled. Checking only reads: it never changes Bluetooth, Wi-Fi or the firewall. How each requirement is judged, and what is never verified, is in [wifi-direct.md](wifi-direct.md#checking-the-requirements).
+
+The dialog shows:
+
+- The three capabilities and when they were last checked. A box says when the result is out of date, or could not be read, or the service is unavailable.
+- Sections for Sending, Receiving and Join network, each listing only what limits it (or "Nothing limits this"), then "System components" with every item. Each item has a status (Ready, Warning, Blocked, Unknown), a short reason and a **Details** button with a hint, what it affects, how it was checked and, where useful, a command to copy (it is never run).
+- **Refresh** asks the core to check again (it may return a check made a moment ago); opening the dialog checks only when the last result is missing or out of date.
+- **Copy diagnostic report** puts plain text on the clipboard for a bug report: shell, core and schema versions, packaging, the check time (UTC), the three capabilities, and one line per item with its id, status, reason code, category and how it was checked. It leaves out the details and device fields and holds no network names (SSIDs), MAC or IP addresses, or device names.
+
+An "Available" result is not a promise: the check cannot tell whether a hotspot will start or the firewall will accept it (see the link above), and nothing here was hand-tested with real services.
+
+When you turn the switch on:
+
+- If neither sending nor receiving can work, the switch stays off and a prompt "Wi-Fi Direct is not fully available" offers **View requirements**.
+- If only one direction can work, the switch turns on and a warning says "Only sending works on this computer" or "Only receiving works on this computer".
+- If something could not be checked, the switch turns on and the summary shows Unknown.
 
 **Visibility**
 
@@ -293,10 +316,12 @@ Once paired, a transfer from the other computer is accepted without a notificati
 
 Phones cannot pair, so KuickShare can remember them instead. Tap **Accept and trust** on the notification of an incoming transfer, and that device is accepted without asking from then on.
 
-A device is recognised by its advertised name **and** its MAC address together. The MAC is read from the kernel's ARP table for the sender's IP address, so this works on the local network only. If the MAC cannot be read, you are asked as usual. Android uses a different MAC for each Wi-Fi network, so the same phone on another network is asked about again.
+A device is recognised by its advertised name **and** its MAC address together. The MAC is read from the kernel's ARP table for the sender's IP address when the request arrives, so this works on the local network only. If the MAC cannot be read, you are asked as usual. Android uses a different MAC for each Wi-Fi network, so the same phone on another network is asked about again.
 
 > [!WARNING]
-> Someone on your network who copies both the name and the MAC is accepted too. Use trusted devices only on networks where you trust every device.
+> Name and MAC address can both be copied by anyone on your network, and that device is then accepted without asking. Use trusted devices only on networks where you trust every device.
+
+**After an update.** Older versions recognised a device by name and network address only, which is easy to copy. The first start of this version deleted those trusted devices (once, and only if there were any) and shows a notice, "Trusted devices were removed…", until you press **Got it**; the notice survives a restart. Trust each device again with **Accept and trust** on its next transfer. The switch and the feature stay.
 
 Preferences has a **Trusted devices** section with the list (name and MAC address, each with **Remove**) and a **Trust devices** switch. Switched off, listed devices are asked about again and the notification has no **Accept and trust** action. The list is kept for when the switch is turned on again.
 
@@ -377,4 +402,4 @@ Also listed in the app under More, Shortcuts.
 | The same, in the Flatpak | `~/.var/app/io.github.the_beper.KuickShare/config/kuickshare/` and `.../data/kuickshare/` |
 | Logs | No log file. The service writes to the standard output of the window process, so they show in a terminal when you run `kuickshare` there. Where the desktop session keeps them otherwise is unverified |
 
-A settings or peers file that cannot be parsed is moved to a `.bak` copy next to it and defaults are used. An unparsable identity file stops the service from starting; it is never replaced. An unparsable history file is ignored and logged. The log level can be raised for one run: `RUST_LOG=debug kuickshare`, since the service inherits the environment.
+A settings, peers or history file that cannot be read or parsed is moved to a `.bak` copy next to it (`.bak.1`, `.bak.2`… if one exists) and defaults are used; if it cannot be moved, that file is not saved to during the run. An unparsable identity file stops the service from starting; it is never replaced. Details: [architecture.md](architecture.md#files-on-disk). The log level can be raised for one run: `RUST_LOG=debug kuickshare`, since the service inherits the environment.

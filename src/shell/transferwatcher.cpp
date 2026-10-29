@@ -32,6 +32,58 @@ TransferWatcher::TransferWatcher(CoreBridge *core, QObject *parent)
     connect(core, &CoreBridge::transferChanged, this, &TransferWatcher::onTransferChanged);
     connect(core, &CoreBridge::sendRequested, this, &TransferWatcher::onSendRequested);
     connect(core, &CoreBridge::sendRefused, this, &TransferWatcher::onSendRefused);
+    connect(core, &CoreBridge::answerRefused, this, &TransferWatcher::onAnswerRefused);
+    connect(core, &CoreBridge::answerNotApplied, this, &TransferWatcher::onAnswerNotApplied);
+    // A prompt outlives neither the core it was shown for nor the transfers that core knew.
+    connect(core, &CoreBridge::connectedChanged, this, &TransferWatcher::closeConsents);
+    connect(core, &CoreBridge::transfersReset, this, &TransferWatcher::closeConsents);
+}
+
+void TransferWatcher::onAnswerRefused(const QString &id)
+{
+    const auto it = m_tracked.find(id);
+    if (it != m_tracked.end() && it->consent)
+    {
+        it->consent->close();
+        it->consent.clear();
+        it->consentToken = 0;
+    }
+}
+
+void TransferWatcher::onAnswerNotApplied(const QString &id)
+{
+    const auto it = m_tracked.find(id);
+    if (it == m_tracked.end())
+    {
+        return;
+    }
+    // The click closed the notification, but the transfer still waits (it would be declined at the
+    // time limit): ask again, without the choice that failed.
+    it->consent.clear();
+    it->noTrust = true;
+    onTransferChanged(id);
+}
+
+void TransferWatcher::closeConsents()
+{
+    for (auto it = m_tracked.begin(); it != m_tracked.end();)
+    {
+        if (it->consent)
+        {
+            it->consent->close();
+        }
+        it->consent.clear();
+        it->consentToken = 0;
+        // The ids may come back for other transfers: what is finished is forgotten.
+        if (it->finished)
+        {
+            it = m_tracked.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
 }
 
 void TransferWatcher::onSendRequested(const QString &id, const QString &device, int files)
@@ -92,17 +144,27 @@ void TransferWatcher::onTransferChanged(const QString &id)
 
     // A paired computer announced this transfer: the core accepts it by itself.
     const bool autoAccepted = !info.value(QStringLiteral("trusted")).toString().isEmpty();
-    const bool awaitingConsent = !outbound && state == QLatin1String("WaitingForUserConsent") && !autoAccepted;
+    // The core's token of the consent that waits for an answer; 0 when none does (it was answered).
+    const quint64 consentToken = info.value(QStringLiteral("consent")).toULongLong();
+    const bool awaitingConsent = !outbound && state == QLatin1String("WaitingForUserConsent") && !autoAccepted && consentToken != 0;
     if (awaitingConsent)
     {
+        // A prompt of an older consent (the id was reused) answers nothing now: replace it.
+        if (tracked.consent && tracked.consentToken != consentToken)
+        {
+            tracked.consent->close();
+            tracked.consent.clear();
+        }
         if (!tracked.consent)
         {
-            notifyConsent(id, device, info.value(QStringLiteral("pin")).toString(), tracked);
+            notifyConsent(id, device, info.value(QStringLiteral("pin")).toString(), consentToken, tracked);
         }
     }
     else if (tracked.consent)
     {
         tracked.consent->close();
+        tracked.consent.clear();
+        tracked.consentToken = 0;
     }
 
     // The step a send is in until the files start to move.
@@ -176,7 +238,13 @@ void TransferWatcher::onTransferChanged(const QString &id)
     }
 
     const QString who = device.isEmpty() ? i18n("a nearby device") : device;
-    if (success && !outbound)
+    const QString refusal = CoreBridge::refusalText(info.value(QStringLiteral("reason")).toString());
+    if (!outbound && !refusal.isEmpty())
+    {
+        // The library refused the offer itself (too many files, not enough space, ...).
+        notifyProblem(QStringLiteral("transferFailed"), i18n("Offer refused"), i18n("From %1: %2", who.toHtmlEscaped(), refusal));
+    }
+    else if (success && !outbound)
     {
         notifyReceived(id, who, info, isText);
     }
@@ -195,7 +263,7 @@ void TransferWatcher::onTransferChanged(const QString &id)
     }
 }
 
-void TransferWatcher::notifyConsent(const QString &id, const QString &device, const QString &pin, Tracked &tracked)
+void TransferWatcher::notifyConsent(const QString &id, const QString &device, const QString &pin, quint64 token, Tracked &tracked)
 {
     auto *notification = new KNotification(QStringLiteral("incomingTransfer"), KNotification::Persistent);
     notification->setIconName(QStringLiteral("io.github.the_beper.KuickShare"));
@@ -203,27 +271,30 @@ void TransferWatcher::notifyConsent(const QString &id, const QString &device, co
     const QString who = device.isEmpty() ? i18n("A nearby device") : device.toHtmlEscaped();
     notification->setText(pin.isEmpty() ? i18n("%1 wants to share with you", who) : i18n("%1 wants to share with you\nPIN: %2", who, pin.toHtmlEscaped()));
 
+    // Every answer carries the token of this prompt: if the core restarted and gave the id to
+    // another transfer, it refuses the answer.
     auto *accept = notification->addAction(i18n("Accept"));
-    connect(accept, &KNotificationAction::activated, this, [this, id]
-            { m_core->accept(id); });
+    connect(accept, &KNotificationAction::activated, this, [this, id, token]
+            { m_core->answerWithToken(id, token, QStringLiteral("accept")); });
     // Trusting a device is a feature that can be turned off in the settings. It needs the sender's
     // MAC address, which only exists for transfers over the network (id "ip:port"), not for Bluetooth
-    // ones (id "ble-N"). The core reads the MAC from the IPv4 neighbour table, so an IPv6 id would
-    // need the same check there.
-    if (m_core->trustedDevicesEnabled() && id.contains(QLatin1Char(':')))
+    // ones (id "ble-N"). The core binds the trust to the address it read when the transfer arrived,
+    // and refuses (leaving the transfer waiting) when it cannot.
+    if (m_core->trustedDevicesEnabled() && !tracked.noTrust && id.contains(QLatin1Char(':')))
     {
         auto *trust = notification->addAction(i18n("Accept and trust"));
-        connect(trust, &KNotificationAction::activated, this, [this, id]
-                {
-            m_core->allowDevice(id);
-            m_core->accept(id); });
+        connect(trust, &KNotificationAction::activated, this, [this, id, token]
+                { m_core->answerWithToken(id, token, QStringLiteral("accept_and_trust")); });
+        notification->setText(notification->text() + QLatin1Char('\n')
+                              + i18n("“Accept and trust” recognises this device by its name and network address, which another device on the same network can copy"));
     }
     auto *decline = notification->addAction(i18n("Decline"));
-    connect(decline, &KNotificationAction::activated, this, [this, id]
-            { m_core->decline(id); });
+    connect(decline, &KNotificationAction::activated, this, [this, id, token]
+            { m_core->answerWithToken(id, token, QStringLiteral("decline")); });
 
     notification->sendEvent();
     tracked.consent = notification;
+    tracked.consentToken = token;
 }
 
 void TransferWatcher::notifyReceived(const QString &id, const QString &who, const QVariantMap &info, bool isText)

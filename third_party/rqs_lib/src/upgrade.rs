@@ -607,6 +607,12 @@ impl UpgradeState {
         matches!(self.phase, Phase::Waiting(_))
     }
 
+    /// Whether an upgrade is under way (hosting, waiting for the peer, or draining). Each of
+    /// these has its own deadline, so the prior channel may be quiet meanwhile.
+    pub fn in_progress(&self) -> bool {
+        !matches!(self.phase, Phase::Idle)
+    }
+
     /// Call right before `host` / `join` so a failure there still triggers `release`.
     pub fn mark_link_used(&mut self) {
         self.attempted = true;

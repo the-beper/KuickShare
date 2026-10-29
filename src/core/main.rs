@@ -1,9 +1,12 @@
 mod allowed;
 mod app;
+mod consent;
 mod dbus;
 mod history;
 mod link;
+mod persist;
 mod ratelimit;
+mod requirements;
 mod safety;
 mod settings;
 mod trust;
@@ -15,7 +18,13 @@ use anyhow::Result;
 use tokio::sync::Mutex;
 use tracing_subscriber::EnvFilter;
 
-use crate::{app::Core, history::History, settings::Settings, trust::Trust};
+use crate::{
+    app::Core,
+    history::History,
+    requirements::{EngineConfig, SystemEngine, SystemRequirementsProbe},
+    settings::Settings,
+    trust::Trust,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -47,9 +56,18 @@ async fn main() -> Result<()> {
         trust_rx,
     )));
     core.lock().await.set_handle(Arc::downgrade(&core));
-    let lib_actions = core.lock().await.lib_actions();
-    let connection = dbus::serve(core.clone(), lib_actions).await?;
+    // The Wi-Fi requirements: one engine for the report and for the gate on the upgrade setting.
+    let requirements = SystemEngine::new(SystemRequirementsProbe::new(), EngineConfig::default());
+    core.lock().await.set_requirements(requirements.clone());
+    let consents = core.lock().await.consents();
+    // Profiles a crash left behind (possibly in an open firewall zone) go first, whatever the
+    // settings say, and before the bus name is taken: no request sees the service half-started.
+    // Kept for the exit: the cleanup there must not wait for the `Core` lock.
+    let release = core.lock().await.wifi_release();
+    app::release_wifi(release.clone(), app::WIFI_START_SWEEP_BOUND).await;
+    let connection = dbus::serve(core.clone(), consents, requirements.clone()).await?;
     core.lock().await.start(connection).await?;
+    requirements::watch::spawn(requirements);
     tokio::spawn(app::watch_network(core.clone()));
 
     // The shell stops the daemon with SIGTERM; Ctrl+C is for running it by hand.
@@ -59,6 +77,14 @@ async fn main() -> Result<()> {
         _ = terminate.recv() => {}
     }
     tracing::info!("stopping");
-    core.lock().await.shutdown().await;
+    // Engine at most 0.8 s, then the Wi-Fi cleanup at most 2 s, whatever the engine does or
+    // whoever holds the `Core` lock: both within the shell's 3 s wait after SIGTERM. The cleanup
+    // closes the firewall port and restores the connection a hotspot replaced, on the shared link.
+    app::stop_daemon(
+        async { core.lock().await.shutdown().await },
+        app::SHUTDOWN_ENGINE_BOUND,
+        app::release_wifi(release, app::WIFI_STOP_CLEANUP_BOUND),
+    )
+    .await;
     Ok(())
 }

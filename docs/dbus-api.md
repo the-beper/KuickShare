@@ -2,7 +2,7 @@
 
 The core daemon `kuickshared` exposes everything the shell does through one object on the session bus. Any other client can use it the same way. Design and security model: [architecture.md](architecture.md). End-user guide: [usage.md](usage.md).
 
-Contents: [Trying it](#trying-it) · [Methods](#methods) · [Properties](#properties) · [Signals](#signals) ([TransferUpdated](#transferupdated), [DeviceFound](#devicefound)) · [Transfer states](#transfer-states) · [JSON results](#json-results) ([History](#history), [Paired computers](#paired-computers), [Always-accepted devices](#always-accepted-devices)) · [Behaviour](#behaviour) ([Pairing and the trust port](#pairing-and-the-trust-port)) · [How the shell uses it](#how-the-shell-uses-it) · [Guaranteed by tests](#guaranteed-by-tests)
+Contents: [Trying it](#trying-it) · [Methods](#methods) · [Properties](#properties) · [Signals](#signals) ([TransferUpdated](#transferupdated), [DeviceFound](#devicefound)) · [Answer errors](#answer-errors) · [Transfer states](#transfer-states) · [JSON results](#json-results) ([History](#history), [Paired computers](#paired-computers), [Always-accepted devices](#always-accepted-devices), [Wi-Fi requirements report](#wi-fi-requirements-report)) · [Behaviour](#behaviour) ([Pairing and the trust port](#pairing-and-the-trust-port)) · [How the shell uses it](#how-the-shell-uses-it) · [Guaranteed by tests](#guaranteed-by-tests)
 
 | | |
 |---|---|
@@ -64,16 +64,19 @@ Bluetooth devices are listed only while `WifiUpgrade` is on, can be sent to but 
 
 | Method | Signature | Description | Errors |
 |---|---|---|---|
-| `Accept` | `(s id)` | Accept an incoming transfer waiting for consent | Service not running |
-| `Decline` | `(s id)` | Decline it | Service not running |
-| `Cancel` | `(s id)` | Cancel a running transfer, either direction | Service not running |
+| `AnswerTransfer` | `(s id, t consent, s answer)` | Answer an incoming transfer waiting for consent. `consent` is the `consent` key of the latest `TransferUpdated` of that transfer (see [TransferUpdated](#transferupdated)); `answer` is `accept`, `accept_and_trust` or `decline`. `accept_and_trust` accepts and adds the sender to the [always-accepted list](#always-accepted-devices), bound to the MAC address read when the prompt opened. The consent is answered once: of several answers that race, one wins | The [answer errors](#answer-errors); an unknown `answer` word gives `InvalidArgs` |
+| `Accept` | `(s id)` | Legacy form of `AnswerTransfer` with `accept`, without the token: it cannot tell a reused id from the original, so prefer `AnswerTransfer` | The [answer errors](#answer-errors) except `StaleToken` |
+| `Decline` | `(s id)` | Legacy form with `decline` | The same |
+| `Cancel` | `(s id)` | Cancel a running transfer, either direction. Also cancels a send that is still choosing its route (shown as "Starting"): it does not go out, and `Cancel` emits a final `Cancelled` for that id before it returns. No history entry is written for it. Never waits for the core lock | Service not running |
 | `JoinNetwork` | `(s transfer_id)` | Join the Wi-Fi network received in a finished inbound transfer (`payload_kind` `WiFi`). Needs NetworkManager. The core keeps the password only in memory ([architecture.md](architecture.md#wi-fi-credentials-from-a-phone)); it is never on the bus. The network becomes a saved connection that reconnects by itself, and replaces the current Wi-Fi connection of the one Wi-Fi device. WPA/WPA2 and open networks only. On success the credentials are forgotten | Unknown, expired (10 minutes) or already used `transfer_id`; WEP or unknown security type; a transfer is in progress; a Wi-Fi upgrade is running; no Wi-Fi device; the SSID starts with `kuickshare-`; the key is a 64-hex PSK (only 8 to 63 character passphrases are accepted); NetworkManager failed or did not connect within 15 s (the profile is removed and the previous connection restored). Messages never contain the password. The join runs to the end even if the caller goes away. Like `Accept`, any process of the same user on the session bus can call it for a transfer id that has stored credentials. A transfer started during the join (up to about 15 s) can lose its connection. If the SSID already has a NetworkManager profile, a second one is added (existing profiles are not looked up) |
 | `StartDiscovery` | `()` | Start looking for nearby devices; reported by `DeviceFound` / `DeviceLost`. Does nothing if already on | Service not running |
-| `FirewallManaged` | `() -> b` | Whether firewalld is running on the system bus. When it is not, the Wi-Fi upgrade cannot open one port and the hotspot uses the `trusted` zone; the shell asks for confirmation before turning the setting on | none |
+| `FirewallManaged` | `() -> b` | Whether firewalld is running on the system bus. When it is not, the core cannot open the one port of the hotspot and refuses the hotspot (`WifiUpgradeBlocked`, `firewall_missing`) unless the session consent was given; the shell asks before turning the setting on when this is `false`. It says nothing about whether firewalld will accept the change (polkit) | none |
+| `RequestWifiUpgrade` | `(b enabled, b allow_insecure_hotspot)` | The one call that sets `WifiUpgrade` together with the firewall consent. `enabled` is saved. `allow_insecure_hotspot` lets the computer's hotspot use an open firewall zone when its port cannot be opened (firewalld refused: `trusted` zone; firewalld missing: the zone is left to NetworkManager, so another firewall may still block the phone), for this session only: it is kept in memory and shown by `InsecureHotspotAllowed`. Any other write to the upgrade takes it back: this call with `false`, a write of the `WifiUpgrade` property, `ResetSettings`, a restart of the daemon. Taking it back also takes down a hotspot that runs in an open zone (the transfer goes on over its first channel). Turning the setting on (it was off) is judged by the [requirements report](#wi-fi-requirements-report): when sending and receiving are both `unavailable` it is refused, but only if a check that started after the request says so too (an old cached report is never enough to refuse); when one direction works, or something could not be checked, it is saved. Turning it off is never refused. The stored value is written only by this call and by the legacy `WifiUpgrade` write: it never changes because NetworkManager or BlueZ appears or disappears | `InvalidArgs` for `(false, true)` (consent without the upgrade); `io.github.the_beper.KuickShare1.Error.RequirementsBlocked` when turning on while both directions are proven blocked (see [Wi-Fi upgrade errors](#wi-fi-upgrade-errors)). Nothing changed in both cases |
+| `WifiRequirements` | `(b force_refresh) -> s` | What the Wi-Fi upgrade needs from this computer, as JSON ([report](#wi-fi-requirements-report)). It only reads: it starts no hotspot, scan or prompt and changes nothing in Bluetooth, Wi-Fi or the firewall (what is probed: [wifi-direct.md](wifi-direct.md#checking-the-requirements)). `false` returns the cached report while it is younger than its `ttl_ms` (30 s) and no event has dropped it, otherwise a new check runs. `true` runs a new check, except that the report of a check that ended less than 2 s ago, if still fresh, is returned as it is. A check already running is joined, never doubled. Each D-Bus call of a check is limited to 2 s and the whole check to 6 s. What could not be observed (a service that does not answer, a call refused, a malformed reply, the system bus out of reach) is an `unknown` row with a reason code, not an error. Any client of the session bus can call it and so make the core probe the system services: the 2 s rule keeps forced calls to one run per 2 s | `Failed` only if the document would pass 64 KiB (not expected) |
 | `ScanBluetooth` | `()` | Run one more Bluetooth LE scan window (a few seconds) for phones in Receive mode; results arrive as `DeviceFound`. The scan starts at once, then LAN devices that fail two TCP connection attempts of 1.5 s each are dropped (`DeviceLost`) before the call returns, so it can take about 3 s. Nothing is scanned or dropped when discovery is not running. Does nothing without `WifiUpgrade`, a Bluetooth adapter, while a scan or Bluetooth send runs, or within 4 seconds of the previous window | Service not running; discovery is not running |
 | `StopDiscovery` | `()` | Stop looking and forget the devices found so far, so sending to one needs a new `StartDiscovery` | none |
-| `SendFiles` | `(s device_id, as paths)` | Send files to a discovered device. A Bluetooth device is scanned for again first (up to 12 seconds) | Empty list; a path that cannot be read; unknown device; Bluetooth device while `WifiUpgrade` is off; service stopped |
-| `SendText` | `(s device_id, s text, s kind)` | Send text. `kind` `"url"` sends a link, any other value sends plain text | Blank text; unknown device; Bluetooth device while `WifiUpgrade` is off; service stopped |
+| `SendFiles` | `(s device_id, as paths)` | Send files to a discovered device. A Bluetooth device is scanned for again first (up to 12 seconds) | Empty list; a path that cannot be read; unknown device; Bluetooth device while `WifiUpgrade` is off; service stopped (`service is not running`, or `the service is not running` / `service stopped while sending` when it stops during the send); `the service restarted, try again` when the engine was rebuilt while the send chose its route; `too many sends are starting` when the library's queue is full |
+| `SendText` | `(s device_id, s text, s kind)` | Send text. `kind` `"url"` sends a link, any other value sends plain text | Blank text; unknown device; Bluetooth device while `WifiUpgrade` is off; the same service and queue errors as `SendFiles` (`the service restarted, try again`, `the service is not running`, `too many sends are starting`) |
 | `History` | `() -> s` | Finished transfers, newest first, JSON (see [History](#history)). Applies the retention first | none |
 | `HistorySize` | `() -> t` | Size of the history file in bytes (0 if never written) | none |
 | `RemoveHistory` | `(t uid)` | Delete one entry; an unknown `uid` is ignored | none |
@@ -81,19 +84,51 @@ Bluetooth devices are listed only while `WifiUpgrade` is on, can be sent to but 
 | `SetPairing` | `(b open)` | Let other KuickShare computers start a pairing with this one. `true` opens a 5 minute window, `false` closes it | none |
 | `PairWith` | `(s device_id)` | Start pairing with a discovered computer; progress arrives as `PairingCode` / `PairingFinished` | Unknown device; a `ble:` id |
 | `ConfirmPairing` | `(b accept)` | Answer to `PairingCode`: do both screens show the same code? Ignored if no pairing waits | none |
-| `Unpair` | `(s fingerprint)` | Forget a paired computer; emits `TrustedChanged` even if the fingerprint is unknown | none |
+| `Unpair` | `(s fingerprint)` | Forget a paired computer and void its announced intent that was not used yet; emits `TrustedChanged` even if the fingerprint is unknown | none |
 | `TrustedDevices` | `() -> s` | Paired computers, JSON (see [Paired computers](#paired-computers)) | none |
-| `AllowDevice` | `(s transfer_id)` | Add the sender of an in-flight transfer to the always-accepted list | Transfer not in flight or sender without a name; MAC address not found in the kernel ARP table |
+| `AllowDevice` | `(s transfer_id)` | Legacy: add the sender of an incoming transfer to the always-accepted list, with the MAC address read when its prompt opened. Works only while the transfer waits for an answer, or within 30 s after the user accepted it (an automatic accept does not count). Prefer `AnswerTransfer` with `accept_and_trust`, which cannot race with the accept | Transfer not waiting or not recently accepted by the user, outbound or finished; sender without a name; no MAC address read at open (not in the kernel ARP table, other network, IPv6, Bluetooth) or the address now has another MAC; time to answer over (all `Failed`, with the reason as message) |
+| `AcknowledgeTrustedDevicesReset` | `()` | The user saw the notice of `TrustedDevicesReset`: the property becomes `false` and the settings are saved | none |
 | `ForgetAllowed` | `(s name, s mac)` | Remove an entry from the list; unknown entries are ignored | none |
 | `AllowedDevices` | `() -> s` | Always-accepted devices, JSON (see [Always-accepted devices](#always-accepted-devices)) | none |
 | `MakeVisibleFor` | `(u seconds)` | Be visible for `seconds` even when `Visible` is false (capped at 24 h; 0 cancels). Not persisted; setting `Visible`, `ResetSettings` or a core restart ends it. `VisibleUntil` reports the end. The window keeps running while `Suspended` (the computer stays hidden) | none |
-| `ResetSettings` | `()` | Put every persisted property back to its default and restart sharing. The always-accepted list is kept; `Suspended` is not touched | A transfer is in progress; restart failed (settings are put back) |
+| `ResetSettings` | `()` | Put every persisted property back to its default and restart sharing. This also takes back the firewall consent (`InsecureHotspotAllowed` becomes `false`). The always-accepted list and the `TrustedDevicesReset` notice are kept; `Suspended` is not touched | A transfer is in progress; restart failed (settings are put back) |
 
-`Accept`, `Decline` and `Cancel` only fail when the service is not running. An unknown or already finished `id` is not reported as an error (inferred from the code, which has no check for it).
+`Cancel` only fails when the service is not running; an unknown or already finished `id` is not reported as an error (inferred from the code, which has no check for it).
+
+### Answer errors
+
+`AnswerTransfer`, `Accept` and `Decline` fail with these errors, named `io.github.the_beper.KuickShare1.Error.<Name>`; the message is human-readable.
+
+| Name | Meaning | Does the transfer still wait? |
+|---|---|---|
+| `NotWaiting` | No transfer waits for `id`: unknown, already answered, moved on, or gone | no |
+| `Expired` | The time to answer is over; an accept this late declines the transfer | no |
+| `StaleToken` | `consent` is not the one of the transfer that waits: the id was reused by a newer transfer, which the stale prompt must not answer | the newer one does |
+| `DeviceChanged` | `accept_and_trust` only: the address of the sender now belongs to another MAC address | yes |
+| `NoMac` | `accept_and_trust` only: no MAC address was read when the prompt opened (other network, IPv6, Bluetooth), or it cannot be read now | yes |
+| `NoName` | `accept_and_trust` only: the sender has no name | yes |
+| `NotRunning` | The Quick Share service is stopped | no |
+| `InvalidArgs` | `AnswerTransfer` only: `answer` is none of the three words | not applicable |
+
+After the last three, the user can still accept without trusting.
+
+The `consent` value is a guard against stale prompts, not a secret: every client on the session bus can read it from `TransferUpdated` and can call `Accept` without it ([architecture.md](architecture.md#consent-and-the-guard)).
+
+### Wi-Fi upgrade errors
+
+Writes of the Wi-Fi upgrade setting (`RequestWifiUpgrade`, and the legacy write of `WifiUpgrade`) fail with these errors; in all cases nothing changed. Only turning the setting on while it is off is ever refused for its requirements: turning it off, and writing `true` while it is already on, never are.
+
+| Error | From | Meaning |
+|---|---|---|
+| `io.github.the_beper.KuickShare1.Error.RequirementsBlocked` | `RequestWifiUpgrade` | The [requirements report](#wi-fi-requirements-report) proves that neither sending nor receiving can work on this computer now (both capabilities `unavailable`, confirmed by a check that started after the request). The message is human-readable |
+| `org.freedesktop.DBus.Error.AccessDenied` | A write of the `WifiUpgrade` property | The same refusal, in the standard name a property write can carry |
+| `org.freedesktop.DBus.Error.InvalidArgs` | `RequestWifiUpgrade` | The firewall consent was asked for without turning the upgrade on (`(false, true)`) |
+
+One direction usable, or something that could not be checked, is not an error: the setting is saved and the shell shows a warning.
 
 ## Properties
 
-All properties are read-write. Persisted ones are saved to `~/.config/kuickshare/settings.json` (JSON keys in snake case, e.g. `history_keep_days`); a partial or missing file falls back to the defaults, an unparsable one is moved to `settings.json.bak`.
+All properties are read-write except `VisibleUntil`, `InsecureHotspotAllowed` and `TrustedDevicesReset`. Persisted ones are saved to `~/.config/kuickshare/settings.json` (JSON keys in snake case, e.g. `history_keep_days`); a partial or missing file falls back to the defaults, an unparsable one is moved to `settings.json.bak`.
 
 | Property | Type | Default | Persisted | Effect and errors |
 |---|---|---|---|---|
@@ -109,7 +144,9 @@ All properties are read-write. Persisted ones are saved to `~/.config/kuickshare
 | `TrayIcon` | `b` | `true` | yes | Stored only; the shell shows or hides its tray icon |
 | `DolphinIntegration` | `b` | `true` | yes | Stored only; the shell adds or removes the Dolphin entry |
 | `TrustedDevicesEnabled` | `b` | `true` | yes | Whether the [always-accepted list](#always-accepted-devices) is honoured |
-| `WifiUpgrade` | `b` | `false` | yes | Let transfers move to a temporary Wi-Fi hotspot (see [Wi-Fi upgrade](wifi-direct.md)); needs NetworkManager |
+| `WifiUpgrade` | `b` | `false` | yes | Let transfers move to a temporary Wi-Fi hotspot (see [Wi-Fi upgrade](wifi-direct.md)); needs NetworkManager. A write here is the legacy form of `RequestWifiUpgrade(enabled, false)`: it never grants the firewall consent and takes back any given, so the hotspot is refused when the firewall cannot open its port. The same gate as `RequestWifiUpgrade` applies: turning it on while both directions are proven blocked fails with `org.freedesktop.DBus.Error.AccessDenied` ([errors](#wi-fi-upgrade-errors)) |
+| `InsecureHotspotAllowed` | `b` | `false` | no | Read-only. The user allowed the hotspot an open firewall zone for this session (see `RequestWifiUpgrade`). Never saved: `false` after every start, and after `ResetSettings` or any write to the upgrade without the consent |
+| `TrustedDevicesReset` | `b` | `false` | yes | Read-only. `true` from the start after an upgrade that deleted the trusted devices of an older version (once, only if there were any: they were recognised by name and address alone, which can be copied), until `AcknowledgeTrustedDevicesReset`. Kept in `settings.json`, so a restart before the user saw the notice does not lose it |
 
 `ResetSettings` emits `PropertiesChanged` for every property it resets *(not run against a real client)*.
 
@@ -123,12 +160,14 @@ All properties are read-write. Persisted ones are saved to `~/.config/kuickshare
 | `PairingCode` | `(s code, s peer)` | A pairing needs confirmation. `code` is 8 digits formatted `1234 5678`, derived from the handshake; compare it with the other screen, then call `ConfirmPairing` |
 | `PairingFinished` | `(b ok, s peer, s message)` | A pairing ended. `message` is empty on success |
 | `TrustedChanged` | `()` | The paired computers list changed (pairing completed or `Unpair`) |
+| `WifiUpgradeBlocked` | `(s reason)` | The firewall did not allow the computer's hotspot, so the transfer stays on its first channel (Bluetooth, very slow). `reason`: `firewall_denied` (firewalld is running but refused to open the port, or failed in another way) or `firewall_missing` (firewalld is not running or not reachable). More codes may be added, so treat an unknown one as a refusal. Not emitted when the session consent let the hotspot start in an open zone. The shell offers that consent in a box ([wifi-direct.md](wifi-direct.md#requirements)) |
+| `WifiRequirementsChanged` | `(s report_json)` | A check of `WifiRequirements` ended with a different result: the capabilities, the rows, `packaging`, `core_version` or `ttl_ms` differ from the previous report; the time of the check does not count, so a repeat of the same result is silent. `report_json` is the same document `WifiRequirements` returns. A check starts by itself, after a pause, when a service the report looks at appears or vanishes, a Bluetooth or Wi-Fi state changes, or the hotspot or firewall showed how they work ([what triggers it](wifi-direct.md#when-the-report-is-refreshed)). Not emitted for the first report the core builds (whoever asked for it has it), and nothing refreshes before a first report was asked for, so a client that starts later reads the current one with `WifiRequirements` |
 
 A restart of sharing (name, port, reset) forgets the discovered devices without emitting `DeviceLost`; discovery continues if it was on.
 
 ### TransferUpdated
 
-`info` is a fixed set of 14 keys. Later events of the same transfer often carry less than earlier ones (no device, no file names, zero sizes), so clients should keep the last non-empty value of each key.
+`info` is a fixed set of 16 keys. Later events of the same transfer often carry less than earlier ones (no device, no file names, zero sizes), so clients should keep the last non-empty value of each key.
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -146,6 +185,21 @@ A restart of sharing (name, port, reset) forgets the discovered devices without 
 | `trusted` | `s` | Set when the transfer was accepted without asking: the paired computer's name, or the device name for an always-accepted device. Empty otherwise |
 | `always_accepted` | `s` | Device name when the sender is on the always-accepted list; empty for a paired computer |
 | `history_uid` | `t` | `uid` of the history entry written when the transfer ended; 0 on every other event and when the history is off |
+| `consent` | `t` | Token of the consent that waits for an answer: the `consent` argument of `AnswerTransfer`. Non-zero while an inbound transfer is in `WaitingForUserConsent` and nobody has answered it; 0 otherwise, also when it was accepted automatically. A new transfer under a reused id gets a new token, so a prompt of the old one cannot answer it. Not a secret (see [Answer errors](#answer-errors)). Unlike the other keys, do not keep an older non-zero value: the latest event decides |
+| `reason` | `s` | Why the library refused an incoming offer, empty otherwise; see [Refusal reasons](#refusal-reasons) |
+
+#### Refusal reasons
+
+The library checks an offer before the user is asked and refuses it with a reason; the sender is told with a protocol status (`UnsupportedAttachmentType` or `NotEnoughSpace`), the transfer ends and the codes below reach `reason`. More codes may be added. The limits are in [architecture.md](architecture.md#receive-limits).
+
+| `reason` | Refused because |
+|---|---|
+| `bad_name` | A file name that cannot be saved as is (empty, `.`, `..`, over 255 bytes, `/`, `\`, control or invisible characters) |
+| `too_many_files` | More files in one offer than the limit; the offer is refused whole, never cut short |
+| `bad_size` | A negative declared size, or sizes whose sum overflows |
+| `duplicate_id` | Two files with the same payload id |
+| `not_enough_space` | The declared total plus the reserve does not fit in the free space of the download folder |
+| `destination` | The download folder cannot be used: missing, not writable, or replaced since the offer |
 
 ### DeviceFound
 
@@ -167,11 +221,11 @@ A restart of sharing (name, port, reset) forgets the discovered devices without 
 
 | State | Final | Meaning |
 |---|---|---|
-| `Finished` | yes | Completed |
+| `Finished` | yes | Completed. For received files only after every file has its declared size and was synced; a file that is not complete is removed instead |
 | `Cancelled` | yes | Cancelled by either side |
 | `Rejected` | yes | Declined |
 | `Disconnected` | yes | Connection lost |
-| `WaitingForUserConsent` | no | Inbound transfer waits for `Accept` or `Decline` |
+| `WaitingForUserConsent` | no | Inbound transfer waits for `AnswerTransfer` (or `Accept` / `Decline`); `consent` is non-zero |
 | `ReceivingFiles`, `SendingFiles` | no | Data is moving |
 | `Initial`, `ReceivedConnectionRequest`, `SentUkeyServerInit`, `SentUkeyClientInit`, `SentUkeyClientFinish`, `SentPairedKeyEncryption`, `ReceivedUkeyClientFinish`, `SentConnectionResponse`, `SentPairedKeyResult`, `SentIntroduction`, `ReceivedPairedKeyResult` | no | Handshake steps of the protocol |
 
@@ -187,7 +241,7 @@ sequenceDiagram
     P->>C: connects, offers files
     C-->>S: TransferUpdated (inbound, handshake states)
     C-->>S: TransferUpdated (WaitingForUserConsent, pin, files)
-    S->>C: Accept(id)
+    S->>C: AnswerTransfer(id, consent, "accept")
     C-->>S: TransferUpdated (ReceivingFiles, ack_bytes grows)
     C-->>S: TransferUpdated (Finished, history_uid)
     S->>C: RemoveHistory(history_uid) (optional)
@@ -244,19 +298,54 @@ sequenceDiagram
 | `name` | string | Advertised device name |
 | `mac` | string | Lowercase, colon separated; read from `/proc/net/arp` |
 
-An incoming transfer is accepted without asking only if `TrustedDevicesEnabled` is on and both the advertised name and the MAC the kernel has for the sender's address match an entry. A different MAC, an unknown MAC (other network, IPv6) or an empty name means the user is asked as usual. No signal is emitted when the list changes.
+An incoming transfer is accepted without asking only if `TrustedDevicesEnabled` is on and both the advertised name and the MAC the kernel has for the sender's address, read once when the prompt opened, match an entry. A different MAC, an unknown MAC (other network, IPv6) or an empty name means the user is asked as usual. No signal is emitted when the list changes. Name and MAC can be copied by anyone on the same network ([architecture.md](architecture.md#trusted-devices-by-name-and-mac)); the lists of older versions were deleted once for that reason (`TrustedDevicesReset`).
+
+### Wi-Fi requirements report
+
+`WifiRequirements()` and `WifiRequirementsChanged` carry one JSON object, schema version 1 (the field names are snake case). The meaning of each requirement and how its status is judged is in [wifi-direct.md](wifi-direct.md#checking-the-requirements); this is the shape. Shortened example, a real report lists every row:
+
+```json
+{"schema_version":1,"generated_at_ms":1760795000123,"ttl_ms":30000,"packaging":"native","core_version":"1.0.0","capabilities":{"sending":"available","receiving":"degraded","join_network":"available"},"requirements":[{"id":"wifi.dhcp","status":"warning","category":"critical","reason_code":"not_found","details":"dnsmasq","device":null,"verification":"dnsmasq at the standard paths, or a hotspot that started this session","affects":["receiving"]}]}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `schema_version` | number | `1`. A change that old readers cannot ignore raises it; a reader should refuse another value |
+| `generated_at_ms` | number | Wall clock of the core when the check ended, milliseconds since the Unix epoch. Not an order: it can go back if the clock does |
+| `ttl_ms` | number | How long the core serves this report from its cache, in milliseconds (see `WifiRequirements`); readers take it as the time after which the report is out of date |
+| `packaging` | string | `flatpak`, `appimage` or `native`: how the daemon is installed, which decides which sandbox rows exist |
+| `core_version` | string | Version of the daemon |
+| `capabilities` | object | `sending`, `receiving`, `join_network`, each `available`, `degraded` (works with a limit), `unavailable` or `unknown` |
+| `requirements` | array | The rows, in a fixed order (BlueZ, NetworkManager, Wi-Fi, firewall, sandbox) |
+
+A row:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Stable id such as `bluez.adapter`; the list is in [wifi-direct.md](wifi-direct.md#the-requirements) |
+| `status` | string | `ready`, `warning`, `blocked` or `unknown`. `checking` is accepted by readers but the core never emits it |
+| `category` | string | `critical`, `warning`, `security` or `info`: how much the row weighs in the capabilities |
+| `reason_code` | string | Stable code such as `rfkill_blocked`; `ok` (or another success word such as `binary_present`) for a ready row. More codes may be added: treat an unknown one as "no more information" |
+| `details` | string | Fixed words, numbers and version strings (for example `network-control=auth`); possibly empty |
+| `device` | string or `null` | An interface or adapter name only |
+| `verification` | string | How the row was checked, in fixed words |
+| `affects` | array of strings | The capabilities the row feeds: `sending`, `receiving`, `join_network`; empty for a row that feeds none |
+
+Limits, kept by the core when it writes and checked again by the shell when it reads: at most 64 rows and 64 KiB for the document (the shell treats more of either as an unreadable report); `details` and `verification` at most 200 characters, `device` at most 32 (the shell cuts longer text). The core removes control characters, invisible format characters and `<` `>` from the text fields. `details` and `device` never carry SSIDs, MAC addresses, IP addresses, passwords or names of remote devices; an interface name that contains a run of twelve or more hexadecimal digits (such as `wlx` followed by a MAC address) has the run replaced by an ellipsis.
 
 ## Behaviour
 
 | Topic | Behaviour |
 |---|---|
-| Consent timeout | An incoming transfer nobody answers is declined ([consent timeout](architecture.md#consent-and-the-guard)) |
-| Unsafe file names | An inbound transfer with an empty name, `.`, `..`, a name over 255 bytes, or a name with `/`, `\`, control characters or invisible text-direction characters is declined before anything can accept it, whatever the trust rules say. No error reaches the caller; the transfer ends like a decline |
-| Settings that restart sharing | `DeviceName`, `StaticPort` and `ResetSettings` stop and rebuild the service; discovered devices are forgotten, discovery resumes if it was on. They fail with `Wait for the current transfer to finish before changing this setting` while a transfer is in flight |
+| Consent | Every way of answering an incoming transfer (`AnswerTransfer`, `Accept`, `Decline`, the automatic accepts, the timeout) goes through one book in the core; each consent has a token, a deadline, and the name, address and MAC address seen when it opened, and is answered once. A transfer nobody answers is declined ([consent timeout](architecture.md#consent-and-the-guard)); too many waiting at once (in all, from one address, or over the network) are declined at once |
+| Unsafe file names | An inbound transfer with an empty name, `.`, `..`, a name over 255 bytes, or a name with `/`, `\`, control characters or invisible text-direction characters is declined before anything can accept it, whatever the trust rules say; the zero-width joiners U+200C and U+200D are allowed. The core and the library apply the same rule. No error reaches the caller; the transfer ends like a decline |
+| Offers the library refuses | More than the allowed files, bad sizes, not enough free space and the like are refused before the user is asked; `reason` says why ([Refusal reasons](#refusal-reasons)) |
+| Unpair | A paired computer's announced intent, not yet used, is void after `Unpair` |
+| Settings that restart sharing | `DeviceName`, `StaticPort` and `ResetSettings` stop and rebuild the service; discovered devices are forgotten, discovery resumes if it was on. They fail with `Wait for the current transfer to finish before changing this setting` while a transfer is in flight or a send is still starting (choosing its route, or queued and not yet heard from). At the restart, and at exit, each transfer that had not ended gets a final `Disconnected` and no history entry |
 | Stale transfers | A transfer with no event for 600 seconds counts as over when checking the previous point, so a lost final event cannot block those settings for ever. Such a transfer never reaches the history |
 | Failed restart | The previous settings are restored and the service is started again with them |
 | History limits | 200 file names and 10 000 text characters per entry; the newest 1000 entries; entries older than `HistoryKeepDays` days are removed when the history is read, written, or the property changes |
-| Automatic acceptance | Paired computers (announced over the trust port) and always-accepted devices get `Accept` from the core itself, and the event carries `trusted` |
+| Automatic acceptance | Paired computers (announced over the trust port) and always-accepted devices are accepted by the core itself, through the same consent book, and the event carries `trusted` |
 
 ### Pairing and the trust port
 
@@ -271,7 +360,7 @@ Pairing and paired-computer checks use a separate fixed TCP port (see [architect
 
 ## How the shell uses it
 
-`src/shell/corebridge.cpp` starts `kuickshared`, watches the bus name for owner changes, reads all properties and the three JSON lists when the core appears, and subscribes to all six signals. It reloads the paired computers on `TrustedChanged`, calls `HistorySize` after a transfer ends to warn about a big history, sets `Suspended` from Do Not Disturb, and stops discovery 30 seconds after the Send page is left.
+`src/shell/corebridge.cpp` starts `kuickshared`, watches the bus name for owner changes, reads all properties and the three JSON lists when the core appears, and subscribes to all eight signals. It answers prompts with `AnswerTransfer` and the `consent` of the latest event of the transfer (a token of 0 is refused without asking the core), closes a prompt when the core says `NotWaiting`, `Expired` or `StaleToken`, keeps it when the sender cannot be trusted (it then offers no "Accept and trust"), shows the `reason` of a refused offer in a notification, shows the `TrustedDevicesReset` notice until `AcknowledgeTrustedDevicesReset`, and shows a box on `WifiUpgradeBlocked` that offers the session consent through `RequestWifiUpgrade`. It asks `WifiRequirements` (without `force_refresh` when the Preferences page opens or the core appears, after a change of the switch, and when the requirements dialog opens with no report or an out-of-date one; with it on the dialog's Refresh button), applies `WifiRequirementsChanged` at once, reads the document with its own limits and never judges the services itself, and treats `RequirementsBlocked` as a refusal of the switch. It reloads the paired computers on `TrustedChanged`, calls `HistorySize` after a transfer ends to warn about a big history, sets `Suspended` from Do Not Disturb, and stops discovery 30 seconds after the Send page is left.
 
 ## Guaranteed by tests
 

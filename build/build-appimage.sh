@@ -17,7 +17,6 @@
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
-version=$(sed -n 's/^project(kuickshare VERSION \([0-9.]*\).*/\1/p' src/shell/CMakeLists.txt)
 
 if [ ! -e /run/.containerenv ]; then
     image=localhost/kuickshare-appimage:arch
@@ -34,7 +33,7 @@ arch=x86_64
 export CARGO_TARGET_DIR=$root/dist/tmp/arch-target
 mkdir -p /cache/home dist/tmp
 cargo build --release --locked
-cmake -S src/shell -B dist/tmp/arch-cmake -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
+cmake -S src/shell -B dist/tmp/arch-cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF >/dev/null
 cmake --build dist/tmp/arch-cmake
 
 stage=$root/dist/tmp/arch-stage

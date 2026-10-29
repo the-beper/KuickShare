@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""A stand-in for the ostree CLI, for build/release/simulate.sh: a repository is a directory with
+refs/heads/<ref> (a file holding a commit id) and objects/<id>.commit ("parent=<id or ->" and a body). It implements
+the calls export-flatpak-commits.sh and sign-flatpak-repo.sh make, plus `fake-commit`, which plays what
+flatpak-builder does when it exports a build.
+"""
+import hashlib
+import os
+import shutil
+import sys
+
+LOG = os.environ.get("FAKE_OSTREE_LOG")
+
+
+def die(message, code=1):
+    print("fake-ostree: " + message, file=sys.stderr)
+    sys.exit(code)
+
+
+def log(line):
+    if LOG:
+        with open(LOG, "a") as f:
+            f.write(line + "\n")
+
+
+def commit_path(repo, commit):
+    return os.path.join(repo, "objects", commit + ".commit")
+
+
+def read_ref(repo, ref):
+    path = os.path.join(repo, "refs", "heads", ref)
+    if os.path.isfile(path):
+        with open(path) as f:
+            return f.read().strip()
+    if os.path.isfile(commit_path(repo, ref)):
+        return ref
+    die("rev-parse: %s not found" % ref)
+
+
+def parent_of(repo, commit):
+    with open(commit_path(repo, commit)) as f:
+        first = f.readline().strip()
+    return first.split("=", 1)[1]
+
+
+def write_ref(repo, ref, commit):
+    path = os.path.join(repo, "refs", "heads", ref)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(commit + "\n")
+
+
+def main():
+    args = sys.argv[1:]
+    repo = None
+    rest = []
+    i = 0
+    while i < len(args):
+        if args[i].startswith("--repo="):
+            repo = args[i].split("=", 1)[1]
+        elif args[i] == "--repo":
+            i += 1
+            repo = args[i]
+        else:
+            rest.append(args[i])
+        i += 1
+    if not rest:
+        die("no command", 99)
+    command, rest = rest[0], rest[1:]
+    log(command + " " + " ".join(rest))
+
+    if command == "init":
+        os.makedirs(os.path.join(repo, "refs", "heads"), exist_ok=True)
+        os.makedirs(os.path.join(repo, "objects"), exist_ok=True)
+    elif command == "refs":
+        base = os.path.join(repo, "refs", "heads")
+        for root, _, files in os.walk(base):
+            for name in sorted(files):
+                print(os.path.relpath(os.path.join(root, name), base))
+    elif command == "rev-parse":
+        spec = rest[0]
+        if spec.endswith("^"):
+            commit = read_ref(repo, spec[:-1])
+            parent = parent_of(repo, commit)
+            if parent == "-":
+                die("rev-parse: %s has no parent" % commit)
+            print(parent)
+        else:
+            print(read_ref(repo, spec))
+    elif command == "pull-local":
+        rest = [r for r in rest if not r.startswith("--")]
+        src, refs = rest[0], rest[1:]
+        for ref in refs:
+            commit = read_ref(src, ref)
+            os.makedirs(os.path.join(repo, "objects"), exist_ok=True)
+            for suffix in (".commit", ".commitmeta"):
+                path = os.path.join(src, "objects", commit + suffix)
+                if os.path.exists(path):
+                    shutil.copy(path, os.path.join(repo, "objects", commit + suffix))
+            write_ref(repo, ref, commit)
+    elif command == "fake-commit":
+        ref, body = rest[0], rest[1]
+        path = os.path.join(repo, "refs", "heads", ref)
+        parent = read_ref(repo, ref) if os.path.isfile(path) and not os.environ.get("FAKE_OSTREE_ORPHAN") else "-"
+        commit = hashlib.sha256((parent + "\n" + body).encode()).hexdigest()
+        os.makedirs(os.path.join(repo, "objects"), exist_ok=True)
+        with open(commit_path(repo, commit), "w") as f:
+            f.write("parent=%s\n%s\n" % (parent, body))
+        write_ref(repo, ref, commit)
+        print(commit)
+    else:
+        die("unsupported command: " + command, 99)
+
+
+main()

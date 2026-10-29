@@ -9,6 +9,8 @@ use std::{
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::persist::{self, PRIVATE};
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HistoryEntry {
@@ -56,6 +58,9 @@ pub struct History {
 impl History {
     /// A missing or unreadable file yields an empty history; the problem is logged, not fatal.
     pub fn load(path: Option<PathBuf>) -> Self {
+        if let Some(path) = path.as_deref() {
+            persist::remove_stale_temps(path);
+        }
         let mut entries: Vec<HistoryEntry> = path.as_deref().map(read).unwrap_or_default();
         // Entries saved before `uid` existed get one derived from their time.
         for (i, entry) in entries.iter_mut().enumerate().filter(|(_, e)| e.uid == 0) {
@@ -132,6 +137,7 @@ impl History {
 
     fn save(&self) {
         if let Some(path) = &self.path
+            && !persist::is_blocked(path)
             && let Err(e) = write(path, &self.entries)
         {
             tracing::warn!("cannot save history: {e:#}");
@@ -143,11 +149,14 @@ fn read(path: &Path) -> Vec<HistoryEntry> {
     match fs::read_to_string(path) {
         Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
             tracing::warn!("ignoring invalid history file {}: {e}", path.display());
+            // The next save would overwrite it.
+            persist::set_aside_or_block(path);
             Vec::new()
         }),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(e) => {
             tracing::warn!("cannot read history file {}: {e}", path.display());
+            persist::set_aside_or_block(path);
             Vec::new()
         }
     }
@@ -156,15 +165,21 @@ fn read(path: &Path) -> Vec<HistoryEntry> {
 fn write(path: &Path, entries: &[HistoryEntry]) -> Result<()> {
     let dir = path.parent().context("history path has no parent")?;
     fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, serde_json::to_vec(entries)?)
-        .with_context(|| format!("cannot write {}", tmp.display()))?;
-    fs::rename(&tmp, path).with_context(|| format!("cannot replace {}", path.display()))
+    // File names and device names: private. `History` is behind one lock in `Core`, so saves are
+    // serialized by the owner of the entries.
+    persist::write_atomic(path, &serde_json::to_vec(entries)?, PRIVATE)
+        .with_context(|| format!("cannot write {}", path.display()))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        os::unix::fs::PermissionsExt as _,
+        sync::{Arc, Mutex},
+    };
+
     use super::*;
+    use crate::persist::testutil::{TempDir, mode_of, names};
 
     fn temp_path(name: &str) -> PathBuf {
         let dir =
@@ -272,5 +287,83 @@ mod tests {
 
         fs::write(&path, "not json").unwrap();
         assert_eq!(History::load(Some(path)).json(), "[]");
+    }
+
+    #[test]
+    fn the_file_is_private_and_replaces_a_world_readable_one() {
+        let dir = TempDir::new("hist-mode");
+        let path = dir.0.join("history.json");
+        fs::write(&path, "[]").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let mut history = History::load(Some(path.clone()));
+        assert_eq!(mode_of(&path), 0o644, "loading does not rewrite the file");
+        history.add(entry("a"));
+        assert_eq!(mode_of(&path), 0o600);
+    }
+
+    #[test]
+    fn an_invalid_file_is_kept_aside_and_a_stale_temp_is_removed() {
+        let dir = TempDir::new("hist-bad");
+        let path = dir.0.join("history.json");
+        fs::write(&path, "not json").unwrap();
+        let stale = dir.0.join(".history.json.0123456789abcdef.tmp");
+        fs::write(&stale, "half").unwrap();
+        fs::write(dir.0.join("unrelated.tmp"), "x").unwrap();
+
+        let mut history = History::load(Some(path.clone()));
+        assert_eq!(history.json(), "[]");
+        assert_eq!(
+            fs::read_to_string(dir.0.join("history.json.bak")).unwrap(),
+            "not json"
+        );
+        assert!(!stale.exists());
+        assert!(dir.0.join("unrelated.tmp").exists());
+    }
+
+    #[test]
+    fn concurrent_adds_through_the_lock_lose_nothing() {
+        let dir = TempDir::new("hist-threads");
+        let path = dir.0.join("history.json");
+        let history = Arc::new(Mutex::new(History::load(Some(path.clone()))));
+        let handles: Vec<_> = (0..8)
+            .map(|t| {
+                let history = history.clone();
+                std::thread::spawn(move || {
+                    for i in 0..10 {
+                        history.lock().unwrap().add(entry(&format!("{t}-{i}")));
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        let reloaded = History::load(Some(path));
+        assert_eq!(reloaded.entries.len(), 80);
+        assert_eq!(history.lock().unwrap().entries, reloaded.entries);
+        let mut uids: Vec<_> = reloaded.entries.iter().map(|e| e.uid).collect();
+        uids.dedup();
+        assert_eq!(uids.len(), 80);
+        assert_eq!(names(&dir.0), ["history.json"]);
+    }
+
+    #[test]
+    fn an_unreadable_history_is_never_saved_over() {
+        let dir = TempDir::new("hist-unreadable");
+        let path = dir.0.join("history.json");
+        fs::write(&path, "[]").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(&path).is_ok() {
+            return; // root
+        }
+        fs::set_permissions(&dir.0, fs::Permissions::from_mode(0o500)).unwrap();
+        let mut history = History::load(Some(path.clone()));
+        history.add(entry("a"));
+        assert_eq!(history.entries.len(), 1, "it keeps working in memory");
+        fs::set_permissions(&dir.0, fs::Permissions::from_mode(0o700)).unwrap();
+        history.add(entry("b"));
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "[]");
+        assert_eq!(names(&dir.0), ["history.json"]);
     }
 }

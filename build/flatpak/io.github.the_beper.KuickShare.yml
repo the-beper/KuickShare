@@ -51,6 +51,7 @@ modules:
     subdir: src/shell
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_TESTING=OFF
       - -DKDE_INSTALL_LIBDIR=lib
     post-install:
       - install -Dm644 /run/build/kuickshare/data/io.github.the_beper.KuickShare.metainfo.xml /app/share/metainfo/io.github.the_beper.KuickShare.metainfo.xml

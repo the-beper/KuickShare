@@ -41,8 +41,13 @@ jobs:
             tag: arch
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+      # Only main publishes: the release builds in these images, and workflow_dispatch can start this from any branch.
+      # Other refs build the image (a broken Containerfile still shows) and push nothing.
+      - if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -53,5 +58,5 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           pull: true
-          push: true
+          push: ${{ github.ref == 'refs/heads/main' }}
           tags: ghcr.io/the-beper/${{ matrix.image }}:${{ matrix.tag }}

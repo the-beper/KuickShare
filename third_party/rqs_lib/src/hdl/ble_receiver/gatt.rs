@@ -13,6 +13,8 @@ use bluer::gatt::local::{
 };
 use bluer::{Adapter, Address, Uuid};
 use tokio::sync::{Notify, broadcast, mpsc};
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 use super::bridge::{BleBridge, GattWrite};
 use super::service_data::SERVICE_UUID;
@@ -58,6 +60,11 @@ pub struct Shared {
     rearm: Arc<Notify>,
     /// Used to drop the link of a finished session; `None` in tests.
     adapter: Option<Arc<Adapter>>,
+    /// Cancelled when the service stops (unlike the receiver's own `stop`, which only ends the
+    /// advertising and lets a transfer in flight finish): the session then ends at once.
+    service_stop: CancellationToken,
+    /// The tasks of the sessions, so that the stop of the service can wait for them.
+    tasks: TaskTracker,
 }
 
 struct Active {
@@ -88,6 +95,8 @@ impl Shared {
         bus: broadcast::Sender<ChannelMessage>,
         rearm: Arc<Notify>,
         adapter: Option<Arc<Adapter>>,
+        service_stop: CancellationToken,
+        tasks: TaskTracker,
     ) -> Arc<Self> {
         Arc::new(Self {
             slot0,
@@ -97,6 +106,8 @@ impl Shared {
             closing: AtomicBool::new(false),
             rearm,
             adapter,
+            service_stop,
+            tasks,
         })
     }
 
@@ -288,7 +299,7 @@ async fn serve_session(shared: Arc<Shared>, mut notifier: CharacteristicNotifier
     info!("ble receiver: session {id} started");
     shared.rearm.notify_one();
     let log_id = id.clone();
-    tokio::spawn(async move {
+    shared.tasks.spawn(async move {
         let exit = BleBridge::new(writes_rx, notify_tx, bridge_end).run().await;
         info!("ble receiver: session {log_id} ended: {exit:?}");
     });
@@ -296,8 +307,11 @@ async fn serve_session(shared: Arc<Shared>, mut notifier: CharacteristicNotifier
         MigratableStream::Duplex(session_end),
         id,
         shared.bus.clone(),
-    );
-    tokio::spawn(drive_inbound(request, shared.bus.clone()));
+    )
+    .with_stop(shared.service_stop.clone());
+    shared
+        .tasks
+        .spawn(drive_inbound(request, shared.bus.clone()));
 
     // The bridge dropped its sender: the session is over and everything it produced was sent.
     let mut drained = false;
@@ -328,6 +342,17 @@ async fn serve_session(shared: Arc<Shared>, mut notifier: CharacteristicNotifier
 mod tests {
     use super::*;
 
+    fn shared_with(slot0: Vec<u8>, bus: broadcast::Sender<ChannelMessage>) -> Arc<Shared> {
+        Shared::new(
+            slot0,
+            bus,
+            Arc::default(),
+            None,
+            CancellationToken::new(),
+            TaskTracker::new(),
+        )
+    }
+
     #[test]
     fn session_ids_never_look_like_an_address() {
         assert_eq!(session_id(7), "ble-7");
@@ -337,7 +362,7 @@ mod tests {
     #[test]
     fn application_exposes_the_weave_service() {
         let (bus, _) = broadcast::channel(1);
-        let app = application(Shared::new(vec![1, 2, 3], bus, Arc::default(), None));
+        let app = application(shared_with(vec![1, 2, 3], bus));
         let [service] = app.services.as_slice() else {
             panic!("one service expected");
         };
@@ -378,7 +403,7 @@ mod tests {
 
     fn shared() -> Arc<Shared> {
         let (bus, _) = broadcast::channel(1);
-        Shared::new(vec![1, 2, 3, 4], bus, Arc::default(), None)
+        shared_with(vec![1, 2, 3, 4], bus)
     }
 
     fn admit(shared: &Shared, number: u32, now: Instant) -> bool {

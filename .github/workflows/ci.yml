@@ -1,76 +1,131 @@
 name: CI
 
+# Pull requests, pushes to main and manual runs. Tags do not run it again: a release needs the `required` job green on
+# its commit. There is no path filter on the triggers (a skipped workflow would leave a required check pending): the
+# `changes` job decides what runs, and `required` checks that every skip was intended.
 on:
-  push:
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - "LICENSE"
-      - "THIRD_PARTY.md"
-      - ".github/ISSUE_TEMPLATE/**"
-      - ".github/pull_request_template.md"
-      - ".gitignore"
   pull_request:
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - "LICENSE"
-      - "THIRD_PARTY.md"
-      - ".github/ISSUE_TEMPLATE/**"
-      - ".github/pull_request_template.md"
-      - ".gitignore"
+  push:
+    branches: [main]
+  workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
+# Only a pull request cancels its older run (per ref); runs on main and manual runs always finish.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  check:
+  # Which jobs the change needs (build/ci/changes.sh). Main and manual runs always run everything.
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     permissions:
       contents: read
-      packages: read
-    container:
-      image: ghcr.io/the-beper/kuickshare-build:fedora45
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      code: ${{ steps.changes.outputs.code }}
+      packaging: ${{ steps.changes.outputs.packaging }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select the jobs
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: build/ci/changes.sh
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      ACTIONLINT_VERSION: "1.7.12"
+      # From the release's own checksums file (actionlint_1.7.12_checksums.txt), linux amd64 tarball.
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: shellcheck
+        run: |
+          shellcheck --version
+          find build scripts -name '*.sh' -print0 | xargs -0 shellcheck --severity=warning
+
+      # The release scripts against fakes of gh, flatpak and ostree, with ephemeral GnuPG keys (build/release/simulate.sh).
+      - name: Release simulation
+        run: build/release/simulate.sh
+
+      - name: Install actionlint
+        run: |
+          dir="$RUNNER_TEMP/actionlint"
+          mkdir -p "$dir"
+          tarball="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$dir/$tarball" "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$tarball"
+          echo "$ACTIONLINT_SHA256  $dir/$tarball" | sha256sum -c -
+          tar -xzf "$dir/$tarball" -C "$dir" actionlint
+          echo "$dir" >> "$GITHUB_PATH"
+
+      - name: actionlint
+        run: actionlint -color
+
+  check:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    container:
+      image: ghcr.io/the-beper/kuickshare-build:fedora45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust (stable)
         run: |
           curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal -c rustfmt,clippy
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
+      # Saved from main only: a pull request restores the cache but never writes one.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Checks
         run: build/check.sh
 
   appimage:
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 25
     permissions:
       contents: read
-      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # The Arch image published by images.yml; build-appimage.sh builds it if the pull fails (first run).
+      # The Arch image published by images.yml (public, pulled without credentials). A failed pull fails the job;
+      # a pull request that changes the Containerfile is checked with the image published from main until it is merged.
       - name: Pull the build image
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
-          podman pull ghcr.io/the-beper/kuickshare-appimage:arch \
-              && podman tag ghcr.io/the-beper/kuickshare-appimage:arch localhost/kuickshare-appimage:arch \
-              || echo "::warning::kuickshare-appimage:arch not pulled, building it"
+          podman pull ghcr.io/the-beper/kuickshare-appimage:arch
+          podman tag ghcr.io/the-beper/kuickshare-appimage:arch localhost/kuickshare-appimage:arch
 
-      # build-appimage.sh compiles in the container with this target directory.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # build-appimage.sh compiles in the container with this target directory. Restored by every run, saved from
+      # main only (actions/cache/restore and actions/cache/save are subpaths of the same pinned action).
+      - name: Restore the target directory
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: dist/tmp/arch-target
           key: arch-target-${{ hashFiles('Cargo.lock') }}
@@ -79,22 +134,29 @@ jobs:
       - name: Build the AppImage
         run: build/build-appimage.sh
 
+      - name: Save the target directory
+        if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: dist/tmp/arch-target
+          key: arch-target-${{ hashFiles('Cargo.lock') }}
+
       - name: Test
         run: build/appimage/test-appimage.sh dist/KuickShare-x86_64.AppImage
 
   tarball:
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read
-      packages: read
     container:
       image: ghcr.io/the-beper/kuickshare-build:fedora45
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust (stable)
         run: |
@@ -102,6 +164,8 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # The scripts start the build container themselves unless they find /run/.containerenv: this job already runs in it.
       - name: Build and test the tarball
@@ -111,19 +175,19 @@ jobs:
           build/test-tarball.sh dist/KuickShare-x86_64.tar.gz
 
   flatpak:
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 25
     permissions:
       contents: read
-      packages: read
     container:
       image: ghcr.io/the-beper/kuickshare-flatpak:fedora45
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
       options: --privileged
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Build Flatpak
         run: |
@@ -132,13 +196,129 @@ jobs:
 
       - name: Smoke test
         run: |
-          mkdir -p -m 700 /run/user/0
+          mkdir -p /run/user/0
+          chmod 700 /run/user/0
           XDG_RUNTIME_DIR=/run/user/0 dbus-run-session -- build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
 
-  deny:
-    runs-on: ubuntu-latest
+      # The repository this job built, for the update proof below (a tar: empty directories and modes matter to OSTree).
+      - name: Pack the repository
+        run: tar -C dist -cf dist/flatpak-repo.tar flatpak-repo
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flatpak-repo
+          path: dist/flatpak-repo.tar
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+  # An installed client must still update to a repository finished the way a release does it. This runs on the same plain,
+  # pinned runner image as the release's signing job, with the same apt packages, so the proof is about the tool versions the
+  # releases really use. Ephemeral keys, a local web server, no secret.
+  repo-update:
+    needs: [changes, flatpak]
+    if: needs.changes.outputs.packaging == 'true'
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install flatpak and ostree
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak ostree appstream
+          flatpak --version
+          ostree --version | head -n 2
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: flatpak-repo
+          path: built
+
+      - name: Repository update test
+        run: |
+          tar -xf built/flatpak-repo.tar -C built
+          build/flatpak/test-repo-update.sh built/flatpak-repo
+
+  deny:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+
+  # The one check to require (branch protection and the release gate): green only when every job that had to run
+  # succeeded. A job that was skipped because the change did not need it counts as done; any other skip, failure or
+  # cancellation fails it.
+  required:
+    if: always()
+    needs: [changes, lint, check, appimage, tarball, flatpak, repo-update, deny]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      NEEDS: ${{ toJSON(needs) }}
+    steps:
+      - name: Verify the results
+        run: |
+          python3 -I - <<'PY'
+          import json
+          import os
+          import sys
+
+          needs = json.loads(os.environ["NEEDS"])
+          # job -> the `changes` output that makes it mandatory (None: always)
+          flag_of = {
+              "lint": None,
+              "check": "code",
+              "deny": "code",
+              "tarball": "packaging",
+              "appimage": "packaging",
+              "flatpak": "packaging",
+              "repo-update": "packaging",
+          }
+
+          changes = needs.get("changes", {})
+          flags = changes.get("outputs") or {}
+          failed = False
+          rows = []
+
+          result = changes.get("result", "missing")
+          failed = failed or result != "success"
+          rows.append(("changes", result, "yes", "ok" if result == "success" else "FAIL"))
+
+          for job, flag in flag_of.items():
+              result = needs.get(job, {}).get("result", "missing")
+              if flag is None:
+                  wanted = True
+              elif flags.get(flag) in ("true", "false"):
+                  wanted = flags[flag] == "true"
+              else:
+                  rows.append((job, result, "?", "FAIL (changes gave no '%s' flag)" % flag))
+                  failed = True
+                  continue
+              if result == "success":
+                  verdict = "ok"
+              elif result == "skipped" and not wanted:
+                  verdict = "skipped on purpose"
+              else:
+                  verdict = "FAIL"
+                  failed = True
+              rows.append((job, result, "yes" if wanted else "no", verdict))
+
+          print("%-10s %-10s %-7s %s" % ("job", "result", "needed", "verdict"))
+          for row in rows:
+              print("%-10s %-10s %-7s %s" % row)
+          sys.exit(1 if failed else 0)
+          PY

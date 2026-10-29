@@ -1,6 +1,5 @@
-use std::fs::OpenOptions;
-use std::os::unix::fs::FileExt;
-use std::path::{Path, PathBuf};
+use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
@@ -16,17 +15,20 @@ use sha2::{Digest, Sha256, Sha512};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 use super::outbound::{CANCEL_TIMEOUT, sharing_cancel_frame};
 use super::{InnerState, TransferState};
 use crate::channel::{self, ChannelMessage, MessageClient, TransferAction, TransferKind};
-use crate::hdl::info::{InternalFileInfo, TransferMetadata, TransferPayload, TransferPayloadKind};
+use crate::hdl::info::{TransferMetadata, TransferPayload, TransferPayloadKind};
 use crate::hdl::{MigratableStream, TextPayloadInfo};
 use crate::location_nearby_connections::bandwidth_upgrade_negotiation_frame::EventType;
 use crate::location_nearby_connections::payload_transfer_frame::{
     PacketType, PayloadChunk, PayloadHeader, payload_header,
 };
 use crate::location_nearby_connections::{KeepAliveFrame, OfflineFrame, PayloadTransferFrame};
+use crate::safety::{self, DestDir, Limits, Refusal};
 use crate::securegcm::ukey2_alert::AlertType;
 use crate::securegcm::{
     DeviceToDeviceMessage, GcmMetadata, Type, Ukey2Alert, Ukey2ClientFinished, Ukey2ClientInit,
@@ -41,8 +43,7 @@ use crate::sharing_nearby::{paired_key_result_frame, text_metadata};
 use crate::upgrade::{self, Reply, UpgradeEvent, UpgradeState};
 use crate::utils::{
     DeviceType, RemoteDeviceInfo, decode_point, encode_point, gen_ecdsa_keypair, gen_random,
-    get_download_dir, hkdf_extract_expand, read_length_prefix, received_file_name,
-    stream_read_exact, to_four_digit_string,
+    get_download_dir, hkdf_extract_expand, read_length_prefix, to_four_digit_string,
 };
 use crate::{location_nearby_connections, sharing_nearby};
 
@@ -50,6 +51,12 @@ type HmacSha256 = Hmac<Sha256>;
 
 const SANE_FRAME_LENGTH: i32 = 5 * 1024 * 1024;
 const SANITY_DURATION: Duration = Duration::from_micros(10);
+/// How long looking at the download folder (space, names) may take at the offer.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
+/// Bound on the FIN after the Cancel frames at a stop (the close itself is `Limits::stop_close`).
+pub(crate) const FIN_TIMEOUT: Duration = Duration::from_millis(50);
+/// How long a session stopped by the service waits for its peer to close after the Cancel
+/// (a user cancel waits `CANCEL_TIMEOUT`): the stop of the service waits for the sessions.
 
 #[derive(Debug)]
 pub struct InboundRequest {
@@ -66,6 +73,24 @@ pub struct InboundRequest {
     sender: Sender<ChannelMessage>,
     receiver: Receiver<ChannelMessage>,
     upgrade: UpgradeState,
+    limits: Limits,
+    /// When the session began (the handshake deadline counts from here).
+    started: Instant,
+    /// The last time the peer sent something (or an upgrade step happened).
+    last_rx: Instant,
+    /// When the session began to wait for the user (the ceiling counts from here).
+    consent_since: Instant,
+    /// A write failed or timed out: a half frame may be on the wire, so nothing more is
+    /// written and the session ends.
+    poisoned: bool,
+    /// Ids of the last `Bytes` payloads completed, to ignore a repeated empty last chunk.
+    completed: VecDeque<i64>,
+    /// Cancelled when the service stops: the session then ends like a user cancel (see
+    /// `on_stop`). Never cancelled unless the owner of the session sets it (`with_stop`).
+    stop: CancellationToken,
+    /// Tests only: where files go, instead of the process-wide download directory.
+    #[cfg(test)]
+    download_dir: Option<PathBuf>,
 }
 
 impl InboundRequest {
@@ -98,7 +123,38 @@ impl InboundRequest {
             sender,
             receiver,
             upgrade: UpgradeState::new(crate::wifi_link()),
+            limits: Limits::default(),
+            started: Instant::now(),
+            last_rx: Instant::now(),
+            consent_since: Instant::now(),
+            poisoned: false,
+            completed: VecDeque::new(),
+            stop: CancellationToken::new(),
+            #[cfg(test)]
+            download_dir: None,
         }
+    }
+
+    /// Replaces the default limits (tests, or a caller with other needs).
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Ends the session when `stop` is cancelled (the service shutting down), like a user cancel
+    /// where the stream can still be written, else by dropping it. The partial files are removed
+    /// and the app gets the final state.
+    pub fn with_stop(mut self, stop: CancellationToken) -> Self {
+        self.stop = stop;
+        self
+    }
+
+    fn dest_dir(&self) -> PathBuf {
+        #[cfg(test)]
+        if let Some(dir) = &self.download_dir {
+            return dir.clone();
+        }
+        get_download_dir()
     }
 
     /// Offer to disable encryption on the upgraded channel (never done outside tests).
@@ -107,65 +163,172 @@ impl InboundRequest {
         self.upgrade.set_disable_encryption(true);
     }
 
+    /// Handles the next event of the session: a bus message, a frame, an upgrade step or a
+    /// timeout. An error ends the session; the files not complete are removed first. Only the
+    /// wait for the length prefix is cancel-safe: once it is complete the frame is read to
+    /// its end (serving the bus meanwhile), so do not drop the future after that point.
     pub async fn handle(&mut self) -> Result<(), anyhow::Error> {
+        let result = self.handle_event().await;
+        if result.is_err() {
+            self.state.inbound.discard();
+        }
+        result
+    }
+
+    /// The last moment the peer may still be silent, if it may be silent at all. Not while
+    /// the user decides (the core's own timer applies) nor while an upgrade runs (each of its
+    /// steps has a deadline).
+    fn idle_deadline(&self) -> Option<Instant> {
+        idle_deadline_for(
+            &self.state.state,
+            self.upgrade.in_progress(),
+            self.last_rx,
+            self.started,
+            self.consent_since,
+            &self.limits,
+        )
+    }
+
+    async fn handle_event(&mut self) -> Result<(), anyhow::Error> {
+        // `select!` picks at random among the branches that are ready, so a stop could lose
+        // against a queued bus message (or a frame) every time it is looked at; check it first.
+        if self.stop.is_cancelled() {
+            return Err(self.on_stop().await);
+        }
+        let idle_deadline = self.idle_deadline();
         tokio::select! {
-            i = self.receiver.recv() => {
-                match i {
-                    Ok(channel_msg) => {
-                        if channel_msg.id != self.state.id {
-                            return Ok(());
-                        }
-
-                        if let channel::Message::Lib { action } = &channel_msg.msg {
-                            debug!("inbound: got: {:?}", channel_msg);
-                            match action {
-                                TransferAction::ConsentAccept => {
-                                    self.accept_transfer().await?;
-                                },
-                                TransferAction::ConsentDecline => {
-                                    self.update_state(
-                                        |e| {
-                                            e.state = TransferState::Rejected;
-                                        },
-                                        true,
-                                    ).await;
-
-                                    self.reject_transfer(Some(
-                                        sharing_nearby::connection_response_frame::Status::Reject
-                                    )).await?;
-                                    return Err(anyhow!(crate::errors::AppError::NotAnError));
-                                },
-                                TransferAction::TransferCancel => {
-                                    self.update_state(
-                                        |e| {
-                                            e.state = TransferState::Cancelled;
-                                        },
-                                        true,
-                                    ).await;
-                                    self.cancel_peer().await;
-                                    return Err(anyhow!(crate::errors::AppError::NotAnError));
-                                },
-                            }
-                        }
-
-                    }
-                    Err(e) => {
-                        error!("inbound: channel error: {}", e);
-                    }
+            _ = tokio::time::sleep_until(idle_deadline.unwrap_or_else(Instant::now)), if idle_deadline.is_some() => {
+                if self.state.state == TransferState::WaitingForUserConsent {
+                    // The core's own timer did not fire (it may have missed the event).
+                    warn!("The user did not answer in time; declining");
+                    return self.decline().await;
                 }
+                return Err(anyhow!("no data from the peer within the time allowed"));
+            },
+            () = self.stop.cancelled() => {
+                return Err(self.on_stop().await);
+            },
+            i = self.receiver.recv() => {
+                self.on_bus(i).await?;
             },
             h = read_length_prefix(&mut self.socket, &mut self.length_buf, &mut self.length_filled) => {
-                self._handle(h?).await?
+                let prefix = h?;
+                self.last_rx = Instant::now();
+                self.handle_frame(prefix).await?
             },
             ev = self.upgrade.next_event() => {
                 self.on_upgrade_event(ev).await?;
+                self.last_rx = Instant::now();
             }
         }
 
         Ok(())
     }
 
-    pub async fn _handle(&mut self, length_buf: [u8; 4]) -> Result<(), anyhow::Error> {
+    /// A message from the bus (the app's accept, decline or cancel for this transfer).
+    async fn on_bus(
+        &mut self,
+        i: Result<ChannelMessage, tokio::sync::broadcast::error::RecvError>,
+    ) -> Result<(), anyhow::Error> {
+        match i {
+            Ok(channel_msg) => {
+                if channel_msg.id != self.state.id {
+                    return Ok(());
+                }
+
+                if let channel::Message::Lib { action } = &channel_msg.msg {
+                    debug!("inbound: got: {:?}", channel_msg);
+                    match action {
+                        TransferAction::ConsentAccept => {
+                            self.accept_transfer().await?;
+                        }
+                        TransferAction::ConsentDecline => {
+                            return self.decline().await;
+                        }
+                        TransferAction::TransferCancel => {
+                            self.update_state(
+                                |e| {
+                                    e.state = TransferState::Cancelled;
+                                },
+                                true,
+                            )
+                            .await;
+                            self.cancel_peer().await;
+                            return Err(anyhow!(crate::errors::AppError::NotAnError));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                error!("inbound: channel error: {}", e);
+            }
+        }
+        Ok(())
+    }
+
+    /// Handles one frame whose length prefix was read. An error ends the session; the files
+    /// not complete are removed first.
+    #[cfg(test)]
+    pub(crate) async fn _handle(&mut self, length_buf: [u8; 4]) -> Result<(), anyhow::Error> {
+        let result = self.handle_frame(length_buf).await;
+        if result.is_err() {
+            self.state.inbound.discard();
+        }
+        result
+    }
+
+    /// Reads a frame body without sizing a buffer by what the peer announced: the buffer
+    /// grows as bytes arrive. Every read must make progress within the idle time, the whole
+    /// frame has a deadline (a slow link gets `MIN_RATE` bytes per second on top of the idle
+    /// time; before the offer the handshake deadline caps it), and the bus is served while
+    /// waiting, so a decline or a cancel never waits for a slow peer.
+    async fn read_body(&mut self, len: usize) -> Result<Vec<u8>, anyhow::Error> {
+        const STEP: usize = 64 * 1024;
+        const MIN_RATE: u64 = 2048;
+        let mut hard =
+            Instant::now() + self.limits.idle + Duration::from_secs(len as u64 / MIN_RATE);
+        if self.state.state == TransferState::WaitingForUserConsent {
+            hard = hard.min(self.consent_since + self.limits.consent);
+        }
+        let mut frame = Vec::with_capacity(len.min(STEP));
+        while frame.len() < len {
+            let start = frame.len();
+            let end = len.min(start + STEP);
+            frame.resize(end, 0);
+            let mut filled = start;
+            while filled < end {
+                // Not left to the `select!` below, which may keep picking the bus or the read.
+                if self.stop.is_cancelled() {
+                    return Err(self.on_stop().await);
+                }
+                if is_handshaking(&self.state.state) {
+                    hard = hard.min(self.started + self.limits.handshake);
+                }
+                // From the last byte, not from now: bus traffic must not push it back.
+                let deadline = read_deadline(self.last_rx, self.limits.idle, hard);
+                let n = tokio::select! {
+                    r = tokio::time::timeout_at(deadline, self.socket.read(&mut frame[filled..end])) => {
+                        r.map_err(|_| anyhow!("the peer stopped in the middle of a frame"))??
+                    }
+                    () = self.stop.cancelled() => {
+                        return Err(self.on_stop().await);
+                    }
+                    i = self.receiver.recv() => {
+                        self.on_bus(i).await?;
+                        continue;
+                    }
+                };
+                if n == 0 {
+                    return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
+                }
+                filled += n;
+                self.last_rx = Instant::now();
+            }
+        }
+        Ok(frame)
+    }
+
+    async fn handle_frame(&mut self, length_buf: [u8; 4]) -> Result<(), anyhow::Error> {
         let msg_length = u32::from_be_bytes(length_buf) as usize;
         // Ensure the message length is not unreasonably big to avoid allocation attacks
         if msg_length > SANE_FRAME_LENGTH as usize {
@@ -173,9 +336,7 @@ impl InboundRequest {
             return Err(anyhow!("value"));
         }
 
-        // Allocate buffer for the actual message and read it
-        let mut frame_data = vec![0u8; msg_length];
-        stream_read_exact(&mut self.socket, &mut frame_data).await?;
+        let frame_data = self.read_body(msg_length).await?;
 
         let current_state = &self.state;
         // Now determine what will be the request type based on current state
@@ -192,7 +353,11 @@ impl InboundRequest {
                     self.upgrade.set_peer_mediums(&cr.mediums);
                     self.upgrade.set_peer_endpoint_id(cr.endpoint_id());
                 }
-                info!("RemoteDeviceInfo: {:?}", &rdi);
+                debug!(
+                    "Peer is a {:?}, its name has {} bytes",
+                    rdi.device_type,
+                    rdi.name.len()
+                );
 
                 // Advance current state
                 self.update_state(
@@ -583,43 +748,49 @@ impl InboundRequest {
                     payload_header::PayloadType::Bytes => {
                         trace!("Processing PayloadType::Bytes");
                         let payload_id = header.id();
-
-                        if header.total_size() > SANE_FRAME_LENGTH.into() {
+                        let is_text = self
+                            .state
+                            .text_payload
+                            .as_ref()
+                            .is_some_and(|t| t.get_i64_value() == payload_id);
+                        // A text, URL or Wi-Fi payload is only taken once the user accepted.
+                        if is_text && self.state.state != TransferState::ReceivingFiles {
                             self.state.payload_buffers.remove(&payload_id);
-                            return Err(anyhow!(
-                                "Payload too large: {} bytes",
-                                header.total_size()
-                            ));
+                            return Err(anyhow!("a text payload arrived before the user accepted"));
                         }
 
-                        self.state
-                            .payload_buffers
-                            .entry(payload_id)
-                            .or_insert_with(|| Vec::with_capacity(header.total_size() as usize));
-
-                        // Get the current length of the buffer, if it exists, without holding a mutable borrow.
-                        let buffer_len = self.state.payload_buffers.get(&payload_id).unwrap().len();
-                        if chunk.offset() != buffer_len as i64 {
-                            self.state.payload_buffers.remove(&payload_id);
-                            return Err(anyhow!(
-                                "Unexpected chunk offset: {}, expected: {}",
-                                chunk.offset(),
-                                buffer_len
-                            ));
+                        // A peer may repeat the empty last chunk of a payload that is complete.
+                        if chunk.body().is_empty()
+                            && chunk.flags() & 1 == 1
+                            && !self.state.payload_buffers.contains_key(&payload_id)
+                            && self.completed.contains(&payload_id)
+                        {
+                            return Ok(());
+                        }
+                        // Before the accept only the sharing frames come, one at a time.
+                        let mut limits = self.limits;
+                        if self.state.state != TransferState::ReceivingFiles {
+                            limits.max_open_payloads = 1;
+                        }
+                        // `None` until the last chunk; the payload is then forgotten here.
+                        let Some(buffer) = safety::assemble(
+                            &mut self.state.payload_buffers,
+                            header,
+                            chunk,
+                            &limits,
+                        )?
+                        else {
+                            return Ok(());
+                        };
+                        self.completed.push_back(payload_id);
+                        if self.completed.len() > 16 {
+                            self.completed.pop_front();
                         }
 
-                        let buffer = self.state.payload_buffers.get_mut(&payload_id).unwrap();
-                        if let Some(body) = &chunk.body {
-                            buffer.extend(body);
-                        }
+                        {
+                            debug!("Bytes payload complete");
 
-                        if (chunk.flags() & 1) == 1 {
-                            debug!("Chunk flags & 1 == 1 ?? End of data ??");
-
-                            if self.state.text_payload.is_some()
-                                && self.state.text_payload.as_ref().unwrap().get_i64_value()
-                                    == payload_id
-                            {
+                            if is_text {
                                 info!("Transfer finished");
 
                                 match self.state.text_payload.clone().unwrap() {
@@ -662,7 +833,7 @@ impl InboundRequest {
                                         // the password or payload length. And, the payload ends with 0x10 0x??
                                         // The last byte is sometimes 00 and other times 01
                                         fn parse_password_payload(
-                                            buffer: &mut Vec<u8>,
+                                            buffer: &[u8],
                                         ) -> anyhow::Result<String>
                                         {
                                             if buffer.len() < 4 {
@@ -691,7 +862,7 @@ impl InboundRequest {
                                             }
                                             SecurityType::Open => "".into(),
                                             SecurityType::WpaPsk | SecurityType::Wep => {
-                                                parse_password_payload(buffer)
+                                                parse_password_payload(&buffer)
                                                     .inspect_err(|err| error!("{err:#}"))
                                                     .unwrap_or_default()
                                             }
@@ -721,6 +892,7 @@ impl InboundRequest {
                                 )
                                 .await;
                                 self.disconnection().await?;
+                                self.linger().await;
                                 return Err(anyhow!(crate::errors::AppError::NotAnError));
                             } else {
                                 let inner_frame = sharing_nearby::Frame::decode(buffer.as_slice())?;
@@ -730,65 +902,43 @@ impl InboundRequest {
                     }
                     payload_header::PayloadType::File => {
                         trace!("Processing PayloadType::File");
+                        // Nothing is written before the user accepted.
+                        if self.state.state != TransferState::ReceivingFiles {
+                            return Err(anyhow!("file data arrived before the user accepted"));
+                        }
                         let payload_id = header.id();
 
-                        let file_internal = self
-                            .state
-                            .transferred_files
-                            .get_mut(&payload_id)
-                            .ok_or_else(|| {
-                                anyhow!("File payload ID ({}) is not known", payload_id)
-                            })?;
-
-                        let current_offset = file_internal.bytes_transferred;
-                        if chunk.offset() != current_offset {
-                            return Err(anyhow!(
-                                "Invalid offset into file {}, expected {}",
-                                chunk.offset(),
-                                current_offset
-                            ));
+                        let file = self.state.inbound.get_active(payload_id).ok_or_else(|| {
+                            anyhow!("File payload ID ({}) is not known", payload_id)
+                        })?;
+                        if file.finished {
+                            // Some peers repeat the empty last chunk of a file.
+                            if chunk.body().is_empty() {
+                                return Ok(());
+                            }
+                            return Err(anyhow!("data for a file that is already complete"));
                         }
+                        let partial = file.partial.as_mut().ok_or_else(|| {
+                            anyhow!("File payload ID ({}) is not receiving", payload_id)
+                        })?;
 
-                        let chunk_size = chunk.body().len();
-                        if current_offset + chunk_size as i64 > file_internal.total_size {
-                            return Err(anyhow!(
-                                "Transferred file size exceeds previously specified value: {} vs {}",
-                                current_offset + chunk_size as i64,
-                                file_internal.total_size
-                            ));
-                        }
+                        let body = chunk.body();
+                        partial.write_at(chunk.offset(), body)?;
 
-                        if !chunk.body().is_empty() {
-                            file_internal
-                                .file
-                                .as_ref()
-                                .unwrap()
-                                .write_all_at(chunk.body(), current_offset as u64)?;
-                            file_internal.bytes_transferred += chunk_size as i64;
-
+                        if !body.is_empty() {
+                            let chunk_size = body.len() as u64;
                             self.update_state(
                                 |e| {
                                     if let Some(tmd) = e.transfer_metadata.as_mut() {
-                                        tmd.ack_bytes += chunk_size as u64;
+                                        tmd.ack_bytes += chunk_size;
                                     }
                                 },
                                 true,
                             )
                             .await;
-                        } else if (chunk.flags() & 1) == 1 {
-                            self.state.transferred_files.remove(&payload_id);
-                            if self.state.transferred_files.is_empty() {
-                                info!("Transfer finished");
-                                self.update_state(
-                                    |e| {
-                                        e.state = TransferState::Finished;
-                                    },
-                                    true,
-                                )
-                                .await;
-                                self.disconnection().await?;
-                                return Err(anyhow!(crate::errors::AppError::NotAnError));
-                            }
+                        }
+                        if (chunk.flags() & 1) == 1 {
+                            self.finish_file(payload_id).await?;
                         }
                     }
                     payload_header::PayloadType::Stream => {
@@ -809,8 +959,8 @@ impl InboundRequest {
             location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeNegotiation => {
                 self.process_bwu_frame(offline).await?;
             }
-            _ => {
-                error!("Unhandled offline frame encrypted: {:?}", offline);
+            other => {
+                error!("Unhandled offline frame encrypted: {:?}", other);
             }
         }
 
@@ -836,6 +986,7 @@ impl InboundRequest {
             )
             .await;
             self.disconnection().await?;
+            self.linger().await;
             return Err(anyhow!(crate::errors::AppError::NotAnError));
         }
 
@@ -935,42 +1086,71 @@ impl InboundRequest {
             false,
         )
         .await;
+        self.consent_since = Instant::now();
 
         if !introduction.file_metadata.is_empty() && introduction.text_metadata.is_empty() {
             trace!("process_introduction: handling file_metadata");
-            let mut files_name = Vec::with_capacity(introduction.file_metadata.len());
-            let mut saved_paths = Vec::with_capacity(introduction.file_metadata.len());
-            let mut total_bytes: u64 = 0;
+            let offered = match safety::check_offer(&introduction.file_metadata, &self.limits) {
+                Ok(offered) => offered,
+                Err(refusal) => return self.refuse(refusal).await,
+            };
+            let total_bytes = offered
+                .iter()
+                .fold(0u64, |sum, o| sum.saturating_add(o.size));
+            debug!("Offer of {} file(s), {} bytes", offered.len(), total_bytes);
 
-            for file in &introduction.file_metadata {
-                info!("File name: {}", file.name());
-                let name = received_file_name(file.name(), file.mime_type()).unwrap_or_else(|| {
-                    warn!("Unusable file name from the peer: {:?}", file.name());
-                    "file".to_owned()
-                });
-
-                let dest = free_path(&get_download_dir(), &name, |p| {
-                    p.exists()
-                        || self
-                            .state
-                            .transferred_files
-                            .values()
-                            .any(|f| f.file_url == p)
-                });
-                info!("Destination: {:?}", dest);
-
-                saved_paths.push(dest.to_string_lossy().into_owned());
-                let info = InternalFileInfo {
-                    payload_id: file.payload_id(),
-                    file_url: dest,
-                    bytes_transferred: 0,
-                    total_size: file.size(),
-                    file: None,
-                };
-                total_bytes += info.total_size as u64;
-                self.state.transferred_files.insert(file.payload_id(), info);
-                files_name.push(name.clone());
+            // Where the files would go and whether they fit, without creating anything yet.
+            let dir = self.dest_dir();
+            let names: Vec<String> = offered.iter().map(|o| o.name.clone()).collect();
+            // Only looks: the folder is not created before the user accepted.
+            let task = {
+                let dir = dir.clone();
+                tokio::task::spawn_blocking(move || {
+                    let dest = match DestDir::open_existing(&dir) {
+                        Ok(d) => Some(d),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                        Err(e) => return Err(e),
+                    };
+                    // A file system that does not report its size is not a reason to refuse.
+                    let free = match &dest {
+                        Some(d) => d.free_bytes(),
+                        None => DestDir::free_bytes_near(&dir),
+                    }
+                    .unwrap_or(u64::MAX);
+                    let planned = match &dest {
+                        Some(d) => d.predict(&names),
+                        None => names,
+                    };
+                    Ok((dest, free, planned))
+                })
+            };
+            // A hung network mount must not hold the offer for ever.
+            let probe = match tokio::time::timeout(PROBE_TIMEOUT, task).await {
+                Ok(joined) => joined.context("inspecting the download folder")?,
+                Err(_) => Err(std::io::ErrorKind::TimedOut.into()),
+            };
+            let (dest, free, planned) = match probe {
+                Ok(probe) => probe,
+                Err(e) => {
+                    debug!("The download folder cannot be used: {e}");
+                    return self.refuse(Refusal::Destination).await;
+                }
+            };
+            // The core starts its own consent timer when it sees the offer, after this probe:
+            // count the library's ceiling from here so it stays well above the core's.
+            self.consent_since = Instant::now();
+            let need = total_bytes.saturating_add(self.limits.space_reserve);
+            if free < need {
+                return self.refuse(Refusal::NotEnoughSpace { need, free }).await;
             }
+
+            let saved_paths = planned
+                .iter()
+                .map(|n| dir.join(n).to_string_lossy().into_owned())
+                .collect();
+            let files_name = offered.iter().map(|o| o.name.clone()).collect();
+            self.state.inbound.set(offered);
+            self.state.inbound.dest = dest;
 
             let metadata = TransferMetadata {
                 id: self.state.id.clone(),
@@ -982,9 +1162,10 @@ impl InboundRequest {
                 total_bytes,
                 ack_bytes: Default::default(),
                 saved_paths,
+                refusal: None,
             };
 
-            info!("Asking for user consent: {:?}", metadata);
+            info!("Asking for user consent: files");
             self.update_state(
                 |e| {
                     e.transfer_metadata = Some(metadata);
@@ -1008,9 +1189,10 @@ impl InboundRequest {
                         total_bytes: Default::default(),
                         ack_bytes: Default::default(),
                         saved_paths: Vec::new(),
+                        refusal: None,
                     };
 
-                    info!("Asking for user consent: {:?}", metadata);
+                    info!("Asking for user consent: URL");
                     self.update_state(
                         |e| {
                             e.text_payload = Some(TextPayloadInfo::Url(meta.payload_id()));
@@ -1033,9 +1215,10 @@ impl InboundRequest {
                         total_bytes: Default::default(),
                         ack_bytes: Default::default(),
                         saved_paths: Vec::new(),
+                        refusal: None,
                     };
 
-                    info!("Asking for user consent: {:?}", metadata);
+                    info!("Asking for user consent: text");
                     self.update_state(
                         |e| {
                             e.text_payload = Some(TextPayloadInfo::Text(meta.payload_id()));
@@ -1046,11 +1229,15 @@ impl InboundRequest {
                     .await;
                 }
                 text_metadata::Type::Unknown => {
-                    // Reject transfer
+                    // Reject transfer; nobody is asked, so the idle timeout applies again
+                    self.update_state(|e| e.state = TransferState::Rejected, false)
+                        .await;
                     self.reject_transfer(Some(
-						sharing_nearby::connection_response_frame::Status::UnsupportedAttachmentType,
-					))
-					.await?;
+                        sharing_nearby::connection_response_frame::Status::UnsupportedAttachmentType,
+                    ))
+                    .await?;
+                    self.linger().await;
+                    return Err(anyhow!(crate::errors::AppError::NotAnError));
                 }
             }
         } else if introduction.wifi_credentials_metadata.len() == 1 {
@@ -1067,8 +1254,10 @@ impl InboundRequest {
                 total_bytes: Default::default(),
                 ack_bytes: Default::default(),
                 saved_paths: Vec::new(),
+                refusal: None,
             };
 
+            info!("Asking for user consent: Wi-Fi credentials");
             self.update_state(
                 |e| {
                     e.text_payload = Some(TextPayloadInfo::Wifi((
@@ -1082,38 +1271,180 @@ impl InboundRequest {
             )
             .await;
         } else {
-            // Reject transfer
+            // Reject transfer; nobody is asked, so the idle timeout applies again
+            self.update_state(|e| e.state = TransferState::Rejected, false)
+                .await;
             self.reject_transfer(Some(
                 sharing_nearby::connection_response_frame::Status::UnsupportedAttachmentType,
             ))
             .await?;
+            self.linger().await;
+            return Err(anyhow!(crate::errors::AppError::NotAnError));
         }
 
         Ok(())
     }
 
-    /// Tells the peer that the user cancelled and closes our side, as the outbound side does:
-    /// the sharing Cancel, the Disconnection, a FIN, then a wait for the peer to close, all
-    /// within `CANCEL_TIMEOUT`. Failures are only logged. Called between two frames: the
-    /// writes of `handle()` are not interrupted by the select that leads here.
-    async fn cancel_peer(&mut self) {
-        info!("Transfer canceled by the user");
+    /// The user declined (or did not answer): tells the app and the peer and ends the session.
+    async fn decline(&mut self) -> Result<(), anyhow::Error> {
+        self.update_state(
+            |e| {
+                e.state = TransferState::Rejected;
+            },
+            true,
+        )
+        .await;
+        self.reject_transfer(Some(
+            sharing_nearby::connection_response_frame::Status::Reject,
+        ))
+        .await?;
+        self.linger().await;
+        Err(anyhow!(crate::errors::AppError::NotAnError))
+    }
+
+    /// After a reject frame or the closing frames: closes our side and gives the peer a moment to read the frame
+    /// and close, so the socket going away does not turn into a reset that drops it.
+    async fn linger(&mut self) {
         let closing = async {
-            let sent: Result<(), anyhow::Error> = async {
-                self.send_encrypted_frame(&sharing_cancel_frame()).await?;
-                self.disconnection().await
-            }
-            .await;
-            if let Err(e) = sent {
-                debug!("Cancel frames not sent: {e}");
-            }
             if let Err(e) = self.socket.shutdown().await {
                 debug!("Closing the write half failed: {e}");
             }
             let mut sink = [0u8; 4096];
             while matches!(self.socket.read(&mut sink).await, Ok(n) if n > 0) {}
         };
-        if tokio::time::timeout(CANCEL_TIMEOUT, closing).await.is_err() {
+        let _ = tokio::time::timeout(CANCEL_TIMEOUT, closing).await;
+    }
+
+    /// Declines an offer the library cannot take: the app is told (`Rejected`, with the
+    /// reason), the peer gets an existing status, and the session ends.
+    async fn refuse(&mut self, refusal: Refusal) -> Result<(), anyhow::Error> {
+        warn!("Offer refused: {}", refusal.key());
+        let metadata = TransferMetadata {
+            id: self.state.id.clone(),
+            source: self.state.remote_device_info.clone(),
+            payload_kind: TransferPayloadKind::Files,
+            payload_preview: Default::default(),
+            payload: None,
+            pin_code: self.state.pin_code.clone(),
+            total_bytes: Default::default(),
+            ack_bytes: Default::default(),
+            saved_paths: Vec::new(),
+            refusal: Some(refusal.clone()),
+        };
+        self.update_state(
+            |e| {
+                e.state = TransferState::Rejected;
+                e.transfer_metadata = Some(metadata);
+            },
+            true,
+        )
+        .await;
+        self.reject_transfer(Some(refusal.status())).await?;
+        self.linger().await;
+        Err(anyhow!(crate::errors::AppError::NotAnError))
+    }
+
+    /// Completes one file (all bytes there and on disk). The transfer is `Finished` when
+    /// every file of the offer is.
+    async fn finish_file(&mut self, payload_id: i64) -> Result<(), anyhow::Error> {
+        let partial = self
+            .state
+            .inbound
+            .get_mut(payload_id)
+            .and_then(|f| f.partial.take())
+            .ok_or_else(|| anyhow!("File payload ID ({}) is not receiving", payload_id))?;
+        // Blocking: fsync. If it fails the file is removed when `partial` is dropped there.
+        tokio::task::spawn_blocking(move || partial.finish())
+            .await
+            .context("finishing a received file")?
+            .context("the received file is not complete")?;
+        debug!("A received file is complete");
+        if let Some(file) = self.state.inbound.get_mut(payload_id) {
+            file.finished = true;
+        }
+
+        if self.state.inbound.all_finished() {
+            info!("Transfer finished");
+            self.update_state(
+                |e| {
+                    e.state = TransferState::Finished;
+                },
+                true,
+            )
+            .await;
+            self.disconnection().await?;
+            self.linger().await;
+            return Err(anyhow!(crate::errors::AppError::NotAnError));
+        }
+        Ok(())
+    }
+
+    /// Tells the peer that the user cancelled and closes our side, as the outbound side does:
+    /// the sharing Cancel, the Disconnection, a FIN, then a wait for the peer to close, all
+    /// within `CANCEL_TIMEOUT`. Failures are only logged. Called from a bus message, handled
+    /// between two frames or while a frame body is read: nothing else writes meanwhile.
+    async fn cancel_peer(&mut self) {
+        info!("Transfer canceled by the user");
+        self.close_with_cancel(CANCEL_TIMEOUT).await;
+    }
+
+    /// The service is stopping. A session the app knows about ends as `Cancelled` (the partial
+    /// files go with the session), and the peer is told when a frame can still be written:
+    /// between frames or while a body is read, nothing writes meanwhile, and a stream with a
+    /// failed write is never written again. Always returns the error that ends the session.
+    async fn on_stop(&mut self) -> anyhow::Error {
+        let state = self.state.state.clone();
+        let known = !matches!(
+            state,
+            TransferState::Initial
+                | TransferState::Disconnected
+                | TransferState::Rejected
+                | TransferState::Cancelled
+                | TransferState::Finished
+        );
+        if known {
+            info!("Transfer ended: the service is stopping");
+            self.update_state(
+                |e| {
+                    e.state = TransferState::Cancelled;
+                },
+                true,
+            )
+            .await;
+            if !self.poisoned && (self.plain_frames || self.state.encrypt_key.is_some()) {
+                self.close_with_cancel(self.limits.stop_close).await;
+            }
+        }
+        anyhow!(crate::errors::AppError::NotAnError)
+    }
+
+    /// The sharing Cancel, the Disconnection, a FIN and a wait for the peer to close, within
+    /// `limit`.
+    async fn close_with_cancel(&mut self, limit: Duration) {
+        let deadline = tokio::time::Instant::now() + limit;
+        let sent = tokio::time::timeout_at(deadline, async {
+            self.send_encrypted_frame(&sharing_cancel_frame()).await?;
+            self.disconnection().await
+        })
+        .await;
+        match sent {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => debug!("Cancel frames not sent: {e}"),
+            Err(_) => debug!("Cancel frames not sent in time"),
+        }
+        // The FIN goes out even when the frames were late, so the peer always sees the end; a
+        // frame cut off by the deadline is never followed by another one (no write but this).
+        match tokio::time::timeout(FIN_TIMEOUT, self.socket.shutdown()).await {
+            Ok(Err(e)) => debug!("Closing the write half failed: {e}"),
+            Err(_) => debug!("Closing the write half timed out"),
+            Ok(Ok(())) => {}
+        }
+        let mut sink = [0u8; 4096];
+        let drained = tokio::time::timeout_at(deadline, async {
+            while matches!(self.socket.read(&mut sink).await, Ok(n) if n > 0) {}
+        })
+        .await;
+        if drained.is_err() {
             debug!("The peer did not close after the cancel in time");
         }
     }
@@ -1139,42 +1470,67 @@ impl InboundRequest {
         }
     }
 
+    /// The user accepted: the files are created now, never before. Only taken once, and only
+    /// while the user is being asked.
     async fn accept_transfer(&mut self) -> Result<(), anyhow::Error> {
-        let ids: Vec<i64> = self.state.transferred_files.keys().cloned().collect();
+        if self.state.state != TransferState::WaitingForUserConsent {
+            debug!("Ignoring an accept in state {:?}", self.state.state);
+            return Ok(());
+        }
 
-        for id in ids {
-            let taken: Vec<PathBuf> = self
+        if !self.state.inbound.is_empty() {
+            let dir = self.dest_dir();
+            let kept = self.state.inbound.dest.take();
+            let plan = self.state.inbound.plan();
+            let need = self
                 .state
-                .transferred_files
-                .values()
-                .map(|f| f.file_url.clone())
-                .collect();
-            let mfi = self.state.transferred_files.get_mut(&id).unwrap();
-
-            // `create_new`: never truncate a file another transfer created since the offer.
-            let file = loop {
-                match OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&mfi.file_url)
-                {
-                    Ok(f) => break f,
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                        let dir = mfi.file_url.parent().unwrap_or(Path::new(".")).to_owned();
-                        let name = mfi
-                            .file_url
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("file")
-                            .to_owned();
-                        mfi.file_url =
-                            free_path(&dir, &name, |p| p.exists() || taken.iter().any(|t| t == p));
+                .inbound
+                .total_bytes()
+                .saturating_add(self.limits.space_reserve);
+            // Blocking calls. The names are reserved here, one by one, each with an exclusive
+            // create; if one fails, the ones before it are removed again as `created` drops.
+            let created = tokio::task::spawn_blocking(move || {
+                // The folder looked at when the offer came, if it is still the one set and
+                // still where it was. A changed setting opens the new folder (created if need be).
+                let dest = match kept {
+                    Some(d) if d.path() == dir.as_path() => {
+                        if !d.is_still_at_path() {
+                            return Err(Refusal::Destination);
+                        }
+                        d
                     }
-                    Err(e) => return Err(e.into()),
+                    _ => DestDir::open(&dir).map_err(|_| Refusal::Destination)?,
+                };
+                if let Ok(free) = dest.free_bytes()
+                    && free < need
+                {
+                    return Err(Refusal::NotEnoughSpace { need, free });
                 }
+                let mut created = Vec::with_capacity(plan.len());
+                for (name, size) in &plan {
+                    created.push(dest.create(name, *size).map_err(|_| Refusal::Destination)?);
+                }
+                Ok(created)
+            })
+            .await
+            .context("creating the files")?;
+            let created = match created {
+                Ok(created) => created,
+                Err(refusal) => return self.refuse(refusal).await,
             };
-            info!("Created file: {:?}", &file);
-            mfi.file = Some(file);
+            debug!("Created {} file(s)", created.len());
+
+            // The names may differ from the preview (a name taken since the offer).
+            let saved_paths: Vec<String> = created
+                .iter()
+                .map(|p| p.path().to_string_lossy().into_owned())
+                .collect();
+            for (file, partial) in self.state.inbound.iter_mut().zip(created) {
+                file.partial = Some(partial);
+            }
+            if let Some(tmd) = self.state.transfer_metadata.as_mut() {
+                tmd.saved_paths = saved_paths;
+            }
         }
 
         let frame = sharing_nearby::Frame {
@@ -1197,9 +1553,11 @@ impl InboundRequest {
             true,
         )
         .await;
+        // The user may have taken minutes: the idle time counts from now.
+        self.last_rx = Instant::now();
 
         // Text and URLs are not worth a hotspot.
-        if !self.state.transferred_files.is_empty() {
+        if !self.state.inbound.is_empty() {
             self.start_upgrade().await;
         }
 
@@ -1235,8 +1593,8 @@ impl InboundRequest {
             .ok_or_else(|| anyhow!("unknown peer endpoint id"))?
             .to_owned();
         info!(
-            "upgrade: offering hotspot {:?} ({}:{})",
-            creds.ssid, creds.gateway, creds.port
+            "upgrade: offering a hotspot ({}:{})",
+            creds.gateway, creds.port
         );
         self.encrypt_and_send(&upgrade::path_available_frame(
             &creds,
@@ -1345,6 +1703,10 @@ impl InboundRequest {
         // Let the peer read everything before the socket goes away.
         upgrade::close_gracefully(&mut self.socket).await;
         self.socket = MigratableStream::Tcp(new);
+        // A prefix half read on the prior channel does not belong to the new one, and neither
+        // does a write that failed there (the phone may drop Bluetooth at any point now).
+        self.length_filled = 0;
+        self.poisoned = false;
         self.plain_frames = self.upgrade.disable_encryption();
         if self.plain_frames {
             info!("upgrade: now on the hotspot, plain frames");
@@ -1437,8 +1799,6 @@ impl InboundRequest {
             false,
         )
         .await;
-
-        info!("Pin code: {:?}", self.state.pin_code);
 
         Ok(())
     }
@@ -1608,10 +1968,29 @@ impl InboundRequest {
         prefixed_length.extend_from_slice(&length_bytes);
         prefixed_length.extend_from_slice(&data);
 
-        self.socket.write_all(&prefixed_length).await?;
-        self.socket.flush().await?;
-
-        Ok(())
+        if self.poisoned {
+            return Err(anyhow!(
+                "an earlier write failed; the stream is not used again"
+            ));
+        }
+        // A peer that never reads must not hold the session (and its files) for ever.
+        let write = async {
+            self.socket.write_all(&prefixed_length).await?;
+            self.socket.flush().await
+        };
+        let written = tokio::time::timeout(self.limits.idle, write).await;
+        match written {
+            Ok(Ok(())) => Ok(()),
+            // Part of the frame may be on the wire: a later frame would corrupt the stream.
+            Ok(Err(e)) => {
+                self.poisoned = true;
+                Err(e.into())
+            }
+            Err(_) => {
+                self.poisoned = true;
+                Err(anyhow!("the peer did not read our frame in time"))
+            }
+        }
     }
 
     async fn get_server_seq_inc(&mut self) -> i32 {
@@ -1664,26 +2043,108 @@ impl InboundRequest {
     }
 }
 
-/// `dir/name`, or `dir/stem (N).ext` with the first N >= 1 for which `taken` is false.
-fn free_path(dir: &Path, name: &str, taken: impl Fn(&Path) -> bool) -> PathBuf {
-    let first = dir.join(name);
-    if !taken(&first) {
-        return first;
+/// Whether the session is still before the transfer proper (handshake and offer).
+fn is_handshaking(state: &TransferState) -> bool {
+    !matches!(
+        state,
+        TransferState::WaitingForUserConsent
+            | TransferState::ReceivingFiles
+            | TransferState::Rejected
+            | TransferState::Cancelled
+            | TransferState::Finished
+            | TransferState::Disconnected
+    )
+}
+
+/// When a read must make progress by: `idle` after the last byte received, and never later
+/// than `hard`. Other traffic (the bus) does not move it.
+fn read_deadline(last_rx: Instant, idle: Duration, hard: Instant) -> Instant {
+    (last_rx + idle).min(hard)
+}
+
+/// The last moment the peer may still be silent: while the user decides, the consent ceiling
+/// (the core's own timer is shorter and normally comes first); never while an upgrade runs
+/// (its steps have deadlines); otherwise `idle` after the last byte, and within `handshake`
+/// of the start until the offer is in.
+fn idle_deadline_for(
+    state: &TransferState,
+    upgrade_active: bool,
+    last_rx: Instant,
+    started: Instant,
+    consent_since: Instant,
+    l: &Limits,
+) -> Option<Instant> {
+    if *state == TransferState::WaitingForUserConsent {
+        return Some(consent_since + l.consent);
     }
-    let p = Path::new(name);
-    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(name);
-    let ext = p.extension().and_then(|e| e.to_str());
-    (1..)
-        .map(|n| match ext {
-            Some(e) => dir.join(format!("{stem} ({n}).{e}")),
-            None => dir.join(format!("{stem} ({n})")),
-        })
-        .find(|c| !taken(c))
-        .expect("unbounded range")
+    if upgrade_active {
+        return None;
+    }
+    let idle = last_rx + l.idle;
+    Some(if is_handshaking(state) {
+        idle.min(started + l.handshake)
+    } else {
+        idle
+    })
+}
+
+/// Test-only capture of `log` output, per thread (each test runs on its own thread), so a
+/// test can check what a code path writes to the log at any level.
+#[cfg(test)]
+pub mod capture_log {
+    use std::sync::{Mutex, Once};
+    use std::thread::ThreadId;
+
+    static LINES: Mutex<Vec<(ThreadId, String)>> = Mutex::new(Vec::new());
+
+    struct Capture;
+
+    impl log::Log for Capture {
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record) {
+            LINES.lock().unwrap_or_else(|e| e.into_inner()).push((
+                std::thread::current().id(),
+                format!("{} {}", record.level(), record.args()),
+            ));
+        }
+
+        fn flush(&self) {}
+    }
+
+    /// Installs the capturing logger at TRACE (once per process).
+    pub fn install() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            log::set_logger(&Capture).expect("another logger is already installed");
+            log::set_max_level(log::LevelFilter::Trace);
+        });
+    }
+
+    /// A position in the captured lines; pass it to `since`.
+    pub fn mark() -> usize {
+        LINES.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    /// The lines logged by the calling thread after `mark`.
+    pub fn since(mark: usize) -> Vec<String> {
+        let me = std::thread::current().id();
+        LINES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .skip(mark)
+            .filter(|(t, _)| *t == me)
+            .map(|(_, l)| l.clone())
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -1694,29 +2155,16 @@ mod tests {
     use super::*;
     use crate::upgrade::tests::FakeLink;
 
+    /// A file that is already there is never opened for writing: the new file gets a number.
     #[test]
-    fn free_path_numbers_around_taken_names() {
-        let dir = Path::new("/d");
-        let taken = |p: &Path| {
-            ["/d/a.txt", "/d/a (1).txt", "/d/b"]
-                .iter()
-                .any(|t| p == Path::new(t))
-        };
-        assert_eq!(free_path(dir, "c.txt", taken), Path::new("/d/c.txt"));
-        assert_eq!(free_path(dir, "a.txt", taken), Path::new("/d/a (2).txt"));
-        assert_eq!(free_path(dir, "b", taken), Path::new("/d/b (1)"));
-    }
-
-    #[test]
-    fn create_new_does_not_truncate_existing_file() {
-        let dir = std::env::temp_dir().join(format!("rqs-a1-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let f = dir.join("x.txt");
+    fn create_does_not_truncate_existing_file() {
+        let tmp = TempDir::new("keep");
+        let f = tmp.0.join("x.txt");
         std::fs::write(&f, b"keep").unwrap();
-        let err = OpenOptions::new().write(true).create_new(true).open(&f);
-        assert_eq!(err.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
+        let dest = DestDir::open(&tmp.0).unwrap();
+        let partial = dest.create("x.txt", 4).unwrap();
+        assert_eq!(partial.path(), tmp.0.join("x (1).txt"));
         assert_eq!(std::fs::read(&f).unwrap(), b"keep");
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// While the hotspot is being brought up in the background, the old channel is still read.
@@ -1804,5 +2252,1119 @@ mod tests {
         crate::upgrade::tests::write_plain_keep_alive(&mut peer).await;
         let err = req.handle().await.unwrap_err();
         assert!(err.to_string().contains("only sent keep-alives"), "{err}");
+    }
+
+    // ---- Inbound file safety: repro tests (written before the fix; most fail on purpose) ----
+
+    use tokio::io::DuplexStream;
+    use tokio::sync::broadcast::error::TryRecvError;
+
+    use crate::hdl::capture_log;
+
+    /// A directory under the system temp dir, removed on drop.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let p = std::env::temp_dir().join(format!("rqs-p0a-{}-{tag}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&p);
+            std::fs::create_dir_all(&p).unwrap();
+            Self(p)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const INTRO_ID: i64 = 9_000_001;
+
+    /// An inbound session over a duplex pipe, in plain-frame mode and already past the
+    /// handshake, saving into its own directory. The test plays the phone.
+    struct Session {
+        req: InboundRequest,
+        peer: Option<DuplexStream>,
+        bus: broadcast::Sender<ChannelMessage>,
+        rx: broadcast::Receiver<ChannelMessage>,
+    }
+
+    impl Session {
+        fn new(dir: &Path) -> Self {
+            let (peer, ours) = tokio::io::duplex(8 * 1024 * 1024);
+            let (bus, rx) = broadcast::channel(4096);
+            let mut req = InboundRequest::new_over(
+                MigratableStream::Duplex(ours),
+                "peer".into(),
+                bus.clone(),
+            );
+            req.plain_frames = true;
+            // No Wi-Fi link: another test may have set the global one.
+            req.upgrade = UpgradeState::new(None);
+            req.state.state = TransferState::ReceivedPairedKeyResult;
+            req.download_dir = Some(dir.to_owned());
+            Self {
+                req,
+                peer: Some(peer),
+                bus,
+                rx,
+            }
+        }
+
+        /// The peer sends one frame and the session handles exactly that frame.
+        async fn feed(&mut self, frame: &OfflineFrame) -> Result<(), anyhow::Error> {
+            let data = frame.encode_to_vec();
+            self.peer
+                .as_mut()
+                .expect("peer is closed")
+                .write_all(&data)
+                .await
+                .unwrap();
+            self.req._handle((data.len() as u32).to_be_bytes()).await
+        }
+
+        async fn offer(
+            &mut self,
+            files: Vec<sharing_nearby::FileMetadata>,
+            texts: Vec<sharing_nearby::TextMetadata>,
+        ) -> Result<(), anyhow::Error> {
+            let body = introduction(files, texts);
+            let frame = payload_frame(
+                payload_header::PayloadType::Bytes,
+                INTRO_ID,
+                body.len() as i64,
+                0,
+                1,
+                &body,
+            );
+            self.feed(&frame).await
+        }
+
+        async fn file_chunk(
+            &mut self,
+            id: i64,
+            total: i64,
+            offset: i64,
+            flags: i32,
+            body: &[u8],
+        ) -> Result<(), anyhow::Error> {
+            let frame = payload_frame(
+                payload_header::PayloadType::File,
+                id,
+                total,
+                offset,
+                flags,
+                body,
+            );
+            self.feed(&frame).await
+        }
+
+        /// What the core would send on the bus; handles every message queued for the session.
+        async fn deliver(&mut self, action: TransferAction) -> Result<(), anyhow::Error> {
+            let _ = self.bus.send(ChannelMessage {
+                id: "peer".into(),
+                msg: channel::Message::Lib { action },
+            });
+            while !self.req.receiver.is_empty() {
+                self.req.handle().await?;
+            }
+            Ok(())
+        }
+
+        /// A user cancel; the peer closes when the session shuts down its side.
+        async fn cancel(&mut self) -> Result<(), anyhow::Error> {
+            let mut peer = self.peer.take().expect("peer is closed");
+            let closer = async move {
+                let mut sink = Vec::new();
+                let _ = peer.read_to_end(&mut sink).await;
+            };
+            let (result, ()) = tokio::join!(self.deliver(TransferAction::TransferCancel), closer);
+            result
+        }
+
+        /// The peer vanishes; returns the error that ends the session.
+        async fn disconnect(&mut self) -> anyhow::Error {
+            drop(self.peer.take());
+            loop {
+                if let Err(e) = self.req.handle().await {
+                    return e;
+                }
+            }
+        }
+
+        fn events(&mut self) -> Vec<MessageClient> {
+            let mut out = Vec::new();
+            loop {
+                match self.rx.try_recv() {
+                    Ok(m) => {
+                        if let channel::Message::Client(c) = m.msg {
+                            out.push(c);
+                        }
+                    }
+                    Err(TryRecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+            out
+        }
+
+        fn finished(&mut self) -> bool {
+            self.events()
+                .iter()
+                .any(|e| e.state == Some(TransferState::Finished))
+        }
+    }
+
+    fn payload_frame(
+        kind: payload_header::PayloadType,
+        id: i64,
+        total: i64,
+        offset: i64,
+        flags: i32,
+        body: &[u8],
+    ) -> OfflineFrame {
+        OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(
+                    location_nearby_connections::v1_frame::FrameType::PayloadTransfer.into(),
+                ),
+                payload_transfer: Some(PayloadTransferFrame {
+                    packet_type: Some(PacketType::Data.into()),
+                    payload_header: Some(PayloadHeader {
+                        id: Some(id),
+                        r#type: Some(kind.into()),
+                        total_size: Some(total),
+                        is_sensitive: Some(false),
+                        ..Default::default()
+                    }),
+                    payload_chunk: Some(PayloadChunk {
+                        offset: Some(offset),
+                        flags: Some(flags),
+                        body: Some(body.to_vec()),
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        }
+    }
+
+    fn introduction(
+        files: Vec<sharing_nearby::FileMetadata>,
+        texts: Vec<sharing_nearby::TextMetadata>,
+    ) -> Vec<u8> {
+        sharing_nearby::Frame {
+            version: Some(sharing_nearby::frame::Version::V1.into()),
+            v1: Some(sharing_nearby::V1Frame {
+                r#type: Some(sharing_nearby::v1_frame::FrameType::Introduction.into()),
+                introduction: Some(sharing_nearby::IntroductionFrame {
+                    file_metadata: files,
+                    text_metadata: texts,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        }
+        .encode_to_vec()
+    }
+
+    fn file_meta(name: &str, id: i64, size: i64) -> sharing_nearby::FileMetadata {
+        sharing_nearby::FileMetadata {
+            name: Some(name.into()),
+            payload_id: Some(id),
+            size: Some(size),
+            mime_type: Some("text/plain".into()),
+            ..Default::default()
+        }
+    }
+
+    fn text_meta(id: i64, size: i64) -> sharing_nearby::TextMetadata {
+        sharing_nearby::TextMetadata {
+            text_title: Some("note".into()),
+            r#type: Some(text_metadata::Type::Text.into()),
+            payload_id: Some(id),
+            size: Some(size),
+            ..Default::default()
+        }
+    }
+
+    fn dir_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// A stopping session closes (frames, FIN, the peer's close) within the wind-down that
+    /// `RQS::stop` waits for.
+    #[test]
+    fn a_stopping_session_closes_within_the_wind_down() {
+        let close = Limits::default().stop_close + FIN_TIMEOUT;
+        let wind_down = crate::manager::STOP_WIND_DOWN;
+        assert!(close < wind_down, "{close:?} vs {wind_down:?}");
+    }
+
+    /// The service stops: the session ends like a user cancel (the peer is told and closes),
+    /// the app gets `Cancelled`, and what was received so far is removed.
+    async fn stop_session(s: &mut Session) -> (anyhow::Error, Vec<MessageClient>) {
+        let stop = CancellationToken::new();
+        s.req.stop = stop.clone();
+        // Generous on purpose: a loaded test machine must not turn the bounded close into a
+        // missing Cancel (the production bound is checked against STOP_WIND_DOWN in manager.rs).
+        s.req.limits.stop_close = Duration::from_secs(5);
+        let mut peer = s.peer.take().expect("peer is closed");
+        let closer = async move {
+            let mut sink = Vec::new();
+            let _ = peer.read_to_end(&mut sink).await;
+            sink
+        };
+        stop.cancel();
+        let (ended, sink) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(s.req.handle(), closer)
+        })
+        .await
+        .expect("the stop did not end the session");
+        assert!(!sink.is_empty(), "the peer was not told");
+        (ended.unwrap_err(), s.events())
+    }
+
+    /// A stop wins against what is ready at the same time (the session's own events queued on
+    /// the bus): `handle` used to return after the bus message about half of the time.
+    #[tokio::test]
+    async fn stop_wins_against_queued_bus_messages() {
+        for round in 0..50 {
+            let tmp = TempDir::new("stop-queued");
+            let mut s = Session::new(&tmp.0);
+            s.offer(vec![file_meta("a.txt", 1, 10)], vec![])
+                .await
+                .unwrap();
+            // Nobody reads the other end: the Cancel goes nowhere and the close is short.
+            drop(s.peer.take());
+            s.req.limits.stop_close = Duration::from_millis(200);
+            let stop = CancellationToken::new();
+            s.req.stop = stop.clone();
+            stop.cancel();
+            let err = tokio::time::timeout(Duration::from_secs(10), s.req.handle())
+                .await
+                .expect("the stop did not end the session")
+                .expect_err(&format!("round {round}: handle returned without the stop"));
+            assert!(is_end_of_session(&Err(err)));
+            assert_eq!(
+                s.events().last().unwrap().state,
+                Some(TransferState::Cancelled)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_ends_a_session_waiting_for_consent() {
+        let tmp = TempDir::new("stop-consent");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 10)], vec![])
+            .await
+            .unwrap();
+        let (err, events) = stop_session(&mut s).await;
+        assert!(is_end_of_session(&Err(err)));
+        assert_eq!(events.last().unwrap().state, Some(TransferState::Cancelled));
+        assert!(dir_names(&tmp.0).is_empty());
+    }
+
+    #[tokio::test]
+    async fn stop_ends_a_receiving_session_and_removes_the_partial_file() {
+        let tmp = TempDir::new("stop-receiving");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 10)], vec![])
+            .await
+            .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        s.file_chunk(1, 10, 0, 0, b"12345").await.unwrap();
+        assert!(tmp.0.join("a.txt").exists(), "precondition");
+        let (err, events) = stop_session(&mut s).await;
+        assert!(is_end_of_session(&Err(err)));
+        assert_eq!(events.last().unwrap().state, Some(TransferState::Cancelled));
+        assert!(dir_names(&tmp.0).is_empty(), "the partial file is left");
+    }
+
+    /// Before the handshake the app does not know the session: it ends silently.
+    #[tokio::test]
+    async fn stop_ends_a_session_before_the_handshake_without_an_event() {
+        let (_peer, ours) = tokio::io::duplex(1024);
+        let (bus, mut rx) = broadcast::channel(16);
+        let stop = CancellationToken::new();
+        let mut req = InboundRequest::new_over(MigratableStream::Duplex(ours), "id".into(), bus)
+            .with_stop(stop.clone());
+        stop.cancel();
+        let err = tokio::time::timeout(Duration::from_secs(10), req.handle())
+            .await
+            .expect("the stop did not end the session")
+            .unwrap_err();
+        assert!(is_end_of_session(&Err(err)));
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+    }
+
+    /// D1: a user cancel while receiving must not leave the half file behind.
+    #[tokio::test]
+    async fn cancel_removes_partial_file() {
+        let tmp = TempDir::new("cancel");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 10)], vec![])
+            .await
+            .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        s.file_chunk(1, 10, 0, 0, b"12345").await.unwrap();
+        let path = tmp.0.join("a.txt");
+        assert_eq!(std::fs::read(&path).unwrap(), b"12345", "precondition");
+
+        assert!(s.cancel().await.is_err(), "a cancel ends the session");
+        assert!(
+            !path.exists(),
+            "the partial file is still there after a cancel"
+        );
+    }
+
+    /// D1: the peer vanishing mid-file must not leave the half file behind.
+    #[tokio::test]
+    async fn disconnect_removes_partial_file() {
+        let tmp = TempDir::new("disconnect");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 10)], vec![])
+            .await
+            .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        s.file_chunk(1, 10, 0, 0, b"12345").await.unwrap();
+        let path = tmp.0.join("a.txt");
+        assert!(path.exists(), "precondition");
+
+        let _ = s.disconnect().await;
+        assert!(
+            !path.exists(),
+            "the partial file is still there after an EOF"
+        );
+    }
+
+    /// D2: 10 bytes of a declared 1000 plus the last-chunk flag is not a finished transfer.
+    #[tokio::test]
+    async fn short_file_is_not_finished() {
+        let tmp = TempDir::new("short");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 1000)], vec![])
+            .await
+            .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        s.file_chunk(1, 1000, 0, 0, b"0123456789").await.unwrap();
+        let _ = s.file_chunk(1, 1000, 10, 1, b"").await;
+        assert!(
+            !s.finished(),
+            "a 10 byte file declared as 1000 reached Finished"
+        );
+    }
+
+    /// A chunk past the declared size is refused (it is today) and the partial file goes too.
+    #[tokio::test]
+    async fn chunk_beyond_declared_size_is_refused_and_removed() {
+        let tmp = TempDir::new("beyond");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        s.file_chunk(1, 4, 0, 0, b"ab").await.unwrap();
+        let refused = s.file_chunk(1, 4, 2, 0, b"cdefgh").await;
+        assert!(refused.is_err(), "a chunk past the declared size was taken");
+        assert!(
+            !tmp.0.join("a.txt").exists(),
+            "the partial file is still there after the refusal"
+        );
+    }
+
+    /// D5: file data before the user accepted is an error, not a panic.
+    #[tokio::test]
+    async fn file_chunk_before_consent_is_an_error() {
+        let tmp = TempDir::new("noconsent");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 10)], vec![])
+            .await
+            .unwrap();
+        let r = s.file_chunk(1, 10, 0, 0, b"x").await;
+        assert!(r.is_err(), "file data before consent was taken");
+        assert!(
+            dir_names(&tmp.0).is_empty(),
+            "a file appeared before consent"
+        );
+    }
+
+    /// D4: a text whose bytes arrive before the user accepted must not be reported as received.
+    #[tokio::test]
+    async fn text_before_consent_is_not_finished() {
+        let tmp = TempDir::new("text");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![], vec![text_meta(77, 5)]).await.unwrap();
+        assert_eq!(s.req.state.state, TransferState::WaitingForUserConsent);
+        let frame = payload_frame(payload_header::PayloadType::Bytes, 77, 5, 0, 1, b"hello");
+        let _ = s.feed(&frame).await;
+        assert!(!s.finished(), "a text reached Finished without consent");
+    }
+
+    /// D6: a negative `total_size` is refused, it must not panic.
+    #[tokio::test]
+    async fn negative_bytes_total_size_is_refused() {
+        let tmp = TempDir::new("negative");
+        let mut s = Session::new(&tmp.0);
+        let frame = payload_frame(payload_header::PayloadType::Bytes, 5, -1, 0, 0, b"x");
+        assert!(s.feed(&frame).await.is_err());
+    }
+
+    /// D7: chunks past the declared `total_size` must not keep growing the buffer.
+    #[tokio::test]
+    async fn bytes_payload_cannot_outgrow_total_size() {
+        let tmp = TempDir::new("outgrow");
+        let mut s = Session::new(&tmp.0);
+        let first = payload_frame(payload_header::PayloadType::Bytes, 5, 10, 0, 0, &[1; 8]);
+        s.feed(&first).await.unwrap();
+        let second = payload_frame(payload_header::PayloadType::Bytes, 5, 10, 8, 0, &[2; 8]);
+        let refused = s.feed(&second).await;
+        let held = s.req.state.payload_buffers.get(&5).map_or(0, Vec::len);
+        assert!(refused.is_err(), "16 bytes were taken for a payload of 10");
+        assert!(
+            held <= 10,
+            "the buffer holds {held} bytes for a payload of 10"
+        );
+    }
+
+    /// D10: a second ConsentAccept while receiving must not re-create or rename the files.
+    #[tokio::test]
+    async fn second_accept_is_ignored() {
+        let tmp = TempDir::new("twice");
+        let mut s = Session::new(&tmp.0);
+        s.offer(
+            vec![file_meta("a.txt", 1, 4), file_meta("b.txt", 2, 4)],
+            vec![],
+        )
+        .await
+        .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        s.file_chunk(1, 4, 0, 0, b"AA").await.unwrap();
+
+        let _ = s.deliver(TransferAction::ConsentAccept).await;
+        let _ = s.file_chunk(1, 4, 2, 0, b"AA").await;
+
+        assert_eq!(
+            dir_names(&tmp.0),
+            ["a.txt", "b.txt"],
+            "a second accept renamed files"
+        );
+        assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"AAAA");
+    }
+
+    /// D11: when the name is taken between the offer and the accept, the paths reported to the
+    /// app are the ones really written.
+    #[tokio::test]
+    async fn collision_after_offer_updates_saved_paths() {
+        let tmp = TempDir::new("collision");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        std::fs::write(tmp.0.join("a.txt"), b"other").unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+
+        assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"other");
+        let saved = s
+            .events()
+            .into_iter()
+            .rev()
+            .find_map(|e| e.metadata)
+            .expect("no metadata was reported")
+            .saved_paths;
+        let expected = tmp.0.join("a (1).txt").to_string_lossy().into_owned();
+        assert_eq!(saved, [expected]);
+    }
+
+    /// D9: two dangling symlinks used to make `accept_transfer` spin forever. It runs in a
+    /// thread because a busy loop cannot be stopped by a tokio timeout.
+    #[test]
+    fn dangling_symlinks_do_not_hang_accept() {
+        let tmp = TempDir::new("dangling");
+        std::os::unix::fs::symlink(tmp.0.join("gone-1"), tmp.0.join("a.jpg")).unwrap();
+        std::os::unix::fs::symlink(tmp.0.join("gone-2"), tmp.0.join("a (1).jpg")).unwrap();
+        let dir = tmp.0.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let mut s = Session::new(&dir);
+                let _ = s.offer(vec![file_meta("a.jpg", 1, 4)], vec![]).await;
+                let _ = s.deliver(TransferAction::ConsentAccept).await;
+            });
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(Duration::from_secs(20))
+            .expect("accept_transfer is stuck in a loop on dangling symlinks");
+        assert!(
+            !tmp.0.join("gone-1").exists(),
+            "a dangling symlink was followed"
+        );
+        assert!(
+            !tmp.0.join("gone-2").exists(),
+            "a dangling symlink was followed"
+        );
+    }
+
+    /// D8: an offer of many files with one name must be handled in bounded time (today the
+    /// cost grows with the cube of the count). Thread plus timeout, as above.
+    #[test]
+    fn many_identical_names_offer_is_bounded() {
+        let tmp = TempDir::new("identical");
+        let dir = tmp.0.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let mut s = Session::new(&dir);
+                let files = (1..=2000).map(|i| file_meta("a.txt", i, 1)).collect();
+                let _ = s.offer(files, vec![]).await;
+            });
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(Duration::from_secs(10))
+            .expect("an offer of 2000 files named a.txt takes far too long");
+    }
+
+    /// Regression guard (passes today): a symlink put at the planned name after the offer is
+    /// never written through.
+    #[tokio::test]
+    async fn symlink_swapped_in_after_offer_is_not_followed() {
+        let tmp = TempDir::new("swap");
+        let outside = TempDir::new("swap-outside");
+        let target = outside.0.join("target.txt");
+        std::fs::write(&target, b"keep").unwrap();
+
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        std::os::unix::fs::symlink(&target, tmp.0.join("a.txt")).unwrap();
+        let _ = s.deliver(TransferAction::ConsentAccept).await;
+        let _ = s.file_chunk(1, 4, 0, 0, b"EVIL").await;
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+    }
+
+    /// The pairing PIN must not be written to the log at any level.
+    #[tokio::test]
+    async fn pin_is_not_logged() {
+        capture_log::install();
+        let mark = capture_log::mark();
+        let (_peer, ours) = tokio::io::duplex(1024);
+        let (bus, _rx) = broadcast::channel(8);
+        let mut req = InboundRequest::new_over(MigratableStream::Duplex(ours), "id".into(), bus);
+        let (secret, _public) = gen_ecdsa_keypair();
+        req.state.private_key = Some(secret);
+        req.state.client_init_msg_data = Some(vec![1, 2, 3]);
+        req.state.server_init_data = Some(vec![4, 5, 6]);
+        let (_peer_secret, peer_public) = gen_ecdsa_keypair();
+        let point = peer_public.to_sec1_point(false);
+        let key = GenericPublicKey {
+            r#type: PublicKeyType::EcP256.into(),
+            ec_p256_public_key: Some(EcP256PublicKey {
+                x: point.x().unwrap().to_vec(),
+                y: point.y().unwrap().to_vec(),
+            }),
+            ..Default::default()
+        };
+        req.finalize_key_exchange(key).await.unwrap();
+
+        let pin = req.state.pin_code.clone().expect("no PIN was derived");
+        let leaked: Vec<String> = capture_log::since(mark)
+            .into_iter()
+            .filter(|l| l.contains(&pin))
+            .collect();
+        assert!(leaked.is_empty(), "the PIN {pin} is in the log: {leaked:?}");
+    }
+
+    // ---- Fix round: limits, refusals, deadlines ----
+
+    use crate::sharing_nearby::connection_response_frame::Status;
+
+    /// The status in the reject frame the peer reads from the session.
+    async fn read_reject_status(peer: &mut DuplexStream) -> Status {
+        let frame = upgrade::read_plain_frame(peer).await.unwrap();
+        let body = frame
+            .v1
+            .unwrap()
+            .payload_transfer
+            .unwrap()
+            .payload_chunk
+            .unwrap()
+            .body
+            .unwrap();
+        let inner = sharing_nearby::Frame::decode(&*body).unwrap();
+        let status = inner.v1.unwrap().connection_response.unwrap().status();
+        // The empty last chunk follows; read it so the session's write does not meet a closed pipe.
+        upgrade::read_plain_frame(peer).await.unwrap();
+        status
+    }
+
+    fn is_end_of_session(r: &Result<(), anyhow::Error>) -> bool {
+        matches!(
+            r.as_ref().unwrap_err().downcast_ref(),
+            Some(crate::errors::AppError::NotAnError)
+        )
+    }
+
+    fn rejected_with(events: &[MessageClient]) -> Option<Refusal> {
+        events
+            .iter()
+            .rev()
+            .find(|e| e.state == Some(TransferState::Rejected))
+            .and_then(|e| e.metadata.as_ref())
+            .and_then(|m| m.refusal.clone())
+    }
+
+    impl Session {
+        /// Offers `files` and plays a peer that reads the reply and closes; returns what the
+        /// session ended with and the status it sent.
+        async fn offer_and_read_reply(
+            &mut self,
+            files: Vec<sharing_nearby::FileMetadata>,
+        ) -> (Result<(), anyhow::Error>, Status) {
+            let body = introduction(files, vec![]);
+            let data = payload_frame(
+                payload_header::PayloadType::Bytes,
+                INTRO_ID,
+                body.len() as i64,
+                0,
+                1,
+                &body,
+            )
+            .encode_to_vec();
+            let mut peer = self.peer.take().expect("peer is closed");
+            peer.write_all(&data).await.unwrap();
+            let reader = async move {
+                let status = read_reject_status(&mut peer).await;
+                drop(peer);
+                status
+            };
+            tokio::join!(self.req._handle((data.len() as u32).to_be_bytes()), reader)
+        }
+    }
+
+    #[test]
+    fn idle_deadline_rules() {
+        let l = Limits {
+            idle: Duration::from_secs(60),
+            handshake: Duration::from_secs(90),
+            ..Limits::default()
+        };
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        // While the user decides only the ceiling counts, however silent the peer is.
+        assert_eq!(
+            idle_deadline_for(
+                &TransferState::WaitingForUserConsent,
+                false,
+                t0,
+                t0,
+                at(5),
+                &l
+            ),
+            Some(at(5) + l.consent)
+        );
+        // Not while an upgrade runs.
+        assert_eq!(
+            idle_deadline_for(&TransferState::ReceivingFiles, true, t0, t0, t0, &l),
+            None
+        );
+        // Handshake: the earlier of idle and the handshake deadline.
+        assert_eq!(
+            idle_deadline_for(&TransferState::SentUkeyServerInit, false, at(0), t0, t0, &l),
+            Some(at(60))
+        );
+        assert_eq!(
+            idle_deadline_for(
+                &TransferState::SentUkeyServerInit,
+                false,
+                at(50),
+                t0,
+                t0,
+                &l
+            ),
+            Some(at(90))
+        );
+        // Receiving: idle after the last byte, the handshake deadline no longer counts.
+        assert_eq!(
+            idle_deadline_for(&TransferState::ReceivingFiles, false, at(100), t0, t0, &l),
+            Some(at(160))
+        );
+    }
+
+    /// B4: the idle time counts from the accept, not from the last byte before the user decided.
+    #[tokio::test]
+    async fn accept_refreshes_the_idle_clock() {
+        let tmp = TempDir::new("refresh");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        // `checked_sub`: an `Instant` close to the boot time cannot go back 30 s.
+        let before = Instant::now()
+            .checked_sub(Duration::from_secs(30))
+            .unwrap_or_else(Instant::now);
+        s.req.last_rx = before;
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        assert!(s.req.last_rx > before);
+    }
+
+    /// An offer over the limits is refused: the peer gets a status, the app a reason.
+    #[tokio::test]
+    async fn too_many_files_is_refused_end_to_end() {
+        let tmp = TempDir::new("refuse");
+        let mut s = Session::new(&tmp.0);
+        s.req.limits.max_files = 1;
+        let files = vec![file_meta("a.txt", 1, 1), file_meta("b.txt", 2, 1)];
+        let (result, status) = s.offer_and_read_reply(files).await;
+        assert!(is_end_of_session(&result), "{result:?}");
+        assert_eq!(status, Status::UnsupportedAttachmentType);
+        assert_eq!(rejected_with(&s.events()), Some(Refusal::TooManyFiles));
+        assert!(dir_names(&tmp.0).is_empty());
+    }
+
+    #[tokio::test]
+    async fn not_enough_space_is_refused_at_the_offer() {
+        let tmp = TempDir::new("space-offer");
+        let mut s = Session::new(&tmp.0);
+        let files = vec![file_meta("big.bin", 1, i64::MAX / 2)];
+        let (result, status) = s.offer_and_read_reply(files).await;
+        assert!(is_end_of_session(&result), "{result:?}");
+        assert_eq!(status, Status::NotEnoughSpace);
+        assert!(matches!(
+            rejected_with(&s.events()),
+            Some(Refusal::NotEnoughSpace { .. })
+        ));
+    }
+
+    /// The space is checked again when the user accepts, and nothing is left behind.
+    #[tokio::test]
+    async fn not_enough_space_is_refused_at_the_accept() {
+        let tmp = TempDir::new("space-accept");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        s.req.limits.space_reserve = u64::MAX;
+        let mut peer = s.peer.take().unwrap();
+        let reader = async move {
+            let status = read_reject_status(&mut peer).await;
+            drop(peer);
+            status
+        };
+        let (result, status) = tokio::join!(s.deliver(TransferAction::ConsentAccept), reader);
+        assert!(is_end_of_session(&result), "{result:?}");
+        assert_eq!(status, Status::NotEnoughSpace);
+        assert!(matches!(
+            rejected_with(&s.events()),
+            Some(Refusal::NotEnoughSpace { .. })
+        ));
+        assert!(dir_names(&tmp.0).is_empty());
+    }
+
+    /// An offer for a folder that does not exist creates nothing until the accept.
+    #[tokio::test]
+    async fn offer_does_not_create_the_download_folder() {
+        let tmp = TempDir::new("nofolder");
+        let target = tmp.0.join("not/yet");
+        let mut s = Session::new(&target);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        assert!(!target.exists(), "the offer created the folder");
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        assert!(target.join("a.txt").exists());
+    }
+
+    /// A folder swapped between the offer and the accept is refused, not followed.
+    #[tokio::test]
+    async fn folder_replaced_after_the_offer_is_refused() {
+        let tmp = TempDir::new("replaced-dir");
+        let target = tmp.0.join("dl");
+        std::fs::create_dir(&target).unwrap();
+        let mut s = Session::new(&target);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        std::fs::rename(&target, tmp.0.join("old")).unwrap();
+        std::fs::create_dir(&target).unwrap();
+        let mut peer = s.peer.take().unwrap();
+        let reader = async move {
+            let status = read_reject_status(&mut peer).await;
+            drop(peer);
+            status
+        };
+        let (result, _) = tokio::join!(s.deliver(TransferAction::ConsentAccept), reader);
+        assert!(is_end_of_session(&result), "{result:?}");
+        assert_eq!(rejected_with(&s.events()), Some(Refusal::Destination));
+        assert!(dir_names(&target).is_empty());
+    }
+
+    /// B6: a peer that repeats the empty last chunk of a finished file is tolerated.
+    #[tokio::test]
+    async fn repeated_last_chunk_is_ignored() {
+        let tmp = TempDir::new("repeat");
+        let mut s = Session::new(&tmp.0);
+        s.offer(
+            vec![file_meta("a.txt", 1, 2), file_meta("b.txt", 2, 2)],
+            vec![],
+        )
+        .await
+        .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        s.file_chunk(1, 2, 0, 0, b"hi").await.unwrap();
+        s.file_chunk(1, 2, 2, 1, b"").await.unwrap();
+        s.file_chunk(1, 2, 2, 1, b"").await.unwrap();
+        assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"hi");
+        assert!(!s.finished());
+    }
+
+    /// A3: a frame that arrives a byte at a time does not make a decline wait.
+    #[tokio::test]
+    async fn decline_is_served_while_a_frame_trickles_in() {
+        let tmp = TempDir::new("trickle");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        let mut peer = s.peer.take().unwrap();
+        // The peer announces 1000 bytes and sends one.
+        peer.write_all(&[7]).await.unwrap();
+        let _ = s.bus.send(ChannelMessage {
+            id: "peer".into(),
+            msg: channel::Message::Lib {
+                action: TransferAction::ConsentDecline,
+            },
+        });
+        let closer = async move {
+            let mut sink = Vec::new();
+            let _ = peer.read_to_end(&mut sink).await;
+        };
+        let (result, ()) = tokio::join!(
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                s.req._handle(1000u32.to_be_bytes())
+            ),
+            closer
+        );
+        let result = result.expect("the decline waited for the slow frame");
+        assert!(is_end_of_session(&result), "{result:?}");
+    }
+
+    /// A3: a body that stalls ends the session at the idle limit.
+    #[tokio::test]
+    async fn stalled_frame_body_times_out() {
+        let tmp = TempDir::new("stall");
+        let mut s = Session::new(&tmp.0);
+        s.req.limits.idle = Duration::from_millis(100);
+        let _peer = s.peer.take().unwrap();
+        let r = tokio::time::timeout(
+            Duration::from_secs(10),
+            s.req._handle(1000u32.to_be_bytes()),
+        )
+        .await
+        .expect("a stalled body kept the session");
+        assert!(r.is_err());
+    }
+
+    /// A4: a peer that never reads must not hold a write for ever.
+    #[tokio::test]
+    async fn write_to_a_peer_that_never_reads_times_out() {
+        let (_peer, ours) = tokio::io::duplex(64);
+        let (bus, _rx) = broadcast::channel(8);
+        let mut req = InboundRequest::new_over(MigratableStream::Duplex(ours), "id".into(), bus)
+            .with_limits(Limits {
+                idle: Duration::from_millis(100),
+                ..Limits::default()
+            });
+        let r = tokio::time::timeout(Duration::from_secs(10), req.send_frame(vec![0; 4096]))
+            .await
+            .expect("the write never ended");
+        assert!(r.is_err());
+        // Part of the frame may be on the wire: nothing is written after it.
+        assert!(req.send_frame(vec![]).await.is_err());
+        assert!(req.poisoned);
+    }
+
+    /// B3: before the accept only one `Bytes` payload may be open.
+    #[tokio::test]
+    async fn only_one_bytes_payload_before_the_accept() {
+        let tmp = TempDir::new("one-open");
+        let mut s = Session::new(&tmp.0);
+        let first = payload_frame(payload_header::PayloadType::Bytes, 5, 10, 0, 0, b"a");
+        s.feed(&first).await.unwrap();
+        let second = payload_frame(payload_header::PayloadType::Bytes, 6, 10, 0, 0, b"b");
+        assert!(s.feed(&second).await.is_err());
+    }
+
+    // ---- Final round ----
+
+    #[test]
+    fn bus_traffic_does_not_move_the_read_deadline() {
+        let t0 = Instant::now();
+        let idle = Duration::from_secs(60);
+        let hard = t0 + Duration::from_secs(1000);
+        // The deadline depends on the last byte only: however often the bus is served, a
+        // later "now" gives the same answer.
+        assert_eq!(read_deadline(t0, idle, hard), t0 + idle);
+        let later = t0 + Duration::from_secs(50);
+        assert_eq!(
+            read_deadline(t0, idle, hard),
+            read_deadline(t0, idle, hard.max(later))
+        );
+        // A byte received moves it; the frame deadline caps it.
+        assert_eq!(read_deadline(later, idle, hard), later + idle);
+        assert_eq!(read_deadline(later, idle, t0 + idle), t0 + idle);
+    }
+
+    /// An accept sent while a frame body is being read is served, and the frame completes.
+    #[tokio::test]
+    async fn accept_is_served_during_a_body_read() {
+        let tmp = TempDir::new("accept-mid-frame");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        let keep_alive = OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(location_nearby_connections::v1_frame::FrameType::KeepAlive.into()),
+                keep_alive: Some(KeepAliveFrame { ack: Some(false) }),
+                ..Default::default()
+            }),
+        }
+        .encode_to_vec();
+        let (first, second) = keep_alive.split_at(keep_alive.len() / 2);
+        let mut peer = s.peer.take().unwrap();
+        peer.write_all(first).await.unwrap();
+        let _ = s.bus.send(ChannelMessage {
+            id: "peer".into(),
+            msg: channel::Message::Lib {
+                action: TransferAction::ConsentAccept,
+            },
+        });
+        let second = second.to_vec();
+        let file = tmp.0.join("a.txt");
+        let rest = async move {
+            // The rest of the frame comes only after the accept was served.
+            while !file.exists() {
+                tokio::task::yield_now().await;
+            }
+            peer.write_all(&second).await.unwrap();
+            peer
+        };
+        let prefix = (keep_alive.len() as u32).to_be_bytes();
+        let (result, _peer) = tokio::join!(
+            tokio::time::timeout(Duration::from_secs(10), s.req._handle(prefix)),
+            rest
+        );
+        result.expect("the accept waited for the frame").unwrap();
+        assert_eq!(s.req.state.state, TransferState::ReceivingFiles);
+    }
+
+    /// Alternating chunks of two files never hold more than one descriptor.
+    #[tokio::test]
+    async fn one_descriptor_at_a_time_with_alternating_files() {
+        let tmp = TempDir::new("alternate");
+        let mut s = Session::new(&tmp.0);
+        s.offer(
+            vec![file_meta("a.txt", 1, 4), file_meta("b.txt", 2, 4)],
+            vec![],
+        )
+        .await
+        .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        let open = |s: &mut Session| {
+            s.req
+                .state
+                .inbound
+                .get_mut(1)
+                .and_then(|f| f.partial.as_ref().map(|p| p.open_files()))
+                .unwrap()
+        };
+        assert_eq!(open(&mut s), 0, "the reserved files hold no descriptor");
+        s.file_chunk(1, 4, 0, 0, b"ab").await.unwrap();
+        assert_eq!(open(&mut s), 1);
+        s.file_chunk(2, 4, 0, 0, b"AB").await.unwrap();
+        assert_eq!(open(&mut s), 1);
+        s.file_chunk(1, 4, 2, 0, b"cd").await.unwrap();
+        assert_eq!(open(&mut s), 1);
+        s.file_chunk(2, 4, 2, 0, b"CD").await.unwrap();
+        assert_eq!(open(&mut s), 1);
+        assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"abcd");
+        assert_eq!(std::fs::read(tmp.0.join("b.txt")).unwrap(), b"ABCD");
+    }
+
+    /// A user who never answers is declined by the library when the core misses the event.
+    #[tokio::test]
+    async fn unanswered_offer_is_declined_at_the_ceiling() {
+        let tmp = TempDir::new("ceiling");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        s.req.limits.consent = Duration::from_millis(50);
+        s.req.consent_since = Instant::now();
+        let mut peer = s.peer.take().unwrap();
+        let reader = async move {
+            let status = read_reject_status(&mut peer).await;
+            drop(peer);
+            status
+        };
+        let drive = async {
+            loop {
+                if let Err(e) = s.req.handle().await {
+                    break e;
+                }
+            }
+        };
+        let (ended, status) =
+            tokio::join!(tokio::time::timeout(Duration::from_secs(10), drive), reader);
+        let ended = ended.expect("the offer was never declined");
+        assert!(
+            matches!(
+                ended.downcast_ref(),
+                Some(crate::errors::AppError::NotAnError)
+            ),
+            "{ended:?}"
+        );
+        assert_eq!(status, Status::Reject);
+        assert!(dir_names(&tmp.0).is_empty());
+    }
+
+    /// A repeated empty last chunk of a completed `Bytes` payload is ignored.
+    #[tokio::test]
+    async fn repeated_last_chunk_of_a_bytes_payload_is_ignored() {
+        let tmp = TempDir::new("repeat-bytes");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        let len = introduction(vec![file_meta("a.txt", 1, 4)], vec![]).len() as i64;
+        let again = payload_frame(
+            payload_header::PayloadType::Bytes,
+            INTRO_ID,
+            len,
+            len,
+            1,
+            b"",
+        );
+        s.feed(&again).await.unwrap();
     }
 }

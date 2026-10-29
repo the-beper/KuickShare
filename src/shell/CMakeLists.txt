@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 project(kuickshare VERSION 1.4.1 LANGUAGES CXX)
+# Defines BUILD_TESTING (ON by default): packages pass -DBUILD_TESTING=OFF, build/check.sh -DBUILD_TESTING=ON.
+include(CTest)
 add_compile_definitions(KUICKSHARE_VERSION="${PROJECT_VERSION}")
 
 find_package(ECM REQUIRED NO_MODULE)
@@ -12,7 +14,7 @@ include(KDECompilerSettings NO_POLICY_SCOPE)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 DBus Widgets Test)
+find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 DBus Widgets)
 find_package(KF6 REQUIRED COMPONENTS Kirigami I18n CoreAddons Crash DBusAddons StatusNotifierItem Notifications JobWidgets)
 set(QT_MAJOR_VERSION 6)
 include(ECMFindQmlModule)
@@ -72,6 +74,7 @@ qt_add_qml_module(kuickshare
         qml/ToastStack.qml
         qml/PairDialog.qml
         qml/IntegrationDialog.qml
+        qml/WifiRequirementsDialog.qml
 )
 
 target_link_libraries(kuickshare PRIVATE
@@ -92,70 +95,78 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../data/icons/hicolor/symbolic/apps
 
 file(CREATE_LINK ${CMAKE_CURRENT_SOURCE_DIR}/../../target/debug/kuickshared ${CMAKE_BINARY_DIR}/kuickshared SYMBOLIC)
 
-enable_testing()
-qt_add_executable(transfermodel_test ../../tests/shell/transfermodel_test.cpp transfermodel.cpp)
-target_include_directories(transfermodel_test PRIVATE .)
-target_link_libraries(transfermodel_test PRIVATE Qt6::Core Qt6::Test)
-add_test(NAME transfermodel COMMAND transfermodel_test)
+if(BUILD_TESTING)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
 
-qt_add_executable(openablefile_test ../../tests/shell/openablefile_test.cpp)
-target_include_directories(openablefile_test PRIVATE .)
-target_link_libraries(openablefile_test PRIVATE Qt6::Core Qt6::Test)
-add_test(NAME openablefile COMMAND openablefile_test)
+    qt_add_executable(transfermodel_test ../../tests/shell/transfermodel_test.cpp transfermodel.cpp)
+    target_include_directories(transfermodel_test PRIVATE .)
+    target_link_libraries(transfermodel_test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME transfermodel COMMAND transfermodel_test)
 
-qt_add_executable(folderexpand_test ../../tests/shell/folderexpand_test.cpp)
-target_include_directories(folderexpand_test PRIVATE .)
-target_link_libraries(folderexpand_test PRIVATE Qt6::Core Qt6::Test)
-add_test(NAME folderexpand COMMAND folderexpand_test)
+    qt_add_executable(openablefile_test ../../tests/shell/openablefile_test.cpp)
+    target_include_directories(openablefile_test PRIVATE .)
+    target_link_libraries(openablefile_test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME openablefile COMMAND openablefile_test)
 
-qt_add_executable(devicematch_test ../../tests/shell/devicematch_test.cpp)
-target_include_directories(devicematch_test PRIVATE .)
-target_link_libraries(devicematch_test PRIVATE Qt6::Core Qt6::Test)
-add_test(NAME devicematch COMMAND devicematch_test)
+    qt_add_executable(folderexpand_test ../../tests/shell/folderexpand_test.cpp)
+    target_include_directories(folderexpand_test PRIVATE .)
+    target_link_libraries(folderexpand_test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME folderexpand COMMAND folderexpand_test)
 
-qt_add_executable(transferfiltermodel_test ../../tests/shell/transferfiltermodel_test.cpp transferfiltermodel.cpp transfermodel.cpp)
-target_include_directories(transferfiltermodel_test PRIVATE .)
-target_link_libraries(transferfiltermodel_test PRIVATE Qt6::Core Qt6::Test)
-add_test(NAME transferfiltermodel COMMAND transferfiltermodel_test)
+    qt_add_executable(devicematch_test ../../tests/shell/devicematch_test.cpp)
+    target_include_directories(devicematch_test PRIVATE .)
+    target_link_libraries(devicematch_test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME devicematch COMMAND devicematch_test)
 
-qt_add_executable(devicemodel_test ../../tests/shell/devicemodel_test.cpp devicemodel.cpp)
-target_include_directories(devicemodel_test PRIVATE .)
-target_link_libraries(devicemodel_test PRIVATE Qt6::Core Qt6::Test)
-add_test(NAME devicemodel COMMAND devicemodel_test)
+    qt_add_executable(transferfiltermodel_test ../../tests/shell/transferfiltermodel_test.cpp transferfiltermodel.cpp transfermodel.cpp)
+    target_include_directories(transferfiltermodel_test PRIVATE .)
+    target_link_libraries(transferfiltermodel_test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME transferfiltermodel COMMAND transferfiltermodel_test)
 
-qt_add_executable(dolphinmenu_test ../../tests/shell/dolphinmenu_test.cpp dolphinmenu.cpp)
-qt_add_resources(dolphinmenu_test servicemenu
-    PREFIX /data
-    BASE ${CMAKE_CURRENT_SOURCE_DIR}/../../data
-    FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../data/kuickshare-send.desktop)
-target_include_directories(dolphinmenu_test PRIVATE .)
-target_link_libraries(dolphinmenu_test PRIVATE Qt6::Core Qt6::Test)
-add_test(NAME dolphinmenu COMMAND dolphinmenu_test)
+    qt_add_executable(devicemodel_test ../../tests/shell/devicemodel_test.cpp devicemodel.cpp)
+    target_include_directories(devicemodel_test PRIVATE .)
+    target_link_libraries(devicemodel_test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME devicemodel COMMAND devicemodel_test)
 
-qt_add_executable(execquote_test ../../tests/shell/execquote_test.cpp)
-target_include_directories(execquote_test PRIVATE .)
-target_link_libraries(execquote_test PRIVATE Qt6::Core Qt6::Test)
-add_test(NAME execquote COMMAND execquote_test)
+    qt_add_executable(dolphinmenu_test ../../tests/shell/dolphinmenu_test.cpp dolphinmenu.cpp)
+    qt_add_resources(dolphinmenu_test servicemenu
+        PREFIX /data
+        BASE ${CMAKE_CURRENT_SOURCE_DIR}/../../data
+        FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../data/kuickshare-send.desktop)
+    target_include_directories(dolphinmenu_test PRIVATE .)
+    target_link_libraries(dolphinmenu_test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME dolphinmenu COMMAND dolphinmenu_test)
 
-qt_add_executable(launcher_test ../../tests/shell/launcher_test.cpp)
-target_include_directories(launcher_test PRIVATE .)
-target_link_libraries(launcher_test PRIVATE Qt6::Core Qt6::Test)
-add_test(NAME launcher COMMAND launcher_test)
+    qt_add_executable(execquote_test ../../tests/shell/execquote_test.cpp)
+    target_include_directories(execquote_test PRIVATE .)
+    target_link_libraries(execquote_test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME execquote COMMAND execquote_test)
 
-qt_add_executable(integration_test ../../tests/shell/integration_test.cpp integration.cpp dolphinmenu.cpp)
-qt_add_resources(integration_test servicemenu
-    PREFIX /data
-    BASE ${CMAKE_CURRENT_SOURCE_DIR}/../../data
-    FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../data/kuickshare-send.desktop)
-qt_add_resources(integration_test integration
-    PREFIX /data
-    BASE ${CMAKE_CURRENT_SOURCE_DIR}/../../data
-    FILES ${INTEGRATION_FILES})
-target_include_directories(integration_test PRIVATE .)
-target_link_libraries(integration_test PRIVATE Qt6::Core Qt6::Test)
-add_test(NAME integration COMMAND integration_test)
+    qt_add_executable(launcher_test ../../tests/shell/launcher_test.cpp)
+    target_include_directories(launcher_test PRIVATE .)
+    target_link_libraries(launcher_test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME launcher COMMAND launcher_test)
 
-qt_add_executable(instance_test ../../tests/shell/instance_test.cpp instance.cpp updatewatcher.cpp)
-target_include_directories(instance_test PRIVATE .)
-target_link_libraries(instance_test PRIVATE Qt6::Core Qt6::DBus Qt6::Test)
-add_test(NAME instance COMMAND instance_test)
+    qt_add_executable(integration_test ../../tests/shell/integration_test.cpp integration.cpp dolphinmenu.cpp)
+    qt_add_resources(integration_test servicemenu
+        PREFIX /data
+        BASE ${CMAKE_CURRENT_SOURCE_DIR}/../../data
+        FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../data/kuickshare-send.desktop)
+    qt_add_resources(integration_test integration
+        PREFIX /data
+        BASE ${CMAKE_CURRENT_SOURCE_DIR}/../../data
+        FILES ${INTEGRATION_FILES})
+    target_include_directories(integration_test PRIVATE .)
+    target_link_libraries(integration_test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME integration COMMAND integration_test)
+
+    qt_add_executable(instance_test ../../tests/shell/instance_test.cpp instance.cpp updatewatcher.cpp)
+    target_include_directories(instance_test PRIVATE .)
+    target_link_libraries(instance_test PRIVATE Qt6::Core Qt6::DBus Qt6::Test)
+    add_test(NAME instance COMMAND instance_test)
+
+    qt_add_executable(requirementsreport_test ../../tests/shell/requirementsreport_test.cpp)
+    target_include_directories(requirementsreport_test PRIVATE .)
+    target_link_libraries(requirementsreport_test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME requirementsreport COMMAND requirementsreport_test)
+endif()

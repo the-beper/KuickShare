@@ -304,7 +304,9 @@ mod tests {
         rearm.notify_one();
         let begin = Instant::now();
         // Attempts after the kick fail at +30ms (hold), then wait 40, 80, 160, 160...
-        for _ in 0..40 {
+        // The window is measured, not counted in sleeps: on a loaded machine 40 sleeps of
+        // 10 ms take longer than 400 ms and let the next attempt (at about 470 ms) in.
+        while begin.elapsed() < Duration::from_millis(400) {
             rearm.notify_one();
             tokio::time::sleep(Duration::from_millis(10)).await;
         }

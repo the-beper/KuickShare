@@ -12,23 +12,30 @@
 use std::{
     io,
     net::Ipv4Addr,
+    sync::Mutex as StdMutex,
     time::{Duration, Instant},
 };
 
 use rand::{RngExt, distr::Alphanumeric};
 use rqs_lib::upgrade::{BoxFuture, WifiCredentials, WifiLink};
 use tokio::{
-    sync::{Mutex, MutexGuard},
+    sync::{Mutex, MutexGuard, mpsc::UnboundedSender},
     time::sleep,
 };
+
+use crate::requirements::RuntimeEvidence;
 
 const AP_PROFILE: &str = "kuickshare-ap";
 const JOIN_PROFILE: &str = "kuickshare-join";
 /// firewalld zone NetworkManager uses for connection sharing: it allows DHCP and DNS only, so the
 /// upgrade port is opened in it for the transfer.
 const SHARED_ZONE: &str = "nm-shared";
-/// Fallback when the port cannot be opened: every port is reachable by the phone that joined.
+/// Used only with the user's consent for this session, when firewalld refuses to open the port:
+/// every port is reachable by the phone that joined.
 const OPEN_ZONE: &str = "trusted";
+/// Used only with the user's consent for this session, when firewalld is not there: the zone is
+/// left to NetworkManager (another firewall may still block the phone).
+const DEFAULT_ZONE: &str = "";
 /// The port opening expires by itself if the daemon dies before closing it.
 const PORT_OPEN_SECS: i32 = 300;
 /// Every profile we create starts with this; used to sweep leftovers.
@@ -495,6 +502,64 @@ fn io_err(e: impl std::fmt::Display) -> io::Error {
     io::Error::other(format!("NetworkManager: {e}"))
 }
 
+/// What a failed firewalld call says about the firewall.
+#[derive(Debug, PartialEq, Eq)]
+enum FirewallFault {
+    /// firewalld is not there: nobody owns its name, or the system bus cannot be reached.
+    Missing,
+    /// firewalld (or the bus policy, or polkit) refused the change.
+    Denied,
+    /// Any other error; handled like a refusal, and logged.
+    Other,
+}
+
+fn classify_firewall_error(e: &zbus::Error) -> FirewallFault {
+    use zbus::fdo::Error as Fdo;
+    match e {
+        zbus::Error::FDO(f) => match **f {
+            Fdo::ServiceUnknown(_)
+            | Fdo::NameHasNoOwner(_)
+            | Fdo::Disconnected(_)
+            | Fdo::NoServer(_)
+            | Fdo::SpawnExecFailed(_)
+            | Fdo::SpawnForkFailed(_)
+            | Fdo::SpawnChildExited(_)
+            | Fdo::SpawnChildSignaled(_)
+            | Fdo::SpawnFailed(_)
+            | Fdo::SpawnFailedToSetup(_)
+            | Fdo::SpawnConfigInvalid(_) => FirewallFault::Missing,
+            Fdo::AccessDenied(_) | Fdo::AuthFailed(_) => FirewallFault::Denied,
+            _ => FirewallFault::Other,
+        },
+        zbus::Error::InputOutput(_) | zbus::Error::Address(_) => FirewallFault::Missing,
+        // firewalld's own refusal (polkit): its error carries NOT_AUTHORIZED, or asks for an
+        // interactive authorization that nobody can give here.
+        zbus::Error::MethodError(name, detail, _)
+            if name.as_str().ends_with("InteractiveAuthorizationRequired")
+                || detail
+                    .as_deref()
+                    .is_some_and(|d| d.contains("NOT_AUTHORIZED")) =>
+        {
+            FirewallFault::Denied
+        }
+        _ => FirewallFault::Other,
+    }
+}
+
+/// An error of the firewalld call. `NotFound` means firewalld is not there; anything else is a
+/// refusal or a failure of firewalld itself (both stop an unconsented hotspot).
+fn firewall_err(e: zbus::Error) -> io::Error {
+    let fault = classify_firewall_error(&e);
+    if fault == FirewallFault::Other {
+        tracing::warn!("unexpected error from firewalld, taken as a refusal: {e:?}");
+    }
+    if fault == FirewallFault::Missing {
+        io::Error::new(io::ErrorKind::NotFound, format!("firewalld: {e}"))
+    } else {
+        io::Error::other(format!("firewalld: {e}"))
+    }
+}
+
 fn path(p: &str) -> zbus::Result<ObjectPath<'_>> {
     ObjectPath::try_from(p)
 }
@@ -514,6 +579,43 @@ macro_rules! proxy_at {
     };
 }
 
+/// Which of the devices (in `GetDevices` order, by `DeviceType`) the runtime uses for the hotspot
+/// and for joining: the first Wi-Fi (not Wi-Fi P2P) one. The one place this is decided: the
+/// requirements report judges the same device (`requirements::system`).
+pub(crate) fn select_wifi_device(types: &[u32]) -> Option<usize> {
+    types.iter().position(|t| *t == DEVICE_TYPE_WIFI)
+}
+
+/// The first Wi-Fi device of `paths` (in `GetDevices` order): the types are read one by one and
+/// reading stops as soon as `select_wifi_device` finds one, so a device that comes after it (a
+/// veth, a bridge or a USB adapter that vanishes meanwhile) is never touched. A device whose type
+/// cannot be read is skipped.
+async fn first_wifi<P, F, Fut>(paths: Vec<P>, mut kind: F) -> Option<P>
+where
+    P: std::fmt::Display + Clone,
+    F: FnMut(P) -> Fut,
+    Fut: std::future::Future<Output = zbus::Result<u32>>,
+{
+    let mut types = Vec::new();
+    let mut read = Vec::new();
+    for p in paths {
+        match kind(p.clone()).await {
+            Ok(t) => {
+                types.push(t);
+                read.push(p);
+            }
+            Err(e) => {
+                tracing::debug!("skipping device {p}: {e}");
+                continue;
+            }
+        }
+        if select_wifi_device(&types).is_some() {
+            break;
+        }
+    }
+    select_wifi_device(&types).and_then(|i| read.into_iter().nth(i))
+}
+
 impl DbusNm {
     fn new() -> Self {
         Self {
@@ -527,16 +629,18 @@ impl DbusNm {
 
     async fn wifi_device_z(&self) -> zbus::Result<Option<WifiDevice>> {
         let c = self.conn().await?;
-        for p in ManagerProxy::new(c).await?.get_devices().await? {
-            let dev = proxy_at!(DeviceProxy, c, p.as_str());
-            if dev.device_type().await? == DEVICE_TYPE_WIFI {
-                return Ok(Some(WifiDevice {
-                    path: p.to_string(),
-                    iface: dev.interface().await?,
-                }));
-            }
-        }
-        Ok(None)
+        let paths = ManagerProxy::new(c).await?.get_devices().await?;
+        let Some(path) = first_wifi(paths, |p: zbus::OwnedObjectPath| async move {
+            proxy_at!(DeviceProxy, c, p.as_str()).device_type().await
+        })
+        .await
+        else {
+            return Ok(None);
+        };
+        Ok(Some(WifiDevice {
+            iface: proxy_at!(DeviceProxy, c, path.as_str()).interface().await?,
+            path: path.to_string(),
+        }))
     }
 
     async fn stale_profiles_z(&self) -> zbus::Result<Vec<String>> {
@@ -615,19 +719,30 @@ impl DbusNm {
         // Subscribe first, then read the current state: no transition is missed.
         let mut changes = conn.receive_state_changed().await?;
         let mut state = conn.current_state().await?;
+        // The reason NetworkManager gave for the latest change (none for the state read above).
+        let mut reason = None;
         let wait = async {
             loop {
                 match state {
                     STATE_ACTIVATED => return Ok(()),
                     STATE_DEACTIVATED => {
-                        return Err(zbus::Error::Failure("connection was deactivated".into()));
+                        // The raw `NMActiveConnectionStateReason`, logged as it is: no guess at
+                        // the cause (such as a missing dnsmasq) is made from it.
+                        return Err(zbus::Error::Failure(match reason {
+                            Some(r) => format!(
+                                "connection was deactivated (NetworkManager reason code {r})"
+                            ),
+                            None => "connection was deactivated".into(),
+                        }));
                     }
                     _ => {}
                 }
                 let Some(signal) = changes.next().await else {
                     return Err(zbus::Error::Failure("signal stream ended".into()));
                 };
-                state = signal.args()?.state;
+                let args = signal.args()?;
+                state = args.state;
+                reason = Some(args.reason);
             }
         };
         tokio::time::timeout(limit, wait)
@@ -753,7 +868,7 @@ impl NmApi for DbusNm {
                 .map(drop)
         }
         .await
-        .map_err(io_err)
+        .map_err(firewall_err)
     }
 
     async fn close_port(&self, port: u16) -> io::Result<()> {
@@ -766,7 +881,7 @@ impl NmApi for DbusNm {
                 .map(drop)
         }
         .await
-        .map_err(io_err)
+        .map_err(|e| io::Error::other(format!("firewalld: {e}")))
     }
 
     async fn activate(&self, dev: &WifiDevice, settings: &str) -> io::Result<()> {
@@ -806,12 +921,57 @@ struct State {
     touched: bool,
     /// Port opened in the firewall zone and not yet closed.
     open_port: Option<u16>,
+    /// The hotspot runs in an open (or default) zone, on the user's consent for this session.
+    open_zone: bool,
+}
+
+/// What the hotspot may do to the firewall when the one port it needs cannot be opened.
+/// Kept in memory only (never written to a file); the user's consent lasts until the daemon stops.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HotspotPolicy {
+    /// Open the upgrade port in the sharing zone; if that fails, do not host at all.
+    #[default]
+    TargetedPortOnly,
+    /// As above, but if the port cannot be opened host anyway in an open zone (firewalld refused)
+    /// or in the default zone (firewalld absent).
+    AllowOpenZone,
+}
+
+/// Why the firewall stopped the hotspot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockReason {
+    /// firewalld is running but refused to open the port (no permission, or an error).
+    FirewallDenied,
+    /// firewalld is not running (or not reachable).
+    FirewallMissing,
+}
+
+impl BlockReason {
+    /// The stable code carried by the `WifiUpgradeBlocked` D-Bus signal.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::FirewallDenied => "firewall_denied",
+            Self::FirewallMissing => "firewall_missing",
+        }
+    }
+}
+
+/// Something the link tells the rest of the daemon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkNotice {
+    /// The hotspot was not started because of the firewall; the transfer stays on its first channel.
+    WifiUpgradeBlocked(BlockReason),
+    /// Something the runtime learned by acting, for the requirements report.
+    Evidence(RuntimeEvidence),
 }
 
 pub struct NmLink<A = DbusNm> {
     api: A,
     timing: Timing,
     state: Mutex<State>,
+    /// Plain mutex: read and written without I/O, never held across an await.
+    policy: StdMutex<HotspotPolicy>,
+    notices: Option<UnboundedSender<LinkNotice>>,
 }
 
 impl NmLink {
@@ -824,6 +984,12 @@ impl NmLink {
                 budget: JOIN_BUDGET,
             },
         )
+    }
+
+    /// Sends the notices to `notices` (see `LinkNotice`).
+    pub fn with_notices(mut self, notices: UnboundedSender<LinkNotice>) -> Self {
+        self.notices = Some(notices);
+        self
     }
 }
 
@@ -877,8 +1043,8 @@ pub async fn watch_network(events: tokio::sync::mpsc::UnboundedSender<NetworkEve
     }
 }
 
-/// Whether firewalld is running: only then the upgrade port can be opened on its own; with any
-/// other firewall the hotspot goes to the `trusted` zone, which lets the phone reach every port.
+/// Whether firewalld is running: only then the upgrade port can be opened on its own. Without it
+/// the hotspot is refused unless the user allowed it for this session (`HotspotPolicy`).
 pub async fn firewall_managed() -> bool {
     async {
         let connection = Connection::system().await?;
@@ -905,6 +1071,69 @@ impl<A: NmApi> NmLink<A> {
             api,
             timing,
             state: Mutex::new(State::default()),
+            policy: StdMutex::new(HotspotPolicy::default()),
+            notices: None,
+        }
+    }
+
+    /// Sets what the next hotspot may do about the firewall. No I/O: safe under any lock.
+    pub fn set_hotspot_policy(&self, policy: HotspotPolicy) {
+        *self
+            .policy
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = policy;
+    }
+
+    pub fn hotspot_policy(&self) -> HotspotPolicy {
+        *self
+            .policy
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn notify(&self, notice: LinkNotice) {
+        if let Some(tx) = &self.notices {
+            // The receiver is gone only while the daemon stops.
+            let _ = tx.send(notice);
+        }
+    }
+
+    /// The zone for the hotspot when the port could not be opened (`error`), or the refusal.
+    /// Nothing has been added to NetworkManager at this point.
+    fn zone_without_port(&self, port: u16, error: &io::Error) -> io::Result<&'static str> {
+        // Read now, not when the hotspot started: a consent taken back meanwhile counts.
+        let policy = self.hotspot_policy();
+        let reason = if error.kind() == io::ErrorKind::NotFound {
+            BlockReason::FirewallMissing
+        } else {
+            BlockReason::FirewallDenied
+        };
+        self.notify(LinkNotice::Evidence(RuntimeEvidence::FirewallRefused(
+            reason,
+        )));
+        match (policy, reason) {
+            (HotspotPolicy::AllowOpenZone, BlockReason::FirewallDenied) => {
+                tracing::warn!(
+                    "could not open port {port} in the firewall ({error}); using the trusted zone as allowed for this session"
+                );
+                Ok(OPEN_ZONE)
+            }
+            (HotspotPolicy::AllowOpenZone, BlockReason::FirewallMissing) => {
+                tracing::warn!(
+                    "could not open port {port} in the firewall ({error}); leaving the zone to NetworkManager as allowed for this session"
+                );
+                Ok(DEFAULT_ZONE)
+            }
+            (HotspotPolicy::TargetedPortOnly, _) => {
+                tracing::warn!(
+                    "could not open port {port} in the firewall ({error}); not starting the hotspot"
+                );
+                self.notify(LinkNotice::WifiUpgradeBlocked(reason));
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("the firewall did not allow the upgrade port ({error})"),
+                ))
+            }
         }
     }
 
@@ -933,11 +1162,25 @@ impl<A: NmApi> NmLink<A> {
         }
     }
 
-    /// For daemon start and shutdown: tears down our own state and sweeps leftovers.
-    pub async fn cleanup_stale(&self) {
+    /// For daemon start and shutdown, on the link the transfers used: closes the firewall port,
+    /// removes the profile and restores the previous connection if a hotspot is up or half-made,
+    /// and sweeps leftover `kuickshare-*` profiles (also those of a crashed run, whatever the
+    /// settings say now). Waits for the link if an upgrade holds it.
+    pub async fn shutdown(&self) {
         let mut st = self.state.lock().await;
         self.teardown(&mut st).await;
         self.sweep().await;
+    }
+
+    /// The consent for an open zone was taken back: a hotspot that runs in one is taken down (the
+    /// transfer goes on over its first channel). Waits for the link, so a hotspot that is still
+    /// starting is judged when it is done.
+    pub async fn drop_open_zone_hotspot(&self) {
+        let mut st = self.state.lock().await;
+        if st.open_zone && self.hotspot_policy() == HotspotPolicy::TargetedPortOnly {
+            tracing::info!("the consent was taken back: stopping the hotspot");
+            self.teardown(&mut st).await;
+        }
     }
 
     async fn remember_previous(&self, st: &mut State, dev: &WifiDevice) {
@@ -951,14 +1194,16 @@ impl<A: NmApi> NmLink<A> {
     }
 
     /// Removes the profile in `st.created`, if any. Failures are only logged.
+    /// Cancel safe: the record goes only when the profile is gone, so a later call finishes it.
     async fn drop_created(&self, st: &mut State) {
-        if let Some(c) = st.created.take() {
+        if let Some(c) = st.created.clone() {
             if let Err(e) = self.api.deactivate(&c.active).await {
                 tracing::debug!("deactivate: {e}");
             }
             if let Err(e) = self.api.delete(&c.settings).await {
                 tracing::warn!("could not delete profile {}: {e}", c.settings);
             }
+            st.created = None;
         }
     }
 
@@ -984,23 +1229,24 @@ impl<A: NmApi> NmLink<A> {
     async fn host_inner(&self, st: &mut State, port: u16) -> io::Result<WifiCredentials> {
         let dev = self.api.wifi_device().await?;
         st.dev = Some(dev.clone());
-        self.sweep().await;
-        self.remember_previous(st, &dev).await;
 
-        // The phone only needs the upgrade port: open it in the sharing zone, or fall back to a zone
-        // that lets everything in when the firewall cannot be changed (no firewalld, no permission).
+        // The phone only needs the upgrade port: open it in the sharing zone. This comes before
+        // anything else is touched, so a refusal leaves the profiles and the connection alone. With
+        // the user's consent for this session an open zone is used instead; never without it.
         let zone = match self.api.open_port(port).await {
             Ok(()) => {
                 st.open_port = Some(port);
+                self.notify(LinkNotice::Evidence(RuntimeEvidence::FirewallPortOpened));
                 SHARED_ZONE
             }
             Err(e) => {
-                tracing::warn!(
-                    "could not open port {port} in the firewall ({e}); using the trusted zone"
-                );
-                OPEN_ZONE
+                let zone = self.zone_without_port(port, &e)?;
+                st.open_zone = true;
+                zone
             }
         };
+        self.sweep().await;
+        self.remember_previous(st, &dev).await;
         let (ssid, password) = (random_ssid(), random_password());
         let band = match self
             .bring_up(st, &dev, &ssid, &password, BAND_5GHZ, zone)
@@ -1012,10 +1258,8 @@ impl<A: NmApi> NmLink<A> {
                 self.drop_created(st).await;
                 self.bring_up(st, &dev, &ssid, &password, BAND_2GHZ, zone)
                     .await
-                    .inspect_err(|_| {
-                        tracing::warn!(
-                            "the hotspot could not start; a possible cause is a missing dnsmasq package, which NetworkManager needs to share a connection"
-                        );
+                    .inspect_err(|e| {
+                        tracing::warn!("the hotspot could not start on 2.4 GHz either: {e}");
                     })?;
                 BAND_2GHZ
             }
@@ -1155,21 +1399,26 @@ impl<A: NmApi> NmLink<A> {
         }
     }
 
-    /// Undoes whatever `st` records and resets it. Failures are only logged.
+    /// Undoes whatever `st` records and resets it. Failures are only logged. Cancel safe: each
+    /// record is cleared only after its undo is done, and `busy` last, so when the future is
+    /// dropped half-way a later call undoes the rest.
     async fn teardown(&self, st: &mut State) {
-        let mut old = std::mem::take(st);
-        if let Some(port) = old.open_port
-            && let Err(e) = self.api.close_port(port).await
-        {
-            tracing::warn!("could not close port {port} in the firewall: {e}");
+        if let Some(port) = st.open_port {
+            if let Err(e) = self.api.close_port(port).await {
+                tracing::warn!("could not close port {port} in the firewall: {e}");
+            }
+            st.open_port = None;
         }
-        self.drop_created(&mut old).await;
-        if let (Some(prev), Some(dev)) = (&old.previous, &old.dev)
-            && (old.touched || self.current_differs(dev, prev).await)
-            && let Err(e) = self.api.activate(dev, prev).await
-        {
-            tracing::warn!("could not restore the previous connection: {e}");
+        self.drop_created(st).await;
+        if let (Some(prev), Some(dev)) = (st.previous.clone(), st.dev.clone()) {
+            if (st.touched || self.current_differs(&dev, &prev).await)
+                && let Err(e) = self.api.activate(&dev, &prev).await
+            {
+                tracing::warn!("could not restore the previous connection: {e}");
+            }
+            st.previous = None;
         }
+        *st = State::default();
     }
 
     /// Whether the device's active connection is not `previous` (unknown counts as no).
@@ -1189,6 +1438,17 @@ impl<A: NmApi> WifiLink for NmLink<A> {
         Box::pin(async move {
             let mut st = self.begin()?;
             let result = self.host_inner(&mut st, port).await;
+            // A refusal by the firewall and a missing Wi-Fi device are not a hotspot that failed
+            // to start: the report has rows for them.
+            match &result {
+                Ok(_) => self.notify(LinkNotice::Evidence(RuntimeEvidence::HotspotStarted)),
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::PermissionDenied | io::ErrorKind::NotFound
+                    ) => {}
+                Err(_) => self.notify(LinkNotice::Evidence(RuntimeEvidence::HotspotFailed)),
+            }
             if result.is_err() {
                 self.teardown(&mut st).await;
             }
@@ -1209,7 +1469,7 @@ impl<A: NmApi> WifiLink for NmLink<A> {
 
     fn release(&self) -> BoxFuture<'_, ()> {
         Box::pin(async move {
-            self.cleanup_stale().await;
+            self.shutdown().await;
         })
     }
 }
@@ -1265,6 +1525,8 @@ mod tests {
         /// `find_ap` finds the AP from this call on (1-based); 0 = never.
         ap_from: usize,
         ip: Option<Ipv4Addr>,
+        /// This operation never returns (the caller drops the future to simulate a timeout).
+        hang: StdMutex<Option<&'static str>>,
     }
 
     impl Fake {
@@ -1277,6 +1539,14 @@ mod tests {
                 *n
             };
             (self.fail)(op, n).map_or(Ok(()), Err)
+        }
+
+        /// Never returns when `hang` names this operation.
+        async fn maybe_hang(&self, op: &'static str) {
+            let hang = *self.hang.lock().unwrap() == Some(op);
+            if hang {
+                std::future::pending::<()>().await;
+            }
         }
     }
 
@@ -1316,7 +1586,9 @@ mod tests {
             Ok(created)
         }
         async fn wait_activated(&self, active: &str, _: Duration) -> io::Result<()> {
-            self.step("wait_activated", active)
+            self.step("wait_activated", active)?;
+            self.maybe_hang("wait_activated").await;
+            Ok(())
         }
         async fn request_scan(&self, _: &WifiDevice) -> io::Result<()> {
             self.step("request_scan", "")
@@ -1331,10 +1603,13 @@ mod tests {
             Ok(self.ip)
         }
         async fn deactivate(&self, active: &str) -> io::Result<()> {
-            self.step("deactivate", active)
+            self.step("deactivate", active)?;
+            self.maybe_hang("deactivate").await;
+            Ok(())
         }
         async fn delete(&self, settings: &str) -> io::Result<()> {
             self.step("delete", settings)?;
+            self.maybe_hang("delete").await;
             self.live.lock().unwrap().remove(settings);
             Ok(())
         }
@@ -1342,7 +1617,9 @@ mod tests {
             self.step("open_port", &port.to_string())
         }
         async fn close_port(&self, port: u16) -> io::Result<()> {
-            self.step("close_port", &port.to_string())
+            self.step("close_port", &port.to_string())?;
+            self.maybe_hang("close_port").await;
+            Ok(())
         }
         async fn activate(&self, _: &WifiDevice, settings: &str) -> io::Result<()> {
             self.step("activate", settings)
@@ -1355,6 +1632,7 @@ mod tests {
         previous: Option<String>,
         ap_from: usize,
         budget: Duration,
+        hang: Option<&'static str>,
     }
 
     fn fake() -> Builder {
@@ -1364,6 +1642,7 @@ mod tests {
             previous: Some("/prev/home".into()),
             ap_from: 1,
             budget: Duration::from_secs(60),
+            hang: None,
         }
     }
 
@@ -1385,6 +1664,7 @@ mod tests {
                 previous: self.previous,
                 ap_from: self.ap_from,
                 ip: Some(Ipv4Addr::new(192, 168, 49, 7)),
+                hang: StdMutex::new(self.hang),
             };
             let timing = Timing {
                 retry_delay: Duration::ZERO,
@@ -1392,6 +1672,13 @@ mod tests {
                 budget: self.budget,
             };
             (NmLink::with_parts(api, timing), log)
+        }
+    }
+
+    impl NmLink<Fake> {
+        fn with_test_notices(mut self, tx: UnboundedSender<LinkNotice>) -> Self {
+            self.notices = Some(tx);
+            self
         }
     }
 
@@ -1597,13 +1884,477 @@ mod tests {
         assert_eq!(count(&log, "close_port"), 1);
     }
 
+    /// The firewall refused (or is not there): `host` must fail without touching
+    /// the AP profile, the previous connection or the zone.
+    async fn assert_host_refused(link: &NmLink<Fake>, log: &Arc<StdMutex<Vec<String>>>) {
+        let err = link.host(4000).await.expect_err("host must refuse");
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
+        assert!(
+            link.api.added.lock().unwrap().is_empty(),
+            "no AP profile may be added, in any zone"
+        );
+        assert!(
+            link.api
+                .added
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|(_, s)| s.zone != OPEN_ZONE)
+        );
+        assert_eq!(count(log, "add_and_activate"), 0);
+        assert_eq!(count(log, "activate"), 0);
+        assert_eq!(count(log, "deactivate"), 0);
+        assert_eq!(live(link), 0);
+    }
+
     #[tokio::test]
-    async fn host_falls_back_to_the_open_zone_when_the_firewall_refuses() {
+    async fn host_refuses_when_firewall_denies_and_touches_nothing() {
         let (link, log) = fake().fail(|op, _| op == "open_port").build();
+        assert_host_refused(&link, &log).await;
+    }
+
+    #[tokio::test]
+    async fn firewalld_absent_refuses_without_consent() {
+        let mut b = fake();
+        b.fail = Box::new(|op, _| {
+            (op == "open_port")
+                .then(|| io::Error::new(io::ErrorKind::NotFound, "firewalld is not running"))
+        });
+        let (link, log) = b.build();
+        assert_host_refused(&link, &log).await;
+    }
+
+    #[tokio::test]
+    async fn join_never_opens_a_port() {
+        let (link, log) = fake().build();
+        link.join(&creds()).await.unwrap();
+        link.release().await;
+        assert_eq!(count(&log, "open_port"), 0);
+        assert_eq!(count(&log, "close_port"), 0);
+        assert!(
+            link.api
+                .added
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|(_, s)| s.zone != OPEN_ZONE)
+        );
+    }
+
+    /// The next notice that is not requirements evidence.
+    fn next_notice(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<LinkNotice>,
+    ) -> Option<LinkNotice> {
+        while let Ok(notice) = rx.try_recv() {
+            if !matches!(notice, LinkNotice::Evidence(_)) {
+                return Some(notice);
+            }
+        }
+        None
+    }
+
+    fn drain(rx: &mut tokio::sync::mpsc::UnboundedReceiver<LinkNotice>) -> Vec<LinkNotice> {
+        std::iter::from_fn(|| rx.try_recv().ok()).collect()
+    }
+
+    fn evidence(e: RuntimeEvidence) -> LinkNotice {
+        LinkNotice::Evidence(e)
+    }
+
+    #[tokio::test]
+    async fn a_successful_host_reports_the_port_then_the_hotspot() {
+        let (link, _) = fake().build();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = link.with_test_notices(tx);
+        link.host(4000).await.unwrap();
+        assert_eq!(
+            drain(&mut rx),
+            [
+                evidence(RuntimeEvidence::FirewallPortOpened),
+                evidence(RuntimeEvidence::HotspotStarted)
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refusal_reports_the_firewall_and_no_failed_hotspot() {
+        let (link, _) = fake().fail(|op, _| op == "open_port").build();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = link.with_test_notices(tx);
+        assert!(link.host(4000).await.is_err());
+        assert_eq!(
+            drain(&mut rx),
+            [
+                evidence(RuntimeEvidence::FirewallRefused(
+                    BlockReason::FirewallDenied
+                )),
+                LinkNotice::WifiUpgradeBlocked(BlockReason::FirewallDenied),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_hotspot_that_does_not_start_is_reported_but_a_missing_device_is_not() {
+        let (link, _) = fake().fail(|op, _| op == "add_and_activate").build();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = link.with_test_notices(tx);
+        assert!(link.host(4000).await.is_err());
+        assert_eq!(
+            drain(&mut rx).last(),
+            Some(&evidence(RuntimeEvidence::HotspotFailed))
+        );
+
+        let mut b = fake();
+        b.fail = Box::new(|op, _| {
+            (op == "wifi_device").then(|| io::Error::new(io::ErrorKind::NotFound, "gone"))
+        });
+        let (link, _) = b.build();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = link.with_test_notices(tx);
+        assert!(link.host(4000).await.is_err());
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_busy_link_reports_nothing() {
+        let (link, _) = fake().build();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = link.with_test_notices(tx);
+        let held = link.begin().unwrap();
+        assert!(link.host(4000).await.is_err());
+        drop(held);
+        assert!(drain(&mut rx).is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_wifi_device_is_the_first_of_type_2_and_later_ones_are_not_read() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        // (name, type or an error): a type that cannot be read is skipped; the P2P type 30 is
+        // not a Wi-Fi device; the device after the first Wi-Fi one is never asked for.
+        let devices: Vec<(&str, Option<u32>)> = vec![
+            ("lo", Some(14)),
+            ("gone", None),
+            ("p2p", Some(30)),
+            ("wlan0", Some(2)),
+            ("veth", None),
+            ("wlan1", Some(2)),
+        ];
+        let asked = AtomicUsize::new(0);
+        let (asked_ref, devices_ref) = (&asked, &devices);
+        let found = first_wifi(
+            devices.iter().map(|(n, _)| (*n).to_owned()).collect(),
+            |name: String| async move {
+                asked_ref.fetch_add(1, Ordering::SeqCst);
+                let kind = devices_ref
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .and_then(|(_, t)| *t);
+                kind.ok_or(zbus::Error::InvalidReply)
+            },
+        )
+        .await;
+        assert_eq!(found.as_deref(), Some("wlan0"));
+        assert_eq!(asked.load(Ordering::SeqCst), 4);
+        let none = first_wifi(vec!["a".to_owned()], |_: String| async { Ok(1) }).await;
+        assert_eq!(none, None);
+    }
+
+    #[tokio::test]
+    async fn the_refusal_is_reported_with_a_stable_reason() {
+        let denied = || fake().fail(|op, _| op == "open_port");
+        let absent = || {
+            let mut b = fake();
+            b.fail = Box::new(|op, _| {
+                (op == "open_port").then(|| io::Error::new(io::ErrorKind::NotFound, "gone"))
+            });
+            b
+        };
+        for (b, code) in [
+            (denied(), "firewall_denied"),
+            (absent(), "firewall_missing"),
+        ] {
+            let (link, _) = b.build();
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let link = link.with_test_notices(tx);
+            assert!(link.host(4000).await.is_err());
+            let Some(LinkNotice::WifiUpgradeBlocked(reason)) = next_notice(&mut rx) else {
+                panic!("no notice for {code}");
+            };
+            assert_eq!(reason.code(), code);
+            assert!(next_notice(&mut rx).is_none(), "one notice per refusal");
+        }
+    }
+
+    #[tokio::test]
+    async fn consent_allows_open_zone_when_denied() {
+        let (link, log) = fake().fail(|op, _| op == "open_port").build();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = link.with_test_notices(tx);
+        link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
         link.host(4000).await.unwrap();
         assert_eq!(link.api.added.lock().unwrap()[0].1.zone, OPEN_ZONE);
+        assert!(next_notice(&mut rx).is_none(), "nothing was blocked");
         link.release().await;
+        // The port was never opened, so there is none to close.
         assert_eq!(count(&log, "close_port"), 0);
+    }
+
+    #[tokio::test]
+    async fn no_firewalld_with_consent_leaves_zone_empty() {
+        let mut b = fake();
+        b.fail = Box::new(|op, _| {
+            (op == "open_port")
+                .then(|| io::Error::new(io::ErrorKind::NotFound, "firewalld is not running"))
+        });
+        let (link, _) = b.build();
+        link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
+        link.host(4000).await.unwrap();
+        let added = link.api.added.lock().unwrap().clone();
+        assert_eq!(added[0].1.zone, "");
+        assert!(added.iter().all(|(_, s)| s.zone != OPEN_ZONE));
+    }
+
+    #[tokio::test]
+    async fn consent_does_not_change_the_targeted_port_when_it_can_be_opened() {
+        let (link, _) = fake().build();
+        link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
+        link.host(4000).await.unwrap();
+        assert_eq!(link.api.added.lock().unwrap()[0].1.zone, SHARED_ZONE);
+    }
+
+    #[tokio::test]
+    async fn consent_taken_back_refuses_the_next_hotspot() {
+        // The consent counts when a hotspot starts: once taken back, the next one is refused.
+        let (link, _) = fake().fail(|op, _| op == "open_port").build();
+        assert_eq!(link.hotspot_policy(), HotspotPolicy::TargetedPortOnly);
+        link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
+        link.host(4000).await.unwrap();
+        link.release().await;
+        link.set_hotspot_policy(HotspotPolicy::TargetedPortOnly);
+        let e = link.host(4000).await.unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[tokio::test]
+    async fn dropped_host_is_cleaned_by_release() {
+        let mut b = fake();
+        b.hang = Some("wait_activated");
+        let (link, log) = b.build();
+        // The host future is dropped half-way (the upgrade timed out or was cancelled).
+        let timed_out = tokio::time::timeout(Duration::from_millis(50), link.host(4000)).await;
+        assert!(timed_out.is_err(), "the host call was meant to hang");
+        assert_eq!(count(&log, "open_port 4000"), 1);
+        assert_eq!(live(&link), 1);
+        assert_eq!(count(&log, "close_port"), 0);
+        // The link still looks busy until it is released.
+        assert_eq!(
+            link.host(5).await.unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+
+        link.release().await;
+        assert_eq!(count(&log, "close_port 4000"), 1);
+        assert_eq!(live(&link), 0);
+        assert_eq!(count(&log, "activate /prev/home"), 1);
+        // Free again, and a second release does nothing.
+        let n = quiet_len(&log);
+        link.release().await;
+        assert_eq!(quiet_len(&log), n);
+    }
+
+    #[tokio::test]
+    async fn shutdown_closes_port_and_restores_previous() {
+        let (link, log) = fake().build();
+        link.host(4000).await.unwrap();
+        assert_eq!(count(&log, "close_port"), 0);
+        // The shutdown goes through the very link the transfer used, not through a new one.
+        link.shutdown().await;
+        assert_eq!(count(&log, "close_port 4000"), 1);
+        assert_eq!(count(&log, "deactivate /act/1"), 1);
+        assert_eq!(count(&log, "delete /set/1"), 1);
+        assert_eq!(count(&log, "activate /prev/home"), 1);
+        assert_eq!(live(&link), 0);
+        // Idempotent.
+        let n = quiet_len(&log);
+        link.shutdown().await;
+        assert_eq!(quiet_len(&log), n);
+    }
+
+    #[tokio::test]
+    async fn shutdown_sweeps_leftover_profiles_even_when_nothing_is_up() {
+        let mut b = fake();
+        b.stale = vec!["/leaked/1".into()];
+        let (link, log) = b.build();
+        link.shutdown().await;
+        assert_eq!(count(&log, "delete /leaked/1"), 1);
+        assert_eq!(count(&log, "close_port"), 0);
+        assert_eq!(count(&log, "activate"), 0);
+    }
+
+    #[tokio::test]
+    async fn dropping_shutdown_while_host_holds_the_link_loses_nothing() {
+        let mut b = fake();
+        b.hang = Some("wait_activated");
+        let (link, log) = b.build();
+        let link = Arc::new(link);
+        let host = tokio::spawn({
+            let link = link.clone();
+            async move { link.host(4000).await }
+        });
+        settled().await;
+        // The shutdown waits for the link and gives up (the daemon's bound runs out).
+        let waited = tokio::time::timeout(Duration::from_millis(50), link.shutdown()).await;
+        assert!(waited.is_err());
+        assert_eq!(count(&log, "close_port"), 0);
+        // Then the host goes too (its future is dropped).
+        host.abort();
+        let _ = host.await;
+        assert_eq!(live(&link), 1);
+
+        link.release().await;
+        assert_eq!(count(&log, "close_port 4000"), 1);
+        assert_eq!(live(&link), 0);
+        assert_eq!(count(&log, "activate /prev/home"), 1);
+    }
+
+    #[tokio::test]
+    async fn dropping_the_teardown_half_way_lets_release_finish_it() {
+        let (link, log) = fake().build();
+        link.host(4000).await.unwrap();
+        // The profile cannot be deleted in time: the port is closed and the profile is stopped.
+        *link.api.hang.lock().unwrap() = Some("delete");
+        let waited = tokio::time::timeout(Duration::from_millis(50), link.shutdown()).await;
+        assert!(waited.is_err());
+        assert_eq!(count(&log, "close_port 4000"), 1);
+        assert_eq!(count(&log, "deactivate /act/1"), 1);
+        assert_eq!(count(&log, "activate /prev/home"), 0);
+        assert_eq!(live(&link), 1);
+
+        *link.api.hang.lock().unwrap() = None;
+        link.release().await;
+        // The port is not closed twice; the rest is done.
+        assert_eq!(count(&log, "close_port"), 1);
+        assert_eq!(count(&log, "delete /set/1"), 2);
+        assert_eq!(live(&link), 0);
+        assert_eq!(count(&log, "activate /prev/home"), 1);
+    }
+
+    #[tokio::test]
+    async fn dropping_the_teardown_while_closing_the_port_keeps_the_port_for_release() {
+        let (link, log) = fake().build();
+        link.host(4000).await.unwrap();
+        *link.api.hang.lock().unwrap() = Some("close_port");
+        let waited = tokio::time::timeout(Duration::from_millis(50), link.shutdown()).await;
+        assert!(waited.is_err());
+        *link.api.hang.lock().unwrap() = None;
+        link.release().await;
+        assert_eq!(count(&log, "close_port 4000"), 2);
+        assert_eq!(live(&link), 0);
+        assert_eq!(count(&log, "activate /prev/home"), 1);
+    }
+
+    #[tokio::test]
+    async fn taking_back_the_consent_stops_a_hotspot_in_an_open_zone() {
+        let (link, log) = fake().fail(|op, _| op == "open_port").build();
+        link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
+        link.host(4000).await.unwrap();
+        assert_eq!(live(&link), 1);
+
+        // Still allowed: nothing happens.
+        link.drop_open_zone_hotspot().await;
+        assert_eq!(live(&link), 1);
+
+        link.set_hotspot_policy(HotspotPolicy::TargetedPortOnly);
+        link.drop_open_zone_hotspot().await;
+        assert_eq!(live(&link), 0);
+        assert_eq!(count(&log, "deactivate /act/1"), 1);
+        assert_eq!(count(&log, "activate /prev/home"), 1);
+        // The link is free for the next upgrade, which is now refused.
+        let e = link.host(4000).await.unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[tokio::test]
+    async fn taking_back_the_consent_leaves_a_targeted_hotspot_alone() {
+        let (link, _) = fake().build();
+        link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
+        link.host(4000).await.unwrap();
+        link.set_hotspot_policy(HotspotPolicy::TargetedPortOnly);
+        link.drop_open_zone_hotspot().await;
+        assert_eq!(live(&link), 1);
+    }
+
+    #[tokio::test]
+    async fn a_consent_taken_back_while_the_port_is_refused_is_honoured() {
+        // The policy is read at the zone choice, after the calls that precede it.
+        let (link, _) = fake().fail(|op, _| op == "open_port").build();
+        link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
+        link.set_hotspot_policy(HotspotPolicy::TargetedPortOnly);
+        let e = link.host(4000).await.unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(live(&link), 0);
+    }
+
+    #[test]
+    fn firewall_errors_are_told_apart() {
+        use zbus::fdo::Error as Fdo;
+        let fdo = |e: Fdo| zbus::Error::FDO(Box::new(e));
+        let missing = [
+            fdo(Fdo::ServiceUnknown("x".into())),
+            fdo(Fdo::NameHasNoOwner("x".into())),
+            fdo(Fdo::Disconnected("x".into())),
+            fdo(Fdo::NoServer("x".into())),
+            fdo(Fdo::SpawnExecFailed("x".into())),
+            fdo(Fdo::SpawnFailed("x".into())),
+            zbus::Error::InputOutput(Arc::new(io::Error::other("no socket"))),
+            zbus::Error::Address("bad".into()),
+        ];
+        for e in missing {
+            assert_eq!(classify_firewall_error(&e), FirewallFault::Missing, "{e:?}");
+            assert_eq!(firewall_err(e).kind(), io::ErrorKind::NotFound);
+        }
+        let denied = [
+            fdo(Fdo::AccessDenied("x".into())),
+            fdo(Fdo::AuthFailed("x".into())),
+        ];
+        for e in denied {
+            assert_eq!(classify_firewall_error(&e), FirewallFault::Denied, "{e:?}");
+            assert_ne!(firewall_err(e).kind(), io::ErrorKind::NotFound);
+        }
+        // Anything else is a refusal too, never "missing".
+        for e in [
+            fdo(Fdo::Failed("x".into())),
+            zbus::Error::Failure("x".into()),
+        ] {
+            assert_eq!(classify_firewall_error(&e), FirewallFault::Other, "{e:?}");
+            assert_ne!(firewall_err(e).kind(), io::ErrorKind::NotFound);
+        }
+    }
+
+    #[test]
+    fn a_firewalld_refusal_by_polkit_is_a_denial() {
+        let call = zbus::Message::method_call("/org/fedoraproject/FirewallD1", "addPort")
+            .build(&())
+            .unwrap();
+        let name = |n: &str| zbus::names::OwnedErrorName::try_from(n).unwrap();
+        let by_message = zbus::Error::MethodError(
+            name("org.fedoraproject.FirewallD1.Exception"),
+            Some("NOT_AUTHORIZED: addPort()".into()),
+            call.clone(),
+        );
+        assert_eq!(classify_firewall_error(&by_message), FirewallFault::Denied);
+        let by_name = zbus::Error::MethodError(
+            name("org.freedesktop.PolicyKit1.Error.InteractiveAuthorizationRequired"),
+            None,
+            call.clone(),
+        );
+        assert_eq!(classify_firewall_error(&by_name), FirewallFault::Denied);
+        let other = zbus::Error::MethodError(
+            name("org.fedoraproject.FirewallD1.Exception"),
+            Some("INVALID_ZONE: nm-shared".into()),
+            call,
+        );
+        assert_eq!(classify_firewall_error(&other), FirewallFault::Other);
     }
 
     #[tokio::test]
@@ -1729,7 +2480,7 @@ mod tests {
         b.stale = vec!["/old/1".into()];
         let (link, log) = b.build();
         link.host(1).await.unwrap();
-        link.cleanup_stale().await;
+        link.shutdown().await;
         assert_eq!(count(&log, "delete /old/1"), 2); // sweep at host + at cleanup
         assert_eq!(live(&link), 0);
         link.host(1).await.unwrap(); // free again

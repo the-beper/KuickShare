@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""A stand-in for the flatpak CLI, for build/release/simulate.sh. It does not know OSTree: it uses the directory layout
+of testdata/fake-ostree and real GnuPG for the signatures, so a wrong key, a missing signature or a missing step shows
+up the way it would for a client:
+
+  build-sign        signs the commit of a ref (objects/<id>.commitmeta, a detached signature of <id>.commit)
+  build-update-repo refuses when a ref has a commit that is not signed (the real tool embeds the commit metadata in the
+                    deltas, so signing must come first), then writes summary and summary.idx with their .sig files
+  remote-add        imports the --gpg-import key into a keyring of its own, under $FLATPAK_USER_DIR
+  remote-ls         verifies summary.sig with that keyring
+  install           verifies the .commitmeta of the ref's commit with that keyring
+"""
+import os
+import subprocess
+import sys
+
+LOG = os.environ.get("FAKE_FLATPAK_LOG")
+
+
+def die(message, code=1):
+    print("fake-flatpak: " + message, file=sys.stderr)
+    sys.exit(code)
+
+
+def log(line):
+    if LOG:
+        with open(LOG, "a") as f:
+            f.write(line + "\n")
+
+
+def options(args):
+    opts, positional = {}, []
+    for arg in args:
+        if arg.startswith("--"):
+            key, _, value = arg[2:].partition("=")
+            opts[key] = value
+        elif arg.startswith("-"):
+            continue
+        else:
+            positional.append(arg)
+    return opts, positional
+
+
+def read(path):
+    with open(path) as f:
+        return f.read().strip()
+
+
+def refs_of(repo):
+    base = os.path.join(repo, "refs", "heads")
+    found = []
+    for root, _, files in os.walk(base):
+        for name in files:
+            ref = os.path.relpath(os.path.join(root, name), base)
+            if ref.startswith(("app/", "runtime/")):
+                found.append((ref, read(os.path.join(root, name))))
+    return sorted(found)
+
+
+def gpg_sign(key, home, source, target):
+    cmd = ["gpg", "--batch", "--yes", "--quiet", "--pinentry-mode", "error", "--local-user", key, "--detach-sign", "-o", target, source]
+    if home:
+        cmd[1:1] = ["--homedir", home]
+    if subprocess.run(cmd).returncode != 0:
+        die("signing %s failed" % source)
+
+
+def gpg_verify(home, signature, source):
+    if not os.path.isfile(signature):
+        return False
+    done = subprocess.run(["gpg", "--homedir", home, "--batch", "--status-fd", "1", "--verify", signature, source],
+                          capture_output=True, text=True)
+    return done.returncode == 0 and "[GNUPG:] VALIDSIG" in done.stdout
+
+
+def client_home():
+    return os.path.join(os.environ["FLATPAK_USER_DIR"], "gnupg")
+
+
+def remote_url(name):
+    return read(os.path.join(os.environ["FLATPAK_USER_DIR"], "remote-" + name))
+
+
+def main():
+    args = sys.argv[1:]
+    command, opts, positional = args[0], *options(args[1:])
+    log(" ".join(args))
+    if command == "build-sign":
+        repo, app_id, branch = positional[0], positional[1], positional[2]
+        kind = "runtime" if "runtime" in opts else "app"
+        ref = "%s/%s/%s/%s" % (kind, app_id, opts.get("arch", "x86_64"), branch)
+        path = os.path.join(repo, "refs", "heads", ref)
+        if not os.path.isfile(path):
+            die("build-sign: no ref " + ref)
+        commit = read(path)
+        gpg_sign(opts["gpg-sign"], opts.get("gpg-homedir"), os.path.join(repo, "objects", commit + ".commit"),
+                 os.path.join(repo, "objects", commit + ".commitmeta"))
+    elif command == "build-update-repo":
+        repo = positional[0]
+        for ref, commit in refs_of(repo):
+            if not os.path.isfile(os.path.join(repo, "objects", commit + ".commitmeta")):
+                die("build-update-repo: the commit of %s is not signed" % ref)
+        if os.environ.get("FAKE_FLATPAK_LEAK"):  # a tool that copies a secret into the site, to see the check catch it
+            with open(os.path.join(repo, "leak.txt"), "w") as f:
+                f.write("-----BEGIN PGP PRIVATE KEY BLOCK-----\n")
+        summary = "".join("%s %s\n" % pair for pair in refs_of(repo))
+        for name in ("summary", "summary.idx"):
+            with open(os.path.join(repo, name), "w") as f:
+                f.write(summary)
+            gpg_sign(opts["gpg-sign"], opts.get("gpg-homedir"), os.path.join(repo, name), os.path.join(repo, name + ".sig"))
+    elif command == "remote-add":
+        name, url = positional[0], positional[1]
+        home = client_home()
+        os.makedirs(home, mode=0o700, exist_ok=True)
+        if "gpg-import" in opts:
+            done = subprocess.run(["gpg", "--homedir", home, "--batch", "--quiet", "--import", opts["gpg-import"]])
+            if done.returncode != 0:
+                die("remote-add: cannot import the key")
+        with open(os.path.join(os.environ["FLATPAK_USER_DIR"], "remote-" + name), "w") as f:
+            f.write(url + "\n")
+    elif command == "remote-ls":
+        repo = remote_url(positional[0])
+        if not repo.startswith("file://"):
+            die("remote-ls: only file:// remotes", 99)
+        repo = repo[len("file://"):]
+        if not gpg_verify(client_home(), os.path.join(repo, "summary.sig"), os.path.join(repo, "summary")):
+            die("remote-ls: the summary is not signed by a key of the remote")
+        for ref, _ in refs_of(repo):
+            print(ref)
+    elif command == "install":
+        repo = remote_url(positional[0])[len("file://"):]
+        ref = positional[1]
+        path = os.path.join(repo, "refs", "heads", ref)
+        if not os.path.isfile(path):
+            die("install: no ref " + ref)
+        commit = read(path)
+        if not gpg_verify(client_home(), os.path.join(repo, "objects", commit + ".commitmeta"),
+                          os.path.join(repo, "objects", commit + ".commit")):
+            die("install: the commit of %s is not signed by a key of the remote" % ref)
+    else:
+        die("unsupported command: " + command, 99)
+
+
+main()

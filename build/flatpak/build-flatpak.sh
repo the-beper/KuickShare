@@ -2,6 +2,8 @@
 # Builds an OSTree repository (dist/flatpak-repo, or $KUICKSHARE_FLATPAK_REPO) and dist/KuickShare-x86_64.flatpak
 # inside a throw-away container. Runtimes and the Flatpak build cache live in the podman volume "kuickshare-flatpak", not on the host.
 # Usage: build/flatpak/build-flatpak.sh [flatpak-builder options...]
+# Without --gpg-sign the exported commits are unsigned. The release does that on purpose: this build job has no key, and
+# build/release/sign-flatpak-repo.sh signs the commits in another job (see CONTRIBUTING.md, Releases).
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)
 image=localhost/kuickshare-flatpak:fedora45
@@ -25,7 +27,7 @@ repo=$(readlink -m "${KUICKSHARE_FLATPAK_REPO:-dist/flatpak-repo}")
 
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 mkdir -p dist/tmp
-# Pinned: this code runs in the release job, which holds the signing key.
+# Pinned: this code is third-party and runs in the release build job (which has no signing key, but builds what is published).
 tools_rev=74697c75b630d7330e77250fc13cb5ea688d9479
 [ -d "$tools" ] || git clone -q https://github.com/flatpak/flatpak-builder-tools "$tools"
 git -C "$tools" checkout -q "$tools_rev"

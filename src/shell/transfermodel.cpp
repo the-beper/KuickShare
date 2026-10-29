@@ -76,6 +76,10 @@ QVariant TransferModel::data(const QModelIndex &index, int role) const
     }
     case SavedPathsRole:
         return entry.info.value(QStringLiteral("saved_paths")).toString().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    case ConsentRole:
+        return entry.info.value(QStringLiteral("consent")).toULongLong();
+    case ReasonRole:
+        return entry.info.value(QStringLiteral("reason")).toString();
     }
     return {};
 }
@@ -101,6 +105,8 @@ QHash<int, QByteArray> TransferModel::roleNames() const
         {SpeedRole, "speed"},
         {EtaSecondsRole, "etaSeconds"},
         {SavedPathsRole, "savedPaths"},
+        {ConsentRole, "consent"},
+        {ReasonRole, "reason"},
     };
 }
 
@@ -222,6 +228,21 @@ void TransferModel::update(const QString &id, const QVariantMap &info)
             {
                 return;
             }
+            break;
+        }
+        // The core made a new consent for this id: another transfer reuses it (ids like `ble-1`
+        // restart at every run), so the old row is over and nothing of it carries into the new one.
+        const QString oldState = m_entries[row].info.value(QStringLiteral("state")).toString();
+        const quint64 oldConsent = m_entries[row].info.value(QStringLiteral("consent")).toULongLong();
+        const quint64 newConsent = info.value(QStringLiteral("consent")).toULongLong();
+        const bool newOffer = info.value(QStringLiteral("state")).toString() == QLatin1String("WaitingForUserConsent") && newConsent != 0
+                              && info.value(QStringLiteral("kind")).toString() == QLatin1String("inbound");
+        if (newOffer && ((oldConsent != 0 && oldConsent != newConsent) || oldState != QLatin1String("WaitingForUserConsent")))
+        {
+            m_entries[row].info.insert(QStringLiteral("state"), QStringLiteral("Disconnected"));
+            emit dataChanged(index(row), index(row));
+            updateBusy();
+            emit transferEnded(id, QStringLiteral("Disconnected"));
             break;
         }
         // Later events may omit fields (e.g. no metadata yet): keep the last known values.

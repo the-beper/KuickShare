@@ -240,7 +240,12 @@ pub fn received_file_name(name: &str, mime_type: &str) -> Option<String> {
                 .or(if exts.len() == 1 { exts.first() } else { None })
         });
     Some(match new_ext {
-        Some(e) => format!("{}.{e}", path.file_stem()?.to_str()?),
+        Some(e) => {
+            // The name must stay within what a file system takes.
+            let room = crate::safety::MAX_NAME_BYTES.saturating_sub(e.len() + 1);
+            let stem = crate::safety::clip(path.file_stem()?.to_str()?, room);
+            format!("{stem}.{e}")
+        }
         None => base.to_owned(),
     })
 }
@@ -293,12 +298,11 @@ pub fn get_download_dir() -> PathBuf {
         }
     }
 
-    if let Some(user_dirs) = directories::UserDirs::new() {
-        if let Some(dd) = user_dirs.download_dir() {
-            return dd.to_path_buf();
-        }
-
-        return user_dirs.home_dir().to_path_buf();
+    if let Some(dd) = dirs::download_dir() {
+        return dd;
+    }
+    if let Some(home) = dirs::home_dir() {
+        return home;
     }
 
     Path::new("/").to_path_buf()
@@ -340,6 +344,20 @@ pub fn create_text_preview(text: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The extension taken from the MIME type must not push the name over 255 bytes.
+    #[test]
+    fn mime_extension_keeps_the_name_within_the_limit() {
+        let long = "é".repeat(127); // 254 bytes, no extension
+        let name = super::received_file_name(&long, "image/jpeg").unwrap();
+        assert!(
+            name.len() <= crate::safety::MAX_NAME_BYTES,
+            "{}",
+            name.len()
+        );
+        assert!(name.ends_with(".jpg"), "{name}");
+        assert!(!crate::safety::unsafe_file_name(&name));
+    }
+
     use super::*;
 
     #[test]

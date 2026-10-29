@@ -35,6 +35,8 @@ public:
         SpeedRole,
         EtaSecondsRole,
         SavedPathsRole,
+        ConsentRole,
+        ReasonRole,
     };
 
     explicit TransferModel(QObject *parent = nullptr);

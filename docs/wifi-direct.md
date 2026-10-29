@@ -7,6 +7,7 @@
 |---|---|
 | [What it does](#what-it-does) | The flow and the two directions |
 | [Requirements](#requirements) | Software, privileges, firewall, Flatpak |
+| [Checking the requirements](#checking-the-requirements) | What the app checks before you turn it on, and what it cannot |
 | [Behaviour](#behaviour) | Discovery, sending, trust, cancel |
 | [Timings](#timings-and-timeouts) | Scan windows, dial, watchdogs |
 | [Sending over GATT](#sending-over-gatt) | Phones without an L2CAP channel |
@@ -42,18 +43,161 @@ sequenceDiagram
 | BLE sender: windowed scan, L2CAP and GATT dial, central bridges | `hdl/ble_scan.rs`, `hdl/ble_send/` |
 | Bluetooth devices in the app: `ble:` ids, `ScanBluetooth`, job steps, Send page | `src/core/app.rs`, `src/core/dbus.rs`, `src/shell/` (see [D-Bus API](dbus-api.md)) |
 | NetworkManager backend (`NmLink`): hotspot and join over D-Bus | `src/core/link.rs` |
-| Setting | `wifi_upgrade` in `settings.json`, D-Bus property `WifiUpgrade` |
+| Setting | `wifi_upgrade` in `settings.json`, D-Bus property `WifiUpgrade`; the firewall consent of a session is set with `RequestWifiUpgrade` (see [D-Bus API](dbus-api.md)) |
 
 ## Requirements
 
 | Item | Detail |
 |---|---|
-| Network stack | NetworkManager with a Wi-Fi card that can run an access point; the `dnsmasq` package on the host (NetworkManager starts it for the `shared` IPv4 method; without it the hotspot fails and the log names it) |
+| Network stack | NetworkManager with a Wi-Fi card that can run an access point; the `dnsmasq` package on the host (NetworkManager starts it for the `shared` IPv4 method). The [requirements check](#checking-the-requirements) looks for the binary at the standard paths, but cannot tell whether NetworkManager will start it: if the hotspot does not activate, the log carries only NetworkManager's reason code (`connection was deactivated (NetworkManager reason code N)`); a missing `dnsmasq` as the cause of such a failure is *(inferred)* |
 | Medium | Receiving: `WIFI_HOTSPOT` (we host). Sending: `WIFI_DIRECT` or `WIFI_HOTSPOT` as the phone offers. A P2P group on our side is not used, see [below](#why-not-a-p2p-group) |
 | Privileges | None |
-| Firewall | While the hotspot is up, the upgrade port (TCP, random per transfer) is opened in firewalld's `nm-shared` zone through its D-Bus API and closed at the end (it also expires after 300 s). The profile is put in that zone, which otherwise allows only DHCP, DNS, ssh and ICMP. If firewalld cannot be changed (not running, or polkit refuses `org.fedoraproject.FirewallD1.zone`; Fedora allows `wheel` users) the profile goes to the `trusted` zone and the log says so: the phone can then reach every service of the computer. Other firewalls (ufw, plain nftables) cannot be changed without root, so the zone is always `trusted`. Turning the setting on while firewalld is not running asks for confirmation (`FirewallManaged` over D-Bus) |
-| Wi-Fi on the host | With one radio the normal connection drops while the link is up and is re-activated when the transfer ends normally (not after a crash: NetworkManager then reconnects by itself). The daemon deletes every NetworkManager profile named `kuickshare-*` at start and stop |
+| Firewall | Before NetworkManager is touched, the upgrade port (TCP, random per transfer) is opened in firewalld's `nm-shared` zone through its D-Bus API; it is closed at the end (it also expires after 300 s). The profile is put in that zone, which otherwise allows only DHCP, DNS, ssh and ICMP. There is no automatic fallback to another zone. If the port cannot be opened (firewalld not running, or it or polkit refuses `org.fedoraproject.FirewallD1.zone`; Fedora allows `wheel` users; any other firewalld error counts as a refusal and is logged) the hotspot is refused, nothing is changed in NetworkManager and the transfer stays on Bluetooth; the core emits `WifiUpgradeBlocked` with `firewall_denied` (firewalld refused) or `firewall_missing` (not running). Other firewalls (ufw, plain nftables) cannot be changed without root, so there the hotspot is always refused unless the user consents |
+| Firewall consent | The user can allow an open zone for the rest of the session (`RequestWifiUpgrade(true, true)`, [D-Bus API](dbus-api.md#methods)); the shell asks when the setting is turned on while firewalld is not running (`FirewallManaged`) and after a `WifiUpgradeBlocked`. With it, a firewalld refusal puts the profile in the `trusted` zone (the phone reaches every service of the computer) and a missing firewalld leaves the zone to NetworkManager (another firewall may still block the phone). The consent is kept in memory only and does not survive a restart of the daemon and is revoked by `ResetSettings`, turning the upgrade off and any write of the legacy `WifiUpgrade` property; revoking it takes down a hotspot that already runs in an open zone (the transfer goes on over its first channel) |
+| Wi-Fi on the host | With one radio the normal connection drops while the link is up and is re-activated when the transfer ends normally (not after a crash: NetworkManager then reconnects by itself). The daemon deletes every NetworkManager profile named `kuickshare-*` at start (unconditionally, whatever the settings say, before it takes its D-Bus name) and at stop; the cleanup times are in [Timings](#timings-and-timeouts) |
 | Flatpak | The manifest grants `--system-talk-name` for NetworkManager and `org.fedoraproject.FirewallD1`, which do the privileged work on the host, so only `dnsmasq` is needed there. Sending over Bluetooth also needs `--allow=bluetooth` (the L2CAP socket). Receiving was verified in the sandbox; sending was not (see [Limits](#limits-and-unverified)) |
+
+## Checking the requirements
+
+The core reads what the upgrade needs from the computer, judges it, and reports it as a list of requirements and three capabilities (the JSON is in [D-Bus API](dbus-api.md#wi-fi-requirements-report); the shell shows it in Preferences and in the "System requirements" dialog, see the [user guide](usage.md#checking-the-requirements)). All the judging is in the core (`src/core/requirements/`); the shell only renders. The check says what to expect, not what will happen: see [what is never verified](#what-is-never-verified).
+
+### The capabilities
+
+| Capability | Meaning |
+|---|---|
+| Sending | This computer can send to a phone: scan over Bluetooth, dial, and join the Wi-Fi the phone offers |
+| Receiving | A phone can send to this computer: it advertises over Bluetooth and hosts the hotspot |
+| Join network | This computer can join a Wi-Fi network received from a phone ([Join network](usage.md#receiving)); it does not depend on the upgrade setting |
+
+Every requirement names the capabilities it feeds (`Affects` below) and has a category: `critical` for all of them except `bluez.l2cap` (`warning`) and the firewall and sandbox rows (`security`). A capability is, from the rows that feed it:
+
+| Capability | When |
+|---|---|
+| Unavailable | A critical row is Blocked |
+| Unknown | No critical row is Blocked and one is Unknown |
+| Limited (`degraded` on the bus) | Otherwise: any row is a Warning, or a row that is not critical is Blocked or Unknown |
+| Available | None of the above |
+
+So a missing service blocks only what needs it, a switch that could not be read never makes a capability Unavailable, and the firewall (a security row) can lower Receiving to Limited but never to Unavailable. A row whose dependency is not Ready is not checked (`skipped`).
+
+### The requirements
+
+Any row can also be Unknown for a generic reason: `timeout` (the call or the whole check ran out of time), `bus_unreachable` (no system bus), `malformed_reply`, `query_failed`, or `skipped`. Unknown never turns into Blocked: what could not be observed is not a verdict. The table lists the codes specific to a row (`reason_code`); `S`, `R`, `J` are Sending, Receiving, Join network.
+
+| Id | What it checks | Affects | Ready | Warning | Blocked | Unknown (specific) |
+|---|---|---|---|---|---|---|
+| `bluez.service` | `org.bluez` has an owner | S R | Running | Installed, not running (`not_running_activatable`) | Not running (`not_running`); Flatpak may not talk to it (`sandbox_denied`) | |
+| `bluez.adapter` | An adapter exists: `hci0`, else the first by name (the rule `bluer` uses in the runtime, copied by hand in `rules.rs`) | S R | One found | | None (`no_adapter`) | |
+| `bluez.powered` | `Powered` and `PowerState` of that adapter | S R | On | Off (`powered_off`) | Blocked by rfkill (`rfkill_blocked`) | |
+| `bluez.le` | `Roles` of the adapter | S R | Central or peripheral | | No LE role (`no_le_roles`) | BlueZ gives no roles (`roles_unreported`) |
+| `bluez.advertising` | `LEAdvertisingManager1` of the adapter | R | Manager present, a free slot | No free slot (`no_free_slot`) | Adapter on, no manager (`unsupported`) | |
+| `bluez.scanning` | `Roles` and `GetDiscoveryFilters` | S | Filters read | | Roles listed, none central (`no_central_role`) | BlueZ gives no filters (`filters_unreported`) |
+| `bluez.transport` | `GattManager1` of the adapter | R | Present | | Adapter on, absent (`no_gatt_manager`) | |
+| `bluez.l2cap` | The kernel lists the `L2CAP` protocol; in a Flatpak, the Bluetooth permission | S | Listed | Flatpak without Bluetooth (`sandbox_denied`) | | Not listed, or not readable (`kernel_unreported`) |
+| `nm.service` | NetworkManager has an owner (its version goes in `details`) | S R J | Running | Installed, not running (`not_running_activatable`) | Not running (`not_running`); `sandbox_denied` | |
+| `nm.networking` | `NetworkingEnabled` | S R J | On | | Off (`disabled`) | |
+| `nm.wifi_enabled` | `WirelessEnabled` | S R J | On | | Off (`disabled`) | |
+| `nm.hardware_enabled` | `WirelessHardwareEnabled` | S R J | On | | Hardware switch off (`switch_off`) | |
+| `nm.device` | A Wi-Fi device exists, picked by [the shared rule](#the-wi-fi-device) | S R J | One found; with several Wi-Fi devices still Ready (`ok_first_of_many`) | | None (`no_wifi_device`) | |
+| `nm.managed` | `Managed` of that device | S R J | Managed | | Not managed (`unmanaged`) | |
+| `nm.firmware` | `FirmwareMissing` of that device | S R J | Present | | Missing (`firmware_missing`) | |
+| `nm.driver` | `NmPluginMissing` and `State` of that device | S R J | Plugin present, state not "unavailable" | State "unavailable" while the radio is not switched off (`unavailable`; the state reason is in `details`) | Plugin missing (`plugin_missing`) | |
+| `nm.permissions` | `GetPermissions` (no interaction): `network-control` and `settings.modify.system` | S R J | Both `yes` | Any is `auth` (`auth_required`) | Any is `no` (`denied`) | |
+| `wifi.client` | Derived: the NetworkManager rows above, and in a Flatpak the network permission | S J | None of them Blocked or Unknown | | One is Blocked (`prerequisite_blocked`); Flatpak without network (`sandbox_no_network`) | One is Unknown (`prerequisite_uncertain`) |
+| `wifi.ap` | `WirelessCapabilities` of the device and the `wifi.share.protected` permission | R | AP mode, WPA2 (CCMP and RSN), a band, share permission `yes` | No capability bits reported (`caps_unreported`); share permission `auth` (`share_auth_required`) | No AP mode (`no_ap_mode`), no WPA2 (`no_wpa2`), no 2.4 or 5 GHz (`no_band`, only when the adapter says the band bits are valid), share permission `no` (`share_denied`); `sandbox_no_network` | |
+| `wifi.dhcp` | A `dnsmasq` executable at the standard paths (`DNSMASQ_PATHS` in `system.rs`), or a hotspot that started this session | R | Found (`binary_present`), or a hotspot started this session (`worked_this_session`) | Not found (`not_found`); NetworkManager reported that sharing failed to start (`shared_start_failed`, from its state reason 18 or 19 *(inferred from the NetworkManager headers, not checked against a running system)*) | | In a Flatpak (`sandbox_unobservable`) |
+| `firewall.integration` | firewalld, its zone list and what polkit says about changing it | R | See [below](#the-firewall-row) | | | |
+| `sandbox.permissions` | `/.flatpak-info` (rows exist in a Flatpak only) | none | Everything needed is granted | Network, Bluetooth, or the talk permission for BlueZ, NetworkManager or firewalld is missing (`missing`, listed in `details`); the whole file system is visible (`filesystem_host`) | | File not readable |
+
+The shell gives each row a title, a plain-language reason and, where one helps, a command to copy (never run); the codes above are the stable part.
+
+#### The firewall row
+
+`firewall.integration` is the only row that reads firewalld and polkit. It is a security row, so it can only lower Receiving to Limited.
+
+| Status | When |
+|---|---|
+| Ready | firewalld runs, polkit allows its change action without asking, and the zone `nm-shared` is in the zone list; or a port was opened this session ([session evidence](#session-evidence)) |
+| Warning | firewalld is not running or not installed, so another firewall is not looked at either (`not_running`); a Flatpak that cannot talk to it (`sandbox_denied`); no `nm-shared` zone (`zone_missing`); polkit would ask for authentication (`permission_auth`); the user allowed an open zone for this session (`consent_given`) |
+| Blocked | polkit denies the change (`permission_denied`); or the firewall refused the port in this session and no consent was given (`denied_this_session`) |
+| Unknown | The permission cannot be verified (`permission_unverifiable`): polkit is not running, the call failed, a Flatpak (polkit is not asked there), or the zone list could not be read because the read action was not allowed without asking |
+
+The polkit action ids are `org.fedoraproject.FirewallD1.all` for runtime changes and `org.fedoraproject.FirewallD1.info` for reading the zone list *(inferred from firewalld's policy file, not checked on a running system)*. The zone list is read only when the `info` action is allowed without interaction, because firewalld guards `getZones` with it and the call could otherwise prompt *(inferred, as above)*.
+
+### What is never verified
+
+These stay Unknown or Warning, or are not in the report at all, whatever the rows say:
+
+| Not verified | What the report does instead |
+|---|---|
+| That a hotspot really starts | `wifi.ap` Ready means the adapter reports AP mode and WPA2 and the permission is `yes`, not that NetworkManager brings one up. Only a hotspot that started this session is evidence, and it settles `wifi.dhcp` only |
+| The outcome of an authentication | A permission of `auth` (NetworkManager or polkit) is a Warning: whether the user is asked, or succeeds, is not tried |
+| Activatable services | A service that is installed but not running is a Warning; the check never starts it and does not know whether it would start |
+| Radio and regulation | Only the adapter's capability bits are read: not the regulatory domain, DFS, or whether the channel the hotspot asks for is allowed |
+| Firewalls other than firewalld | ufw or plain nftables are not looked at; without firewalld the row is a Warning and the hotspot is refused unless the user consents (see [Firewall](#requirements)) |
+| End to end | Nothing here sends a byte to a phone; see [Verified](#verified) for what ran with real devices |
+
+### Read-only
+
+The probes only read, by construction (`src/core/requirements/system.rs`): `NameHasOwner` and `ListActivatableNames` on the bus; `Get` and `GetAll` of properties; BlueZ's `GetManagedObjects` and `GetDiscoveryFilters`; NetworkManager's `GetDevices`, each device's `DeviceType` and `GetPermissions`; firewalld's `getZones`; polkit's `CheckAuthorization`; and the files `/.flatpak-info`, `/proc/net/protocols` and the `dnsmasq` paths. They never start a scan, switch a radio, open a port, save a profile, or ask for credentials.
+
+- Every call to a service other than the bus daemon carries `NoAutoStart`, so asking about BlueZ, NetworkManager, firewalld or polkit never starts one that is installed but stopped.
+- polkit is asked only when it is running, with flags 0 (no interaction), and not at all in a Flatpak.
+- firewalld's `getZones` is called only when polkit allows its `info` action without asking (see [the firewall row](#the-firewall-row)).
+- Each call is limited to 2 s and a whole check to 6 s ([D-Bus API](dbus-api.md#methods)).
+
+This was tested against fake D-Bus services in the unit tests, not hand-tested with real BlueZ, NetworkManager, firewalld or polkit, and no test ran against a real adapter or phone. That these calls are harmless on a real system is therefore by reading the code, not observed.
+
+### The Wi-Fi device
+
+NetworkManager can list several devices. The runtime uses **the first device of type Wi-Fi** (type 2; Wi-Fi P2P does not count) in `GetDevices` order, for the hotspot and for joining a network alike, and the report judges the same device: the rule is one function, `select_wifi_device` in `src/core/link.rs`. With more than one Wi-Fi device the others are ignored (`nm.device` says `ok_first_of_many`). The runtime reads the device types one at a time and stops at the first Wi-Fi device, and a device whose type cannot be read is skipped. The report reads every type and does not skip: if one cannot be read, the rows that depend on the device are Unknown, never judged on a different device than the runtime would use.
+
+### When the report is refreshed
+
+The core keeps the last report and serves it while it is fresh ([D-Bus API](dbus-api.md#methods) for the time to live and the 2 s rule for forced calls). A watcher with its own system bus connection (`watch.rs`) drops the cache when something changes that a row depends on:
+
+| Event | Source |
+|---|---|
+| A service appears or vanishes | `NameOwnerChanged` for BlueZ, NetworkManager, firewalld (not polkit) |
+| An adapter, or its advertising or GATT manager, appears or goes | BlueZ's object manager (device objects, which come and go with every scan, are ignored) |
+| An adapter changes `Powered`, `PowerState` or `Roles` | BlueZ property changes |
+| A device is added or removed; a switch, `Managed`, `State`, `FirmwareMissing` or `NmPluginMissing` changes | NetworkManager signals and property changes |
+| The runtime learned something by acting | [session evidence](#session-evidence) |
+
+After the last event the core waits 1.5 s (so a burst counts once) and runs one check, at most one run caused by events every 5 s; a check that ends after a newer event is not trusted and is followed by another. A new report that says something different is announced with `WifiRequirementsChanged`. There is no polling, and nothing is refreshed before a first report was asked for. If the system bus cannot be reached the watcher ends quietly and the report is then refreshed only by requests.
+
+### Session evidence
+
+Some things only show when the runtime acts. The core keeps them in memory for the life of the daemon (never saved, gone at restart) and folds them into the rows they concern:
+
+| Evidence | Effect |
+|---|---|
+| A hotspot came up | `wifi.dhcp` is Ready (`worked_this_session`), and stays so |
+| A hotspot did not come up | `wifi.ap` adds "the last hotspot attempt failed" to its `details` (the status is unchanged), unless one came up before |
+| firewalld opened the upgrade port | `firewall.integration` is Ready, also if firewalld stops later, until a later attempt is refused. It is a fact of this session, not a check |
+| The firewall refused the port | `firewall.integration` is Blocked (`denied_this_session`) for `firewall_denied` or `firewall_missing`, unless the user gave the [consent](#requirements) or the row is Ready anyway |
+| The user gave or took back the consent | `firewall.integration` is a Warning (`consent_given`) while it is given and the firewall would not be Ready |
+
+### In a Flatpak
+
+`packaging` is `flatpak` when `/.flatpak-info` exists, else `appimage` when `APPIMAGE` or `APPDIR` is set, else `native`. In a Flatpak:
+
+- The sandbox rows come from `/.flatpak-info`: the network, Bluetooth and system-bus talk permissions the sandbox has, user overrides included *(inferred from the file's content as the code reads it, not compared with a real override)*. A missing permission turns the service row into `sandbox_denied` and `sandbox.permissions` into a Warning.
+- `dnsmasq` cannot be looked for on the host: `wifi.dhcp` is Unknown (`sandbox_unobservable`), which makes Receiving Unknown unless a hotspot already worked this session.
+- polkit is not asked and the zone list is not read, so whether the user may change the firewall cannot be verified: `firewall.integration` is Unknown (`permission_unverifiable`) unless firewalld is missing or session evidence settles it.
+
+### The gate on turning the setting on
+
+Turning **Receive and send without a shared network** on (it was off) is judged from Sending and Receiving, by `policy.rs`; turning it off is always allowed, and so is writing `true` while it is on. The stored setting only changes through that write: a service disappearing never turns it off.
+
+| Sending / Receiving | Verdict |
+|---|---|
+| Both Unavailable | Refused: `RequirementsBlocked` ([errors](dbus-api.md#wi-fi-upgrade-errors)). The refusal needs a check that started after the request, not an old cached report |
+| Both Available | Allowed |
+| Either Unknown | Allowed; the result is uncertain and the summary says Unknown |
+| Otherwise (one direction usable, or Limited) | Allowed |
+
+The shell shows a warning under the switch whenever exactly one of Sending and Receiving is Unavailable, so the user knows which direction will not work. It is a gate on what is proven, not a promise: "allowed" does not mean the transfer will work.
 
 ## Behaviour
 
@@ -64,7 +208,7 @@ sequenceDiagram
 | BLE speed | About 5 KB/s: a transfer over BLE is only useful if the upgrade succeeds |
 | Network loss | When NetworkManager reports that the last connection is gone, LAN devices are dropped at once and one Bluetooth scan runs (nothing happens if another connection stays up). When a network comes back, discovery restarts (the list is kept), because the mDNS library checks for new interfaces only every 5 s *(inferred: the default of mdns-sd 0.21)*. Not tested with a phone; the Wi-Fi that KuickShare brings up itself also triggers the restart, which is harmless |
 | LAN search | A phone seen only over Bluetooth makes the mDNS search restart every 5 s, up to 4 times, until its LAN entry shows up (it shares the 5 s limit with the send-time lookup below). The Bluetooth scan and the list are not touched |
-| Route choice | A send to a LAN device first probes its TCP port (timeout in [Timings](#timings-and-timeouts)). If it fails the entry is dropped (`DeviceLost`) and the send goes to the single `ble:` entry with the same name and device type. If none is known, a Bluetooth scan window is started (or the running one is used) and the send waits for that entry (Bluetooth lookup in Timings); if it is not seen, or more than one matches, it fails with "The device is not reachable". A send to a `ble:` entry goes over the LAN instead when exactly one LAN entry has the same name and device type and its probe succeeds. If none is known, the send asks the LAN once: it restarts the mDNS search (the list is kept; at most every 5 s, only while discovery runs) and waits up to 1.5 s for that entry, else it stays on Bluetooth. Every decision is logged at info (`stays on Bluetooth: ...`) The `TransferUpdated` events carry the id the user picked, whichever route was used (`Core::redirects`), and Cancel is mapped back the same way |
+| Route choice | A send to a LAN device first probes its TCP port (timeout in [Timings](#timings-and-timeouts)). If it fails the entry is dropped (`DeviceLost`) and the send goes to the single `ble:` entry with the same name and device type. If none is known, a Bluetooth scan window is started (or the running one is used) and the send waits for that entry (Bluetooth lookup in Timings); if it is not seen, or more than one matches, it fails with "The device is not reachable". A send to a `ble:` entry goes over the LAN instead when exactly one LAN entry has the same name and device type and its probe succeeds. If none is known, the send asks the LAN once: it restarts the mDNS search (the list is kept; at most every 5 s, only while discovery runs) and waits up to 1.5 s for that entry, else it stays on Bluetooth. Every decision is logged at info (`send stays on Bluetooth: ...`) without device ids or names; the ids are in the debug lines, which the hand-test scripts enable. The `TransferUpdated` events carry the id the user picked, whichever route was used (`Core::redirects`), and Cancel is mapped back the same way |
 | Sending | To a phone in Receive mode (visibility Everyone), found by a short BLE scan (Send page and refresh button). The phone must show Quick Share's Receive screen. The sender announces `WIFI_HOTSPOT` and `WIFI_DIRECT` (the Pixel offered `WIFI_DIRECT` by itself), waits up to 10 s for the offer, and follows the unencrypted frames the phone uses after the upgrade (`supports_disabling_encryption`). A send that fails is reported at once with a notification that says what to check. The Send page cannot start another transfer while one is live |
 | Receive screen | Seen on a Pixel 7 (Android 17, Play services 26.40.32) in `NearbySharing`: `FOREGROUND` (Receive open) advertises `allowGattConnections=true` and `allowBleL2capConnections=true`; `BACKGROUND` and `SCREEN_OFF` advertise both `false`, even with visibility Everyone set permanently. The Galaxy A55 stops advertising when no Quick Share screen is open and draws a new endpoint id (see [Known behaviours](#known-behaviours)) |
 | Trusted devices | Not available over Bluetooth: trust is keyed on the sender's MAC read from its IP, which a BLE session lacks, and the phone's MAC on the Wi-Fi link is not the LAN one *(inferred)*. Every Bluetooth transfer asks for consent; the trust button is hidden and pairing is refused |
@@ -88,6 +232,9 @@ sequenceDiagram
 | First encrypted frame over BLE | Waits 200 ms | See [Known behaviours](#known-behaviours). |
 | Write stall (file send) | 30 s | The user's cancel works at once; a phone that vanishes without FIN or RST is noticed only after this |
 | Disconnect and cancel waits | 2 s each; GATT disconnect 5 s | |
+| Engine stop at exit | 0.8 s in all (`SHUTDOWN_ENGINE_BOUND`, the wait for the `Core` lock included); inside it the library gets 0.5 s (`SHUTDOWN_STOP`) and the event forwarder 0.2 s | In `src/core/app.rs`. Runs first; on a timeout the log warns and the Wi-Fi cleanup still runs. A restart of the engine allows the library 3 s instead |
+| Library wind-down at a stop | 400 ms (`STOP_WIND_DOWN` in `third_party/rqs_lib/src/manager.rs`) | An inbound session sends its Cancel and Disconnection frames, then a FIN, within 300 ms (`Limits::stop_close`) + 50 ms (`FIN_TIMEOUT` in `hdl/inbound.rs`); it stays below the engine bound above |
+| Wi-Fi cleanup | 2 s at stop (`WIFI_STOP_CLEANUP_BOUND`), 5 s for the sweep at start (`WIFI_START_SWEEP_BOUND`), both in `src/core/app.rs` | Always runs after the engine stop. Engine stop (0.8 s) and cleanup (2 s) together stay within the shell's 3 s wait after SIGTERM (`corebridge.cpp`); on a timeout the log warns that a hotspot or an open firewall port may remain. Change one, check the others |
 
 ## Sending over GATT
 
@@ -148,13 +295,14 @@ No other phone is available, so these cannot be closed by the project:
 | Other hardware | Other phones and Wi-Fi chips, two phones at once, DFS and regulatory domains (channel 36 with fallback to 2.4 GHz). Whether other phones need the Receive screen like these two do, and whether `MIDGROUND` (seen once on the Pixel) ever advertises GATT without L2CAP |
 | `UPGRADE_PATH_REQUEST` | Receivers that do not offer an upgrade by themselves (the Pixel and the Galaxy do) would need the sender to request it. Not implemented, not testable without such a phone |
 | Our own group owner | Not implemented, see [below](#why-not-a-p2p-group); the hotspot is the supported way to receive |
-| Firewalls | Only firewalld on Fedora was tried. With ufw or nftables the hotspot always uses the `trusted` zone, and their rules may block DHCP and DNS *(not tested)*; polkit refusing the firewalld change was not tried; the confirmation check is not tested inside Flatpak or the AppImage |
+| Firewalls | Only firewalld on Fedora was tried, and not since the consent rule above: the refusal, the consent and the zone choice are covered by tests with a fake NetworkManager and firewalld and were not hand-tested with a phone. With ufw or nftables the hotspot is refused unless the session consent is given; with it the zone is left to NetworkManager and their rules may block DHCP and DNS *(not tested)*. Polkit refusing the firewalld change was not tried; the confirmation check is not tested inside Flatpak or the AppImage |
 | Flatpak | Sending was not verified in the sandbox |
+| Requirements check | Tested against fake probes and fake D-Bus services only. Not run against a real BlueZ, NetworkManager, firewalld or polkit, in or out of a Flatpak; whether its rows match what a real system does (for instance the polkit action ids and NetworkManager reason codes marked *(inferred)* above) is open |
 | Keeping the Wi-Fi up while a laptop joins a phone | Needs a second Wi-Fi interface (the MT7922 reports `#{ managed, P2P-client } <= 2` on up to 2 channels), created with root; not planned. See [Second Wi-Fi interface](#second-wi-fi-interface-idea-not-planned) |
 
 ### Second Wi-Fi interface (idea, not planned)
 
-Kept as a note, not worked on. A virtual interface (`iw dev <if> interface add <name> type managed`, root) would let the laptop stay on its network. What it would take: `wifi_device()` (`link.rs`) returns the **first** Wi-Fi device NetworkManager lists, without checking its state, connection or access-point capability, so a second interface is ignored today; the choice would have to prefer a device that is not carrying the active connection, check `WirelessCapabilities` when hosting, and skip `remember_previous` and the restore; the card must allow the combination; and the interface must be created outside the app. The Flatpak sandbox has no way to do that (no `org.freedesktop.Flatpak`, no polkit, no `iw`, and NetworkManager's D-Bus API does not create Wi-Fi interfaces), and the tarball and AppImage installers install nothing privileged (no polkit rule, udev rule or unit): it would be the first privileged host piece and would end "Privileges: None".
+Kept as a note, not worked on. A virtual interface (`iw dev <if> interface add <name> type managed`, root) would let the laptop stay on its network. What it would take: `select_wifi_device` (`link.rs`, [the shared rule](#the-wi-fi-device)) picks the **first** Wi-Fi device NetworkManager lists, without checking its state, connection or access-point capability, so a second interface is ignored today; the choice would have to prefer a device that is not carrying the active connection, check `WirelessCapabilities` when hosting, and skip `remember_previous` and the restore; the card must allow the combination; and the interface must be created outside the app. The Flatpak sandbox has no way to do that (no `org.freedesktop.Flatpak`, no polkit, no `iw`, and NetworkManager's D-Bus API does not create Wi-Fi interfaces), and the tarball and AppImage installers install nothing privileged (no polkit rule, udev rule or unit): it would be the first privileged host piece and would end "Privileges: None".
 
 ## Why not a P2P group
 
@@ -164,7 +312,7 @@ Findings from the hand test (MT7922, Pixel 7): a NetworkManager AP-mode hotspot 
 
 ## Testing
 
-`cargo test -p rqs_lib` runs the hand-over (plain and encrypted), the Bluetooth receiver and sender and the scanner in memory and over loopback with a fake `WifiLink`; `cargo test --all-features` covers `link.rs` with a fake NetworkManager. Neither needs hardware. A send through a real adapter has no automated test (it would need a fake BlueZ inside `rqs_lib`); only the `#[ignore]` hardware tests, run by hand, cover it.
+`cargo test -p rqs_lib` runs the hand-over (plain and encrypted), the Bluetooth receiver and sender and the scanner in memory and over loopback with a fake `WifiLink`; `cargo test --all-features` covers `link.rs` with a fake NetworkManager. The requirements engine and its probes are covered with fake probes and fake D-Bus services (`src/core/requirements/`). Neither needs hardware. A send through a real adapter has no automated test (it would need a fake BlueZ inside `rqs_lib`); only the `#[ignore]` hardware tests, run by hand, cover it.
 
 The real link needs a manual test (Wi-Fi card, Bluetooth adapter, phone, `adb logcat` and `btmon` captures): see [CONTRIBUTING.md](../CONTRIBUTING.md#hand-tests-with-a-phone-wi-fi-upgrade-and-bluetooth). The scripts in [`scripts/testing/`](../scripts/testing) (`run.sh`, `test-wifi.sh` for the desktop, `test-laptop.sh` for a laptop over ssh) are described in CONTRIBUTING.md. For a phone-side capture use `adb logcat -s NearbyConnections NearbyMediums NearbySharing WifiP2pService` (offered medium, `supports_disabling_encryption`, join latency, invalid frames, `allowBleL2capConnections`) together with the daemon log and `btmon -w`, also with a phone on another network and on the same LAN.
 

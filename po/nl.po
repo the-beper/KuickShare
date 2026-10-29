@@ -3,12 +3,11 @@
 # This file is distributed under the same license as the kuickshare package.
 # the-beper <193650145+the-beper@users.noreply.github.com>, 2026.
 #
-#, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-26 15:31+0000\n"
+"POT-Creation-Date: 2026-10-29 14:38+0000\n"
 "PO-Revision-Date: 2026-10-20 11:00+0200\n"
 "Last-Translator: Heimen Stoffels <vistausss@fastmail.com>\n"
 "Language-Team: \n"
@@ -19,23 +18,711 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 "X-Generator: Poedit 3.10\n"
 
-#: src/shell/corebridge.cpp:571
+#: src/shell/corebridge.cpp:573
+msgid "This transfer is no longer waiting for an answer"
+msgstr "Deze overdracht wacht niet meer op een antwoord"
+
+#: src/shell/corebridge.cpp:580
+msgid "This device cannot be trusted: its network address is not known"
+msgstr "Dit apparaat kan niet worden vertrouwd: het netwerkadres is onbekend"
+
+#: src/shell/corebridge.cpp:582
+msgid "This device cannot be trusted: it sent no name"
+msgstr "Dit apparaat kan niet worden vertrouwd: het heeft geen naam verstuurd"
+
+#: src/shell/corebridge.cpp:584
+msgid ""
+"This device cannot be trusted: its network address now belongs to another "
+"device"
+msgstr ""
+"Dit apparaat kan niet worden vertrouwd: het netwerkadres hoort nu bij een "
+"ander apparaat"
+
+#: src/shell/corebridge.cpp:595
+msgid "The offer has too many files"
+msgstr "Het verzoek bevat te veel bestanden"
+
+#: src/shell/corebridge.cpp:599
+msgid "There is not enough free space in the download folder"
+msgstr "Er is niet genoeg vrije ruimte in de downloadmap"
+
+#: src/shell/corebridge.cpp:603
+msgid "The download folder cannot be used"
+msgstr "De downloadmap kan niet worden gebruikt"
+
+#: src/shell/corebridge.cpp:607
+msgid "A file name in the offer cannot be saved"
+msgstr "Een bestandsnaam in het verzoek kan niet worden opgeslagen"
+
+#: src/shell/corebridge.cpp:611
+msgid "The offer is malformed"
+msgstr "Het verzoek is ongeldig"
+
+#: src/shell/corebridge.cpp:614
+msgid "The offer was refused"
+msgstr "Het verzoek is geweigerd"
+
+#: src/shell/corebridge.cpp:648
+msgid "Bluetooth service (BlueZ)"
+msgstr "Bluetooth-service (BlueZ)"
+
+#: src/shell/corebridge.cpp:651
+msgid "Bluetooth adapter"
+msgstr "Bluetooth-adapter"
+
+#: src/shell/corebridge.cpp:654
+msgid "Bluetooth power"
+msgstr "Bluetooth ingeschakeld"
+
+#: src/shell/corebridge.cpp:657
+msgid "Bluetooth Low Energy"
+msgstr "Bluetooth Low Energy"
+
+#: src/shell/corebridge.cpp:660
+msgid "Bluetooth advertising"
+msgstr "Bluetooth-advertising"
+
+#: src/shell/corebridge.cpp:663
+msgid "Bluetooth scanning"
+msgstr "Bluetooth-zoeken"
+
+#: src/shell/corebridge.cpp:666
+msgid "Bluetooth GATT services"
+msgstr "Bluetooth GATT-services"
+
+#: src/shell/corebridge.cpp:669
+msgid "Bluetooth fast channel (L2CAP)"
+msgstr "Bluetooth-snelkanaal (L2CAP)"
+
+#: src/shell/corebridge.cpp:672
+msgid "NetworkManager"
+msgstr "NetworkManager"
+
+#: src/shell/corebridge.cpp:675
+msgid "Networking switch"
+msgstr "Netwerkschakelaar"
+
+#: src/shell/corebridge.cpp:678
+msgid "Wi-Fi switch"
+msgstr "Wifi-schakelaar"
+
+#: src/shell/corebridge.cpp:681
+msgid "Wi-Fi radio switch"
+msgstr "Wifi-radioschakelaar"
+
+#: src/shell/corebridge.cpp:684
+msgid "Wi-Fi adapter"
+msgstr "Wifi-adapter"
+
+#: src/shell/corebridge.cpp:687
+msgid "Wi-Fi adapter management"
+msgstr "Wifi-adapterbeheer"
+
+#: src/shell/corebridge.cpp:690
+msgid "Wi-Fi adapter firmware"
+msgstr "Wifi-adapterfirmware"
+
+#: src/shell/corebridge.cpp:693
+msgid "Wi-Fi adapter driver"
+msgstr "Wifi-adapterstuurprogramma"
+
+#: src/shell/corebridge.cpp:696
+msgid "NetworkManager permissions"
+msgstr "Rechten van NetworkManager"
+
+#: src/shell/corebridge.cpp:699
+msgid "Wi-Fi client mode"
+msgstr "Wifi-clientmodus"
+
+#: src/shell/corebridge.cpp:702
+msgid "Wi-Fi hotspot mode"
+msgstr "Wifi-hotspotmodus"
+
+#: src/shell/corebridge.cpp:705
+msgid "Hotspot addresses (dnsmasq)"
+msgstr "Adressen van de hotspot (dnsmasq)"
+
+#: src/shell/corebridge.cpp:708
+msgid "Firewall (firewalld)"
+msgstr "Firewall (firewalld)"
+
+#: src/shell/corebridge.cpp:711
+msgid "Flatpak permissions"
+msgstr "Flatpak-rechten"
+
+#: src/shell/corebridge.cpp:726
+msgid "Nothing is missing"
+msgstr "Er ontbreekt niets"
+
+#: src/shell/corebridge.cpp:729
+msgid "The check took too long"
+msgstr "De controle duurde te lang"
+
+#: src/shell/corebridge.cpp:729
+msgid ""
+"Refresh to check again; if it keeps happening, the service it asks may be "
+"busy or stuck"
+msgstr "Vernieuw om opnieuw te controleren; als dit blijft gebeuren, is de service die wordt bevraagd mogelijk bezet of vastgelopen"
+
+#: src/shell/corebridge.cpp:732
+msgid "The system message bus could not be reached"
+msgstr "De systeemberichtenbus kon niet worden bereikt"
+
+#: src/shell/corebridge.cpp:732
+msgid "The check needs the system D-Bus; refresh to try again"
+msgstr "De controle heeft de systeem-D-Bus nodig; vernieuw om het opnieuw te proberen"
+
+#: src/shell/corebridge.cpp:735
+msgid "The service gave an answer that could not be understood"
+msgstr "De service gaf een antwoord dat niet begrepen kon worden"
+
+#: src/shell/corebridge.cpp:735
+msgid "Refresh to try again; if it persists, update the service"
+msgstr "Vernieuw om het opnieuw te proberen; blijft het probleem bestaan, werk dan de service bij"
+
+#: src/shell/corebridge.cpp:738
+msgid "The check failed"
+msgstr "De controle is mislukt"
+
+#: src/shell/corebridge.cpp:738
+msgid "Refresh to try again"
+msgstr "Vernieuw om het opnieuw te proberen"
+
+#: src/shell/corebridge.cpp:741
+msgid "Not checked, because something it depends on is not ready"
+msgstr "Niet gecontroleerd, omdat iets waarvan het afhangt nog niet klaar is"
+
+#: src/shell/corebridge.cpp:741
+msgid "Fix the items that are blocked or unknown first"
+msgstr "Los eerst de onderdelen op die geblokkeerd of onbekend zijn"
+
+#: src/shell/corebridge.cpp:746
+msgid "The Bluetooth service is not running"
+msgstr "De Bluetooth-service draait niet"
+
+#: src/shell/corebridge.cpp:746
+msgid ""
+"Start the Bluetooth service; if BlueZ is not installed, install it first"
+msgstr "Start de Bluetooth-service; is BlueZ niet geïnstalleerd, installeer het dan eerst"
+
+#: src/shell/corebridge.cpp:749
+msgid "The Bluetooth service is installed but not running"
+msgstr "De Bluetooth-service is geïnstalleerd maar draait niet"
+
+#: src/shell/corebridge.cpp:749 src/shell/corebridge.cpp:802
+msgid "It starts when something needs it; to start it now, use the command"
+msgstr "Hij start wanneer iets hem nodig heeft; om hem nu te starten, gebruik de opdracht"
+
+#: src/shell/corebridge.cpp:752
+msgid "The sandbox hides the Bluetooth service"
+msgstr "De sandbox verbergt de Bluetooth-service"
+
+#: src/shell/corebridge.cpp:752
+msgid "Allow the sandbox to talk to BlueZ, then restart KuickShare"
+msgstr "Sta de sandbox toe om met BlueZ te communiceren en start KuickShare daarna opnieuw"
+
+#: src/shell/corebridge.cpp:756
+msgid "No Bluetooth adapter was found"
+msgstr "Er is geen Bluetooth-adapter gevonden"
+
+#: src/shell/corebridge.cpp:756
+msgid ""
+"Plug in or enable a Bluetooth adapter; if one is installed, check that its "
+"driver is loaded"
+msgstr "Sluit een Bluetooth-adapter aan of schakel er een in; is er al een geïnstalleerd, controleer dan of het stuurprogramma is geladen"
+
+#: src/shell/corebridge.cpp:760
+msgid "The Bluetooth adapter is turned off"
+msgstr "De Bluetooth-adapter is uitgeschakeld"
+
+#: src/shell/corebridge.cpp:760
+msgid ""
+"KuickShare turns it on when it needs it; you can also turn Bluetooth on in "
+"the system settings"
+msgstr "KuickShare schakelt hem in wanneer dat nodig is; je kunt Bluetooth ook inschakelen in de systeeminstellingen"
+
+#: src/shell/corebridge.cpp:763
+msgid "Blocked by a radio switch"
+msgstr "Geblokkeerd door een radioschakelaar"
+
+#: src/shell/corebridge.cpp:763
+msgid "Turn Bluetooth on in the system settings"
+msgstr "Schakel Bluetooth in via de systeeminstellingen"
+
+#: src/shell/corebridge.cpp:767
+msgid "The Bluetooth adapter does not support Bluetooth Low Energy"
+msgstr "De Bluetooth-adapter ondersteunt Bluetooth Low Energy niet"
+
+#: src/shell/corebridge.cpp:767
+msgid "Use an adapter that supports Bluetooth 4.0 or newer"
+msgstr "Gebruik een adapter die Bluetooth 4.0 of nieuwer ondersteunt"
+
+#: src/shell/corebridge.cpp:770
+msgid "BlueZ does not report what the adapter can do"
+msgstr "BlueZ meldt niet wat de adapter kan"
+
+#: src/shell/corebridge.cpp:770 src/shell/corebridge.cpp:784
+msgid "This may still work; a newer BlueZ reports it"
+msgstr "Het kan nog werken; een nieuwere BlueZ meldt dit"
+
+#: src/shell/corebridge.cpp:774
+msgid "The Bluetooth adapter cannot advertise"
+msgstr "De Bluetooth-adapter ondersteunt geen advertising"
+
+#: src/shell/corebridge.cpp:774
+msgid ""
+"Receiving by Bluetooth needs an adapter that can advertise; sending is not "
+"affected"
+msgstr "Ontvangen via Bluetooth vereist een adapter die advertising ondersteunt; versturen wordt niet beïnvloed"
+
+#: src/shell/corebridge.cpp:777
+msgid "The adapter has no free advertising slot now"
+msgstr "De adapter heeft nu geen vrij advertising-slot"
+
+#: src/shell/corebridge.cpp:777
+msgid "Another program uses them; close it and refresh"
+msgstr "Een ander programma gebruikt ze; sluit het af en vernieuw"
+
+#: src/shell/corebridge.cpp:781
+msgid "The Bluetooth adapter cannot scan for devices"
+msgstr "De Bluetooth-adapter kan niet naar apparaten zoeken"
+
+#: src/shell/corebridge.cpp:781
+msgid "Sending needs an adapter that can scan; use another one"
+msgstr "Versturen vereist een adapter die kan zoeken; gebruik een andere"
+
+#: src/shell/corebridge.cpp:784
+msgid "BlueZ does not report how the adapter can scan"
+msgstr "BlueZ meldt niet hoe de adapter kan zoeken"
+
+#: src/shell/corebridge.cpp:788
+msgid "BlueZ offers no GATT services"
+msgstr "BlueZ biedt geen GATT-services"
+
+#: src/shell/corebridge.cpp:788
+msgid "Update BlueZ to a version with GATT support"
+msgstr "Werk BlueZ bij naar een versie met GATT-ondersteuning"
+
+#: src/shell/corebridge.cpp:792
+msgid "The sandbox does not allow Bluetooth sockets"
+msgstr "De sandbox staat geen Bluetooth-sockets toe"
+
+#: src/shell/corebridge.cpp:792
+msgid ""
+"Transfers still work over a slower path; allow Bluetooth for the Flatpak to "
+"use the faster one"
+msgstr "Overdrachten werken nog steeds via een tragere route; sta de Flatpak toe Bluetooth te gebruiken voor de snellere route"
+
+#: src/shell/corebridge.cpp:795
+msgid "The kernel does not report Bluetooth socket support"
+msgstr "De kernel meldt geen ondersteuning voor Bluetooth-sockets"
+
+#: src/shell/corebridge.cpp:795
+msgid "Transfers still work over a slower path if it is missing"
+msgstr "Overdrachten werken nog steeds via een tragere route als die ontbreekt"
+
+#: src/shell/corebridge.cpp:799
+msgid "NetworkManager is not running"
+msgstr "NetworkManager draait niet"
+
+#: src/shell/corebridge.cpp:799
+msgid ""
+"Wi-Fi Direct needs NetworkManager; start it, or install it if this computer "
+"uses another network tool"
+msgstr "Wi-Fi Direct heeft NetworkManager nodig; start het, of installeer het als deze computer een ander netwerkprogramma gebruikt"
+
+#: src/shell/corebridge.cpp:802
+msgid "NetworkManager is installed but not running"
+msgstr "NetworkManager is geïnstalleerd maar draait niet"
+
+#: src/shell/corebridge.cpp:805
+msgid "The sandbox hides NetworkManager"
+msgstr "De sandbox verbergt NetworkManager"
+
+#: src/shell/corebridge.cpp:805
+msgid "Allow the sandbox to talk to NetworkManager, then restart KuickShare"
+msgstr "Sta de sandbox toe om met NetworkManager te communiceren en start KuickShare daarna opnieuw"
+
+#: src/shell/corebridge.cpp:809
+msgid "Networking is turned off in NetworkManager"
+msgstr "Netwerken is uitgeschakeld in NetworkManager"
+
+#: src/shell/corebridge.cpp:809
+msgid "Turn networking on in the network settings"
+msgstr "Schakel netwerken in via de netwerkinstellingen"
+
+#: src/shell/corebridge.cpp:813
+msgid "Wi-Fi is turned off"
+msgstr "Wifi is uitgeschakeld"
+
+#: src/shell/corebridge.cpp:813
+msgid "Turn Wi-Fi on in the system settings"
+msgstr "Schakel wifi in via de systeeminstellingen"
+
+#: src/shell/corebridge.cpp:817
+msgid "A hardware switch has turned the Wi-Fi radio off"
+msgstr "Een hardwareschakelaar heeft de wifi-radio uitgeschakeld"
+
+#: src/shell/corebridge.cpp:817
+msgid "Use the Wi-Fi switch or key of this computer"
+msgstr "Gebruik de wifi-schakelaar of -toets van deze computer"
+
+#: src/shell/corebridge.cpp:821
+msgid "There are several Wi-Fi adapters; the first one is used"
+msgstr "Er zijn meerdere wifi-adapters; de eerste wordt gebruikt"
+
+#: src/shell/corebridge.cpp:821
+msgid "If transfers fail, turn off the adapters you do not need"
+msgstr "Als overdrachten mislukken, schakel dan de adapters uit die je niet nodig hebt"
+
+#: src/shell/corebridge.cpp:824
+msgid "No Wi-Fi adapter was found"
+msgstr "Er is geen wifi-adapter gevonden"
+
+#: src/shell/corebridge.cpp:824
+msgid ""
+"Plug in a Wi-Fi adapter, or check that the driver of the built-in one is "
+"loaded"
+msgstr "Sluit een wifi-adapter aan, of controleer of het stuurprogramma van de ingebouwde adapter is geladen"
+
+#: src/shell/corebridge.cpp:828
+msgid "NetworkManager does not manage the Wi-Fi adapter"
+msgstr "NetworkManager beheert de wifi-adapter niet"
+
+#: src/shell/corebridge.cpp:828
+msgid ""
+"Let NetworkManager manage it: another network tool or an unmanaged-devices "
+"setting may be holding it"
+msgstr "Laat NetworkManager hem beheren: een ander netwerkprogramma of een instelling voor niet-beheerde apparaten kan hem vasthouden"
+
+#: src/shell/corebridge.cpp:832
+msgid "The Wi-Fi adapter needs firmware that is not installed"
+msgstr "De wifi-adapter heeft firmware nodig die niet is geïnstalleerd"
+
+#: src/shell/corebridge.cpp:832
+msgid ""
+"Install the firmware package for the adapter (often linux-firmware), then "
+"restart the computer"
+msgstr "Installeer het firmwarepakket voor de adapter (vaak linux-firmware) en start daarna de computer opnieuw"
+
+#: src/shell/corebridge.cpp:836
+msgid "The NetworkManager plugin for the Wi-Fi adapter is missing"
+msgstr "De NetworkManager-plug-in voor de wifi-adapter ontbreekt"
+
+#: src/shell/corebridge.cpp:836
+msgid ""
+"Install the NetworkManager Wi-Fi plugin package of your distribution, then "
+"restart NetworkManager"
+msgstr "Installeer het pakket van de NetworkManager-wifi-plug-in van je distributie en start daarna NetworkManager opnieuw"
+
+#: src/shell/corebridge.cpp:839
+msgid "NetworkManager reports the Wi-Fi adapter as unavailable"
+msgstr "NetworkManager meldt dat de wifi-adapter niet beschikbaar is"
+
+#: src/shell/corebridge.cpp:839
+msgid "Check that its driver loaded and its radio is on"
+msgstr "Controleer of het stuurprogramma is geladen en de radio is ingeschakeld"
+
+#: src/shell/corebridge.cpp:843
+msgid "NetworkManager asks for authentication to control the network"
+msgstr "NetworkManager vraagt om authenticatie om het netwerk te beheren"
+
+#: src/shell/corebridge.cpp:843
+msgid ""
+"The hotspot may prompt for a password or be refused; allow network control "
+"for your user in the PolicyKit settings"
+msgstr "De hotspot vraagt mogelijk om een wachtwoord of wordt geweigerd; sta netwerkbeheer voor je gebruiker toe in de PolicyKit-instellingen"
+
+#: src/shell/corebridge.cpp:846
+msgid "NetworkManager does not allow this user to control the network"
+msgstr "NetworkManager staat deze gebruiker niet toe het netwerk te beheren"
+
+#: src/shell/corebridge.cpp:846
+msgid ""
+"Ask the administrator to allow network control and changes to system "
+"connections for your user"
+msgstr "Vraag de beheerder om je gebruiker toestemming te geven het netwerk te beheren en systeemverbindingen te wijzigen"
+
+#: src/shell/corebridge.cpp:850
+msgid "Joining Wi-Fi cannot work: something it needs is blocked"
+msgstr "Verbinden met wifi kan niet werken: iets wat het nodig heeft, is geblokkeerd"
+
+#: src/shell/corebridge.cpp:850
+msgid "Fix the blocked items of NetworkManager and the Wi-Fi adapter"
+msgstr "Los de geblokkeerde onderdelen van NetworkManager en de wifi-adapter op"
+
+#: src/shell/corebridge.cpp:853
+msgid ""
+"It is not known whether joining Wi-Fi works: something it needs could not be "
+"checked"
+msgstr "Het is onbekend of verbinden met wifi werkt: iets wat het nodig heeft, kon niet worden gecontroleerd"
+
+#: src/shell/corebridge.cpp:853
+msgid "Refresh when the items above are sorted out"
+msgstr "Vernieuw wanneer de onderdelen hierboven zijn opgelost"
+
+#: src/shell/corebridge.cpp:856 src/shell/corebridge.cpp:878
+msgid "The sandbox has no network access"
+msgstr "De sandbox heeft geen netwerktoegang"
+
+#: src/shell/corebridge.cpp:856 src/shell/corebridge.cpp:878
+msgid "Allow the network for the Flatpak"
+msgstr "Sta het netwerk toe voor de Flatpak"
+
+#: src/shell/corebridge.cpp:860
+msgid "The Wi-Fi adapter cannot create a hotspot"
+msgstr "De wifi-adapter kan geen hotspot maken"
+
+#: src/shell/corebridge.cpp:860
+msgid ""
+"Receiving by Wi-Fi needs an adapter with access point mode; Bluetooth still "
+"works"
+msgstr "Ontvangen via wifi vereist een adapter met access-pointmodus; Bluetooth werkt nog steeds"
+
+#: src/shell/corebridge.cpp:863
+msgid "The Wi-Fi adapter cannot protect a hotspot with WPA2"
+msgstr "De wifi-adapter kan een hotspot niet met WPA2 beveiligen"
+
+#: src/shell/corebridge.cpp:863
+msgid "Receiving by Wi-Fi needs WPA2 on the adapter; Bluetooth still works"
+msgstr "Ontvangen via wifi vereist WPA2 op de adapter; Bluetooth werkt nog steeds"
+
+#: src/shell/corebridge.cpp:866
+msgid "The Wi-Fi adapter reports no 2.4 GHz or 5 GHz band for a hotspot"
+msgstr "De wifi-adapter meldt geen 2,4 GHz- of 5 GHz-band voor een hotspot"
+
+#: src/shell/corebridge.cpp:866
+msgid "Receiving by Wi-Fi needs one of them; Bluetooth still works"
+msgstr "Ontvangen via wifi vereist één van die twee; Bluetooth werkt nog steeds"
+
+#: src/shell/corebridge.cpp:869
+msgid "The Wi-Fi driver does not report what the adapter can do"
+msgstr "Het wifi-stuurprogramma meldt niet wat de adapter kan"
+
+#: src/shell/corebridge.cpp:869
+msgid "The hotspot may still work; it could not be checked"
+msgstr "De hotspot kan nog werken; dit kon niet worden gecontroleerd"
+
+#: src/shell/corebridge.cpp:872
+msgid "NetworkManager asks for authentication to share a connection"
+msgstr "NetworkManager vraagt om authenticatie om een verbinding te delen"
+
+#: src/shell/corebridge.cpp:872
+msgid ""
+"The hotspot may prompt for a password or be refused; allow it in the "
+"PolicyKit settings"
+msgstr "De hotspot vraagt mogelijk om een wachtwoord of wordt geweigerd; sta dit toe in de PolicyKit-instellingen"
+
+#: src/shell/corebridge.cpp:875
+msgid "This user may not share a connection"
+msgstr "Deze gebruiker mag geen verbinding delen"
+
+#: src/shell/corebridge.cpp:875
+msgid "Ask the administrator to allow sharing connections in NetworkManager"
+msgstr "Vraag de beheerder om het delen van verbindingen in NetworkManager toe te staan"
+
+#: src/shell/corebridge.cpp:882
+msgid "dnsmasq is installed"
+msgstr "dnsmasq is geïnstalleerd"
+
+#: src/shell/corebridge.cpp:885
+msgid "The hotspot already handed out addresses in this session"
+msgstr "De hotspot heeft in deze sessie al adressen uitgedeeld"
+
+#: src/shell/corebridge.cpp:888
+msgid "dnsmasq was not found"
+msgstr "dnsmasq is niet gevonden"
+
+#: src/shell/corebridge.cpp:888
+msgid ""
+"The hotspot hands out addresses with dnsmasq; install the dnsmasq or dnsmasq-"
+"base package"
+msgstr "De hotspot deelt adressen uit met dnsmasq; installeer het pakket dnsmasq of dnsmasq-base"
+
+#: src/shell/corebridge.cpp:891
+msgid "dnsmasq cannot be looked for from inside the sandbox"
+msgstr "dnsmasq kan vanuit de sandbox niet worden gezocht"
+
+#: src/shell/corebridge.cpp:891
+msgid ""
+"If the hotspot gets no addresses, install dnsmasq or dnsmasq-base on this "
+"computer"
+msgstr "Als de hotspot geen adressen krijgt, installeer dan dnsmasq of dnsmasq-base op deze computer"
+
+#: src/shell/corebridge.cpp:894
+msgid "The hotspot could not start its address service"
+msgstr "De hotspot kon zijn adresservice niet starten"
+
+#: src/shell/corebridge.cpp:894
+msgid "Install the dnsmasq or dnsmasq-base package"
+msgstr "Installeer het pakket dnsmasq of dnsmasq-base"
+
+#: src/shell/corebridge.cpp:898
+msgid "The firewall service (firewalld) is not running"
+msgstr "De firewallservice (firewalld) draait niet"
+
+#: src/shell/corebridge.cpp:898
+msgid ""
+"KuickShare cannot open the hotspot port by itself; it asks you before the "
+"hotspot uses an open zone"
+msgstr "KuickShare kan de hotspotpoort niet zelf openen; het vraagt je eerst of de hotspot een open zone mag gebruiken"
+
+#: src/shell/corebridge.cpp:901
+msgid "The sandbox hides the firewall service"
+msgstr "De sandbox verbergt de firewallservice"
+
+#: src/shell/corebridge.cpp:901
+msgid "Allow the sandbox to talk to firewalld, then restart KuickShare"
+msgstr "Sta de sandbox toe om met firewalld te communiceren en start KuickShare daarna opnieuw"
+
+#: src/shell/corebridge.cpp:904
+msgid "The firewall has no zone for the hotspot (nm-shared)"
+msgstr "De firewall heeft geen zone voor de hotspot (nm-shared)"
+
+#: src/shell/corebridge.cpp:904
+msgid "The hotspot may be blocked or open; add the zone or check its rules"
+msgstr "De hotspot kan worden geblokkeerd of open zijn; voeg de zone toe of controleer de regels"
+
+#: src/shell/corebridge.cpp:907
+msgid "Changing the firewall asks for authentication"
+msgstr "Het wijzigen van de firewall vraagt om authenticatie"
+
+#: src/shell/corebridge.cpp:907
+msgid "Opening the hotspot port may prompt for a password or be refused"
+msgstr "Het openen van de hotspotpoort vraagt mogelijk om een wachtwoord of wordt geweigerd"
+
+#: src/shell/corebridge.cpp:910
+msgid "This user may not change the firewall"
+msgstr "Deze gebruiker mag de firewall niet wijzigen"
+
+#: src/shell/corebridge.cpp:910
+msgid "The hotspot port cannot be opened; ask the administrator to allow it"
+msgstr "De hotspotpoort kan niet worden geopend; vraag de beheerder om dat toe te staan"
+
+#: src/shell/corebridge.cpp:913
+msgid "It cannot be checked whether this user may change the firewall"
+msgstr "Er kan niet worden gecontroleerd of deze gebruiker de firewall mag wijzigen"
+
+#: src/shell/corebridge.cpp:913
+msgid "A sandbox cannot ask for this; the hotspot is tried anyway"
+msgstr "Een sandbox kan hier niet om vragen; de hotspot wordt toch geprobeerd"
+
+#: src/shell/corebridge.cpp:916
+msgid "The firewall refused the hotspot in this session"
+msgstr "De firewall heeft de hotspot in deze sessie geweigerd"
+
+#: src/shell/corebridge.cpp:916
+msgid ""
+"Allow the hotspot in the firewall, or let it use an open zone when asked"
+msgstr "Sta de hotspot toe in de firewall, of laat hem een open zone gebruiken wanneer daarom wordt gevraagd"
+
+#: src/shell/corebridge.cpp:919
+msgid "You allowed the hotspot to use an open firewall zone in this session"
+msgstr "Je hebt de hotspot in deze sessie toegestaan een open firewallzone te gebruiken"
+
+#: src/shell/corebridge.cpp:919
+msgid "Turning the setting off takes this back"
+msgstr "Door de instelling uit te schakelen, wordt dit ingetrokken"
+
+#: src/shell/corebridge.cpp:923
+msgid "The Flatpak lacks permissions it needs"
+msgstr "De Flatpak mist rechten die nodig zijn"
+
+#: src/shell/corebridge.cpp:923
+msgid "Allow the permissions named in the details with flatpak override"
+msgstr "Sta de rechten die in de details worden genoemd toe met flatpak override"
+
+#: src/shell/corebridge.cpp:926
+msgid "The Flatpak can see the whole file system"
+msgstr "De Flatpak kan het hele bestandssysteem zien"
+
+#: src/shell/corebridge.cpp:926
+msgid "It does not need to; take that permission away"
+msgstr "Dat is niet nodig; haal dat recht weg"
+
+#: src/shell/corebridge.cpp:930
+msgid "No more information is available"
+msgstr "Er is geen verdere informatie beschikbaar"
+
+#: src/shell/corebridge.cpp:937 src/shell/qml/SendPage.qml:224
+msgid "Ready"
+msgstr "Gereed"
+
+#: src/shell/corebridge.cpp:939
+msgid "Warning"
+msgstr "Waarschuwing"
+
+#: src/shell/corebridge.cpp:941
+msgid "Blocked"
+msgstr "Geblokkeerd"
+
+#: src/shell/corebridge.cpp:943
+msgid "Checking"
+msgstr "Bezig met controleren"
+
+#: src/shell/corebridge.cpp:947 src/shell/corebridge.cpp:979
+msgid "Unknown"
+msgstr "Onbekend"
+
+#: src/shell/corebridge.cpp:971
+msgid "Available"
+msgstr "Beschikbaar"
+
+#: src/shell/corebridge.cpp:973
+msgid "Limited"
+msgstr "Beperkt"
+
+#: src/shell/corebridge.cpp:975
+msgid "Unavailable"
+msgstr "Niet beschikbaar"
+
+#: src/shell/corebridge.cpp:1008
+msgid "sending"
+msgstr "versturen"
+
+#: src/shell/corebridge.cpp:1011
+msgid "receiving"
+msgstr "ontvangen"
+
+#: src/shell/corebridge.cpp:1014
+msgid "joining networks"
+msgstr "verbinden met netwerken"
+
+#: src/shell/corebridge.cpp:1160 src/shell/qml/WifiRequirementsDialog.qml:23
+msgid "Sending"
+msgstr "Versturen"
+
+#: src/shell/corebridge.cpp:1161 src/shell/qml/SettingsPage.qml:109
+#: src/shell/qml/WifiRequirementsDialog.qml:25
+msgid "Receiving"
+msgstr "Ontvangen"
+
+#: src/shell/corebridge.cpp:1162 src/shell/qml/TransfersPage.qml:783
+#: src/shell/qml/WifiRequirementsDialog.qml:27
+msgid "Join network"
+msgstr "Met netwerk verbinden"
+
+#: src/shell/corebridge.cpp:1163 src/shell/qml/WifiRequirementsDialog.qml:29
+msgid "System components"
+msgstr "Systeemonderdelen"
+
+#: src/shell/corebridge.cpp:1298
 msgid "Could not update Dolphin's context menu"
 msgstr "Het rechtermuisknopmenu van Dolphin kan niet worden bijgewerkt"
 
-#: src/shell/corebridge.cpp:595
+#: src/shell/corebridge.cpp:1322
 msgid "Could not update the application menu"
 msgstr "Het toepassingsmenu kan niet worden bijgewerkt"
 
-#: src/shell/corebridge.cpp:606
+#: src/shell/corebridge.cpp:1333
 msgid "Could not add KuickShare to the menus"
 msgstr "KuickShare kan niet worden toegevoegd aan de menu's"
 
-#: src/shell/corebridge.cpp:663 src/shell/corebridge.cpp:670
+#: src/shell/corebridge.cpp:1390 src/shell/corebridge.cpp:1397
 msgid "The sharing service did not accept the request"
 msgstr "De deelservice heeft het verzoek niet geaccepteerd"
 
-#: src/shell/corebridge.cpp:767
+#: src/shell/corebridge.cpp:1494
 msgid ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
@@ -43,19 +730,19 @@ msgstr ""
 "Flatpak heeft geen toegang tot %1. Toegang geven kan door middel van de "
 "opdracht: flatpak override --user --filesystem=\"%1\" %2"
 
-#: src/shell/corebridge.cpp:814
+#: src/shell/corebridge.cpp:1541
 msgid "Could not update the autostart entry"
 msgstr "Het automatische opstartitem kan niet worden toegevoegd"
 
-#: src/shell/corebridge.cpp:928
+#: src/shell/corebridge.cpp:1655
 msgid "The folder %1 has more than %2 files"
 msgstr "De map %1 bevat meer dan %2 bestanden"
 
-#: src/shell/corebridge.cpp:932
+#: src/shell/corebridge.cpp:1659
 msgid "The folder %1 has no files to send"
 msgstr "De map %1 bevat geen bestanden om te versturen"
 
-#: src/shell/corebridge.cpp:967
+#: src/shell/corebridge.cpp:1694
 msgid "Only local files and folders can be shared"
 msgstr "Alleen lokale bestanden en mappen kunnen worden gedeeld"
 
@@ -113,7 +800,7 @@ msgstr "Bestanden versturen…"
 msgid "Send clipboard"
 msgstr "Klembord versturen"
 
-#: src/shell/main.cpp:423 src/shell/qml/SettingsPage.qml:66
+#: src/shell/main.cpp:423 src/shell/qml/SettingsPage.qml:92
 msgid "Visible to nearby devices"
 msgstr "Zichtbaar voor apparaten in de buurt"
 
@@ -127,21 +814,22 @@ msgstr[1] "Nog %1 minuten zichtbaar (klik om te stoppen)"
 msgid "Visible for 10 minutes"
 msgstr "Zichtbaar gedurende 10 minuten"
 
-#: src/shell/main.cpp:454 src/shell/qml/Main.qml:287
+#: src/shell/main.cpp:454 src/shell/qml/Main.qml:294
 #: src/shell/qml/SettingsPage.qml:16 src/shell/qml/ShortcutsDialog.qml:17
 msgid "Preferences"
 msgstr "Instellingen"
 
-#: src/shell/main.cpp:457 src/shell/qml/Main.qml:301
+#: src/shell/main.cpp:457 src/shell/qml/Main.qml:308
 msgid "Quit"
 msgstr "Afsluiten"
 
-#: src/shell/qml/AboutDialog.qml:75 src/shell/qml/Main.qml:315
+#: src/shell/qml/AboutDialog.qml:75 src/shell/qml/Main.qml:322
 msgid "About"
 msgstr "Over"
 
 #: src/shell/qml/AboutDialog.qml:110 src/shell/qml/PairDialog.qml:72
-#: src/shell/qml/ShortcutsDialog.qml:79
+#: src/shell/qml/SettingsPage.qml:450 src/shell/qml/ShortcutsDialog.qml:79
+#: src/shell/qml/WifiRequirementsDialog.qml:98
 msgid "Close"
 msgstr "Sluiten"
 
@@ -205,7 +893,7 @@ msgstr "KDE Frameworks %1"
 msgid "Kirigami, notifications, jobs and the other KDE libraries"
 msgstr "Kirigami, meldingen, taken en andere KDE-bibliotheken"
 
-#: src/shell/qml/HelpPage.qml:11 src/shell/qml/Main.qml:308
+#: src/shell/qml/HelpPage.qml:11 src/shell/qml/Main.qml:315
 #: src/shell/qml/ShortcutsDialog.qml:18 src/shell/qml/ShortcutsDialog.qml:19
 msgid "Help"
 msgstr "Hulp"
@@ -214,7 +902,7 @@ msgstr "Hulp"
 msgid "Getting started"
 msgstr "Instelhulp"
 
-#: src/shell/qml/HelpPage.qml:30 src/shell/qml/Main.qml:246
+#: src/shell/qml/HelpPage.qml:30 src/shell/qml/Main.qml:253
 #: src/shell/qml/SendPage.qml:39 src/shell/qml/ShortcutsDialog.qml:14
 msgid "Send"
 msgstr "Versturen"
@@ -269,20 +957,23 @@ msgstr ""
 "achtcijferige code. Vervolgens kunnen eindeloos bestanden worden "
 "uitgewisseld. Let op: poort 47891 dient open te staan."
 
-#: src/shell/qml/HelpPage.qml:57 src/shell/qml/SettingsPage.qml:209
+#: src/shell/qml/HelpPage.qml:57 src/shell/qml/SettingsPage.qml:272
 msgid "Trusted devices"
 msgstr "Vertrouwde apparaten"
 
 #: src/shell/qml/HelpPage.qml:58
 msgid ""
 "“Accept and trust” on a notification accepts a phone without asking from "
-"then on. It is recognised by name and MAC address, so only on the same "
-"network, never for transfers over Bluetooth, which always ask."
+"then on. It is recognised by name and network address, so only on the same "
+"network, never for transfers over Bluetooth, which always ask. Another "
+"device on the same network can copy both, so use it only where you trust "
+"every device."
 msgstr ""
-"‘Goedkeuren en vertrouwen’ in een melding accepteert een telefoon vanaf dat "
-"moment zonder te vragen. Het apparaat wordt herkend aan naam en MAC-adres, "
-"dus alleen op hetzelfde netwerk en nooit bij overdrachten via Bluetooth, die "
-"altijd om toestemming vragen."
+"“Goedkeuren en vertrouwen” in een melding accepteert een telefoon vanaf dat "
+"moment zonder te vragen. De telefoon wordt herkend aan naam en netwerkadres, "
+"dus alleen op hetzelfde netwerk, nooit voor overdrachten via Bluetooth, die "
+"altijd vragen. Een ander apparaat op hetzelfde netwerk kan beide kopiëren, "
+"dus gebruik dit alleen waar je elk apparaat vertrouwt."
 
 #: src/shell/qml/HelpPage.qml:63
 msgid "Wi-Fi Direct (experimental)"
@@ -394,52 +1085,52 @@ msgstr ""
 "KuickShare wordt getoond in zowel programma- als Dolphins "
 "rechtermuisknopmenu's"
 
-#: src/shell/qml/Main.qml:26
+#: src/shell/qml/Main.qml:28
 msgid "KuickShare"
 msgstr "KuickShare"
 
-#: src/shell/qml/Main.qml:124
+#: src/shell/qml/Main.qml:126
 msgid "Quit KuickShare?"
 msgstr "Wil je KuickShare afsluiten?"
 
-#: src/shell/qml/Main.qml:125
+#: src/shell/qml/Main.qml:127
 msgid "A transfer is in progress. Quitting stops it"
 msgstr "Er is een overdracht gaande — door af te sluiten wordt deze afgebroken"
 
-#: src/shell/qml/Main.qml:169
+#: src/shell/qml/Main.qml:176
 msgid "Connected to %1"
 msgstr "Verbonden met %1"
 
-#: src/shell/qml/Main.qml:176
+#: src/shell/qml/Main.qml:183
 msgid "Transfer completed"
 msgstr "Overdracht voltooid"
 
-#: src/shell/qml/Main.qml:179
+#: src/shell/qml/Main.qml:186
 msgid "The transfer failed"
 msgstr "De overdracht is mislukt"
 
-#: src/shell/qml/Main.qml:182
+#: src/shell/qml/Main.qml:189
 msgid "The transfer was declined"
 msgstr "De overdracht is geweigerd"
 
-#: src/shell/qml/Main.qml:185
+#: src/shell/qml/Main.qml:192
 msgid "The transfer was cancelled"
 msgstr "De overdracht is geannuleerd"
 
-#: src/shell/qml/Main.qml:253 src/shell/qml/ShortcutsDialog.qml:15
+#: src/shell/qml/Main.qml:260 src/shell/qml/ShortcutsDialog.qml:15
 #: src/shell/qml/TransfersPage.qml:15
 msgid "Transfers"
 msgstr "Overdrachten"
 
-#: src/shell/qml/Main.qml:271
+#: src/shell/qml/Main.qml:278
 msgid "More"
 msgstr "Meer"
 
-#: src/shell/qml/Main.qml:294 src/shell/qml/ShortcutsDialog.qml:44
+#: src/shell/qml/Main.qml:301 src/shell/qml/ShortcutsDialog.qml:44
 msgid "Shortcuts"
 msgstr "Sneltoetsen"
 
-#: src/shell/qml/Main.qml:443
+#: src/shell/qml/Main.qml:450
 msgid ""
 "The sharing service is not running. Nothing can be sent or received until it "
 "is started"
@@ -447,17 +1138,65 @@ msgstr ""
 "De deeldienst is niet actief. Er kan niets worden verstuurd of ontvangen "
 "totdat de dienst wordt gestart"
 
-#: src/shell/qml/Main.qml:446
+#: src/shell/qml/Main.qml:453
 msgid "Start service"
 msgstr "Dienst starten"
 
-#: src/shell/qml/Main.qml:465
+#: src/shell/qml/Main.qml:472
 msgid "A new version of KuickShare is installed"
 msgstr "Er is een nieuwe versie van KuickShare geïnstalleerd"
 
-#: src/shell/qml/Main.qml:468
+#: src/shell/qml/Main.qml:475
 msgid "Restart"
 msgstr "Herstarten"
+
+#: src/shell/qml/Main.qml:496
+msgid ""
+"Trusted devices were removed: they were recognised only by name and network "
+"address, which another device on the same network can copy. Trust a device "
+"again from its next transfer"
+msgstr ""
+"De vertrouwde apparaten zijn verwijderd: ze werden alleen herkend aan naam "
+"en netwerkadres, wat een ander apparaat op hetzelfde netwerk kan kopiëren. "
+"Vertrouw een apparaat opnieuw bij de volgende overdracht"
+
+#: src/shell/qml/Main.qml:499
+msgid "Got it"
+msgstr "Begrepen"
+
+#: src/shell/qml/Main.qml:522
+msgid ""
+"No firewall service that KuickShare can open a port in was found. The "
+"transfer continues over Bluetooth, which is very slow"
+msgstr ""
+"Er is geen firewallservice gevonden waarin KuickShare een poort kan openen. "
+"De overdracht gaat verder via Bluetooth, wat erg traag is"
+
+#: src/shell/qml/Main.qml:522
+msgid ""
+"The firewall did not allow the Wi-Fi link. The transfer continues over "
+"Bluetooth, which is very slow"
+msgstr ""
+"De firewall heeft de wifi-verbinding niet toegestaan. De overdracht gaat "
+"verder via Bluetooth, wat erg traag is"
+
+#: src/shell/qml/Main.qml:525
+msgid "Allow for this session…"
+msgstr "Toestaan voor deze sessie…"
+
+#: src/shell/qml/Main.qml:534
+msgid "Allow the hotspot without a firewall rule?"
+msgstr "De hotspot toestaan zonder firewallregel?"
+
+#: src/shell/qml/Main.qml:535
+msgid ""
+"If you agree, then until KuickShare is closed, the phone that joins the "
+"hotspot can reach every service on this computer. It applies to the next "
+"transfer, not to the one in progress"
+msgstr ""
+"Als je akkoord gaat, kan de telefoon die verbinding maakt met de hotspot tot "
+"KuickShare wordt afgesloten elke service op deze computer bereiken. Dit "
+"geldt voor de volgende overdracht, niet voor de overdracht die bezig is"
 
 #: src/shell/qml/PairDialog.qml:22
 msgid "Pair a device"
@@ -516,8 +1255,8 @@ msgstr ""
 msgid "Pairing did not complete"
 msgstr "Het koppelverzoek is niet ingewilligd"
 
-#: src/shell/qml/SendPage.qml:142 src/shell/qml/SettingsPage.qml:184
-#: src/shell/qml/SettingsPage.qml:234
+#: src/shell/qml/SendPage.qml:142 src/shell/qml/SettingsPage.qml:247
+#: src/shell/qml/SettingsPage.qml:297
 msgid "Remove"
 msgstr "Verwijderen"
 
@@ -536,10 +1275,6 @@ msgstr "Verborgen"
 #: src/shell/qml/SendPage.qml:224
 msgid "Do Not Disturb"
 msgstr "Niet storen"
-
-#: src/shell/qml/SendPage.qml:224
-msgid "Ready"
-msgstr "Gereed"
 
 #: src/shell/qml/SendPage.qml:229
 msgid "Turn on visibility in Preferences to receive files"
@@ -570,7 +1305,7 @@ msgid "Paste from clipboard"
 msgstr "Plakken vanaf klembord"
 
 #: src/shell/qml/SendPage.qml:290 src/shell/qml/TransfersPage.qml:405
-#: src/shell/transferwatcher.cpp:51 src/shell/transferwatcher.cpp:140
+#: src/shell/transferwatcher.cpp:103 src/shell/transferwatcher.cpp:202
 msgid "%1 file"
 msgid_plural "%1 files"
 msgstr[0] "%1 bestand"
@@ -651,55 +1386,51 @@ msgstr "Gekoppeld"
 msgid "Choose the download folder"
 msgstr "Kies de downloadmap"
 
-#: src/shell/qml/SettingsPage.qml:52
+#: src/shell/qml/SettingsPage.qml:78
 msgid "Visibility"
 msgstr "Zichtbaarheid"
 
-#: src/shell/qml/SettingsPage.qml:59
+#: src/shell/qml/SettingsPage.qml:85
 msgid "Device name"
 msgstr "Apparaatnaam"
 
-#: src/shell/qml/SettingsPage.qml:67
+#: src/shell/qml/SettingsPage.qml:93
 msgid "Others can find this computer and send to it"
 msgstr "Anderen kunnen deze computer vinden en bestanden versturen"
 
-#: src/shell/qml/SettingsPage.qml:74
+#: src/shell/qml/SettingsPage.qml:100
 msgid "Hide during Do Not Disturb"
 msgstr "Verbergen in nietstorenmodus"
 
-#: src/shell/qml/SettingsPage.qml:75
+#: src/shell/qml/SettingsPage.qml:101
 msgid "Not visible while Do Not Disturb is on"
 msgstr "Niet zichtbaar als niet storen aanstaat"
 
-#: src/shell/qml/SettingsPage.qml:83
-msgid "Receiving"
-msgstr "Ontvangen"
-
-#: src/shell/qml/SettingsPage.qml:89
+#: src/shell/qml/SettingsPage.qml:115
 msgid "Download folder"
 msgstr "Downloadmap"
 
-#: src/shell/qml/SettingsPage.qml:90
+#: src/shell/qml/SettingsPage.qml:116
 msgid "Default (Downloads)"
 msgstr "Standaard (‘Downloads’)"
 
-#: src/shell/qml/SettingsPage.qml:97
+#: src/shell/qml/SettingsPage.qml:123
 msgid "Use the default folder"
 msgstr "Gebruik de standaardmap"
 
-#: src/shell/qml/SettingsPage.qml:103
+#: src/shell/qml/SettingsPage.qml:129
 msgid "Random port"
 msgstr "Willekeurige poort"
 
-#: src/shell/qml/SettingsPage.qml:104
+#: src/shell/qml/SettingsPage.qml:130
 msgid "A different port at every start"
 msgstr "Na iedere opstart een andere poort"
 
-#: src/shell/qml/SettingsPage.qml:117
+#: src/shell/qml/SettingsPage.qml:143
 msgid "Fixed port"
 msgstr "Vaste poort"
 
-#: src/shell/qml/SettingsPage.qml:134
+#: src/shell/qml/SettingsPage.qml:160
 msgid ""
 "A fixed port (1024–65535) can be opened in the firewall. Changing the name "
 "or the port restarts sharing."
@@ -707,21 +1438,56 @@ msgstr ""
 "Een vaste poort (1024–65535) die geopend dient te worden in de firewall. "
 "Door het wĳzigen van de naam of poort wordt het delen opnieuw gestart."
 
-#: src/shell/qml/SettingsPage.qml:138
+#: src/shell/qml/SettingsPage.qml:164
 msgid "Wi-Fi Direct"
 msgstr "Wi-Fi Direct"
 
-#: src/shell/qml/SettingsPage.qml:145
+#: src/shell/qml/SettingsPage.qml:171
 msgid "Receive and send without a shared network"
 msgstr "Ontvangen en verzenden zonder gedeeld netwerk"
 
-#: src/shell/qml/SettingsPage.qml:146
+#: src/shell/qml/SettingsPage.qml:172
 msgid "Be found over Bluetooth and move the transfer to a temporary Wi-Fi link"
 msgstr ""
 "Wordt via Bluetooth gevonden en verplaatst de overdracht naar een tijdelijke "
 "wifi-verbinding"
 
-#: src/shell/qml/SettingsPage.qml:161
+#: src/shell/qml/SettingsPage.qml:190
+#: src/shell/qml/WifiRequirementsDialog.qml:65
+msgid "System requirements"
+msgstr "Systeemvereisten"
+
+#: src/shell/qml/SettingsPage.qml:193
+#: src/shell/qml/WifiRequirementsDialog.qml:242
+msgid "KuickShare service unavailable"
+msgstr "KuickShare-service niet beschikbaar"
+
+#: src/shell/qml/SettingsPage.qml:196
+#: src/shell/qml/WifiRequirementsDialog.qml:261
+msgid "Not checked yet"
+msgstr "Nog niet gecontroleerd"
+
+#: src/shell/qml/SettingsPage.qml:198
+msgid "Sending: %1, receiving: %2, joining networks: %3"
+msgstr "Versturen: %1, ontvangen: %2, verbinden met netwerken: %3"
+
+#: src/shell/qml/SettingsPage.qml:204
+msgid "Check system requirements…"
+msgstr "Systeemvereisten controleren…"
+
+#: src/shell/qml/SettingsPage.qml:205
+msgid "See what this computer needs for Wi-Fi Direct"
+msgstr "Bekijk wat deze computer nodig heeft voor Wi-Fi Direct"
+
+#: src/shell/qml/SettingsPage.qml:217
+msgid "Only sending works on this computer. See the system requirements"
+msgstr "Op deze computer werkt alleen versturen. Zie de systeemvereisten"
+
+#: src/shell/qml/SettingsPage.qml:217
+msgid "Only receiving works on this computer. See the system requirements"
+msgstr "Op deze computer werkt alleen ontvangen. Zie de systeemvereisten"
+
+#: src/shell/qml/SettingsPage.qml:224
 msgid ""
 "Experimental. Needs NetworkManager, its dnsmasq package and Bluetooth. While "
 "on, this computer is visible over Bluetooth to devices in range, and its Wi-"
@@ -733,98 +1499,100 @@ msgstr ""
 "apparaten in de buurt, en kan de wifi-verbinding wegvallen zolang de "
 "tijdelijke wifi-verbinding actief is. Zie de documentatie"
 
-#: src/shell/qml/SettingsPage.qml:167
+#: src/shell/qml/SettingsPage.qml:230
 msgid "Paired devices"
 msgstr "Gekoppelde apparaten"
 
-#: src/shell/qml/SettingsPage.qml:180
+#: src/shell/qml/SettingsPage.qml:243
 msgid "Fingerprint %1"
 msgstr "Vingerafdruk %1"
 
-#: src/shell/qml/SettingsPage.qml:191
+#: src/shell/qml/SettingsPage.qml:254
 msgid "No paired computers yet"
 msgstr "Er zijn nog geen computers gekoppeld"
 
-#: src/shell/qml/SettingsPage.qml:192
+#: src/shell/qml/SettingsPage.qml:255
 msgid "Paired computers can send to each other without asking"
 msgstr "Gekoppelde computers kunnen zonder bevestiging bestanden uitwisselen"
 
-#: src/shell/qml/SettingsPage.qml:196
+#: src/shell/qml/SettingsPage.qml:259
 msgid "Pair a device…"
 msgstr "Apparaat koppelen…"
 
-#: src/shell/qml/SettingsPage.qml:203
+#: src/shell/qml/SettingsPage.qml:266
 msgid "Pairing works only between computers on the same local network"
 msgstr "Koppelen werkt alleen tussen computers op hetzelfde lokale netwerk"
 
-#: src/shell/qml/SettingsPage.qml:215
+#: src/shell/qml/SettingsPage.qml:278
 msgid "Trust devices"
 msgstr "Vertrouwde apparaten"
 
-#: src/shell/qml/SettingsPage.qml:216
+#: src/shell/qml/SettingsPage.qml:279
 msgid "Accept transfers from trusted devices without asking"
 msgstr "Vertrouwde computers kunnen zonder bevestiging bestanden uitwisselen."
 
-#: src/shell/qml/SettingsPage.qml:230
+#: src/shell/qml/SettingsPage.qml:293
 msgid "MAC address %1"
 msgstr "MAC-adres %1"
 
-#: src/shell/qml/SettingsPage.qml:241
+#: src/shell/qml/SettingsPage.qml:304
 msgid "No devices yet"
 msgstr "Er zijn nog geen apparaten"
 
-#: src/shell/qml/SettingsPage.qml:242
+#: src/shell/qml/SettingsPage.qml:305
 msgid "Use “Accept and trust” on an incoming transfer notification to add one"
 msgstr ""
 "Druk op ‘Goedkeuren en vertrouwen’ op een inkomende overdracht om er een toe "
 "te voegen"
 
-#: src/shell/qml/SettingsPage.qml:249
+#: src/shell/qml/SettingsPage.qml:312
 msgid ""
-"Matched by name and MAC address. Another device that copies both would be "
-"accepted too. Use only if you trust all devices in your LAN"
+"Devices are recognised by name and network address, which another device on "
+"the same network can copy: it would be accepted without asking too. Use only "
+"on a network where you trust every device"
 msgstr ""
-"Wordt gevonden op basis van naam en MAC-adres. Een ander apparaat met beide "
-"wordt eveneens vertrouwd. Gebruik dit alleen als je alle apparaten op je "
-"netwerk vertrouwt!"
+"Apparaten worden herkend aan naam en netwerkadres, wat een ander apparaat op "
+"hetzelfde netwerk kan kopiëren: ook dat apparaat zou zonder te vragen worden "
+"geaccepteerd. Gebruik dit alleen op een netwerk waarop je elk apparaat "
+"vertrouwt"
 
-#: src/shell/qml/SettingsPage.qml:255
+#: src/shell/qml/SettingsPage.qml:318
 msgid "History"
 msgstr "Geschiedenis"
 
-#: src/shell/qml/SettingsPage.qml:261
+#: src/shell/qml/SettingsPage.qml:324
 msgid "Save transfer history"
 msgstr "Overdrachtsgeschiedenis bijhouden"
 
-#: src/shell/qml/SettingsPage.qml:262
+#: src/shell/qml/SettingsPage.qml:325
 msgid "Keep a list of sent and received transfers"
 msgstr "Houd een lijst bij met verstuurde en ontvangen bestanden"
 
-#: src/shell/qml/SettingsPage.qml:284
+#: src/shell/qml/SettingsPage.qml:347
 msgid "Delete entries after"
 msgstr "Items wissen na"
 
-#: src/shell/qml/SettingsPage.qml:292
+#: src/shell/qml/SettingsPage.qml:355
 msgid "Never"
 msgstr "Nooit"
 
-#: src/shell/qml/SettingsPage.qml:292
+#: src/shell/qml/SettingsPage.qml:355
 msgid "1 day"
 msgstr "1 dag"
 
-#: src/shell/qml/SettingsPage.qml:292
+#: src/shell/qml/SettingsPage.qml:355
 msgid "7 days"
 msgstr "7 dagen"
 
-#: src/shell/qml/SettingsPage.qml:292
+#: src/shell/qml/SettingsPage.qml:355
 msgid "30 days"
 msgstr "30 dagen"
 
-#: src/shell/qml/SettingsPage.qml:292
+#: src/shell/qml/SettingsPage.qml:355
 msgid "90 days"
 msgstr "90 dagen"
 
-#: src/shell/qml/SettingsPage.qml:301
+#: src/shell/qml/SettingsPage.qml:364
 msgid ""
 "With the history turned off nothing is saved. Entries already saved stay "
 "until they expire or you clear them."
@@ -832,47 +1600,47 @@ msgstr ""
 "Als de geschiedenis is uitgeschakeld, wordt er niks bijgehouden. Items die "
 "reeds zijn opgeslagen worden bewaard totdat ze verlopen of totdat je ze wist."
 
-#: src/shell/qml/SettingsPage.qml:305
+#: src/shell/qml/SettingsPage.qml:368
 msgid "Startup"
 msgstr "Opstarten"
 
-#: src/shell/qml/SettingsPage.qml:311
+#: src/shell/qml/SettingsPage.qml:374
 msgid "Start at login"
 msgstr "Automatisch opstarten"
 
-#: src/shell/qml/SettingsPage.qml:312
+#: src/shell/qml/SettingsPage.qml:375
 msgid "Starts hidden, in the system tray if it is shown"
 msgstr "Start KuickShare automatisch op, indien mogelijk in het systeemvak"
 
-#: src/shell/qml/SettingsPage.qml:318
+#: src/shell/qml/SettingsPage.qml:381
 msgid "Integration"
 msgstr "Integratie"
 
-#: src/shell/qml/SettingsPage.qml:324
+#: src/shell/qml/SettingsPage.qml:387
 msgid "Show tray icon"
 msgstr "Systeemvakpictogram tonen"
 
-#: src/shell/qml/SettingsPage.qml:325
+#: src/shell/qml/SettingsPage.qml:388
 msgid "Keep KuickShare in the system tray"
 msgstr "Houd KuickShare actief in het systeemvak"
 
-#: src/shell/qml/SettingsPage.qml:332
+#: src/shell/qml/SettingsPage.qml:395
 msgid "Dolphin context menu"
 msgstr "Dolphin-menu"
 
-#: src/shell/qml/SettingsPage.qml:333
+#: src/shell/qml/SettingsPage.qml:396
 msgid "Add “Send with KuickShare” to the menu of files"
 msgstr "Voeg ‘Vesturen met KuickShare’ toe aan het rechtermuisknopmenu"
 
-#: src/shell/qml/SettingsPage.qml:341
+#: src/shell/qml/SettingsPage.qml:404
 msgid "Application menu entry"
 msgstr "Item in het toepassingsmenu"
 
-#: src/shell/qml/SettingsPage.qml:342
+#: src/shell/qml/SettingsPage.qml:405
 msgid "Add KuickShare to the application menu"
 msgstr "KuickShare toevoegen aan het toepassingsmenu"
 
-#: src/shell/qml/SettingsPage.qml:350
+#: src/shell/qml/SettingsPage.qml:413
 msgid ""
 "Without the tray icon, closing the window quits KuickShare, and nothing can "
 "be received until you open it again. At login it starts hidden: open "
@@ -882,25 +1650,40 @@ msgstr ""
 "afgesloten, waardoor er ook niks meer kan worden ontvangen. Na het aanmelden "
 "wordt KuickShare geminimaliseerd opgestart"
 
-#: src/shell/qml/SettingsPage.qml:363
+#: src/shell/qml/SettingsPage.qml:426
 msgid "Turn on without a firewall?"
 msgstr "Inschakelen zonder firewall?"
 
-#: src/shell/qml/SettingsPage.qml:364
+#: src/shell/qml/SettingsPage.qml:427
 msgid ""
 "firewalld is not running, so the firewall cannot be opened for a single "
-"port. While the hotspot is up, the phone that joins it can reach every "
-"service on this computer"
+"port. If you agree, then until KuickShare is closed, the phone that joins "
+"the hotspot can reach every service on this computer"
 msgstr ""
 "firewalld draait niet, dus de firewall kan niet voor één poort worden "
-"geopend. Zolang de hotspot actief is, kan de telefoon die er verbinding mee "
-"maakt elke service op deze computer bereiken"
+"geopend. Als je akkoord gaat, kan de telefoon die verbinding maakt met de "
+"hotspot tot KuickShare wordt afgesloten elke service op deze computer "
+"bereiken"
 
-#: src/shell/qml/SettingsPage.qml:372
+#: src/shell/qml/SettingsPage.qml:437
+msgid "Wi-Fi Direct is not fully available"
+msgstr "Wi-Fi Direct is niet volledig beschikbaar"
+
+#: src/shell/qml/SettingsPage.qml:438
+msgid ""
+"Neither sending nor receiving can work on this computer now. The system "
+"requirements show what is missing"
+msgstr "Op deze computer kan nu noch versturen, noch ontvangen werken. De systeemvereisten tonen wat er ontbreekt"
+
+#: src/shell/qml/SettingsPage.qml:442
+msgid "View requirements"
+msgstr "Vereisten bekijken"
+
+#: src/shell/qml/SettingsPage.qml:458
 msgid "Reset preferences?"
 msgstr "Instellingen herstellen?"
 
-#: src/shell/qml/SettingsPage.qml:373
+#: src/shell/qml/SettingsPage.qml:459
 msgid ""
 "Every setting goes back to its default. The history and the paired and "
 "trusted devices are kept"
@@ -908,15 +1691,15 @@ msgstr ""
 "Elke instelling wordt teruggezet op de standaardwaarde. De geschiedenis en "
 "de gekoppelde en vertrouwde apparaten blijven bewaard"
 
-#: src/shell/qml/SettingsPage.qml:379
+#: src/shell/qml/SettingsPage.qml:465
 msgid "Reset"
 msgstr "Standaardwaarden"
 
-#: src/shell/qml/SettingsPage.qml:385
+#: src/shell/qml/SettingsPage.qml:471
 msgid "Reset preferences…"
 msgstr "Instellingen herstellen…"
 
-#: src/shell/qml/SettingsPage.qml:386
+#: src/shell/qml/SettingsPage.qml:472
 msgid "Go back to the default preferences"
 msgstr "Zet de standaardwaarden van alle instellingen terug"
 
@@ -1029,15 +1812,15 @@ msgstr "Resultaat"
 msgid "Size"
 msgstr "Grootte"
 
-#: src/shell/qml/TransfersPage.qml:253 src/shell/transferwatcher.cpp:248
+#: src/shell/qml/TransfersPage.qml:253 src/shell/transferwatcher.cpp:319
 msgid "Open link"
 msgstr "Link openen"
 
-#: src/shell/qml/TransfersPage.qml:260 src/shell/qml/TransfersPage.qml:788
+#: src/shell/qml/TransfersPage.qml:260 src/shell/qml/TransfersPage.qml:793
 msgid "Copy"
 msgstr "Kopiëren"
 
-#: src/shell/qml/TransfersPage.qml:265 src/shell/qml/TransfersPage.qml:792
+#: src/shell/qml/TransfersPage.qml:265 src/shell/qml/TransfersPage.qml:797
 msgid "Copied to clipboard"
 msgstr "Gekopieerd naar het klembord"
 
@@ -1045,13 +1828,13 @@ msgstr "Gekopieerd naar het klembord"
 msgid "Open"
 msgstr "Openen"
 
-#: src/shell/qml/TransfersPage.qml:379 src/shell/transferwatcher.cpp:52
+#: src/shell/qml/TransfersPage.qml:379 src/shell/transferwatcher.cpp:104
 msgid "Looking for the device…"
 msgstr "Apparaat zoeken…"
 
 #: src/shell/qml/TransfersPage.qml:379 src/shell/qml/TransfersPage.qml:385
-#: src/shell/qml/TransfersPage.qml:399 src/shell/transferwatcher.cpp:52
-#: src/shell/transferwatcher.cpp:111
+#: src/shell/qml/TransfersPage.qml:399 src/shell/transferwatcher.cpp:104
+#: src/shell/transferwatcher.cpp:173
 msgid "Connecting…"
 msgstr "Bezig met verbinden…"
 
@@ -1063,11 +1846,11 @@ msgstr "Wachten op goedkeuring"
 msgid "Receiving…"
 msgstr "Bezig met ontvangen…"
 
-#: src/shell/qml/TransfersPage.qml:385 src/shell/transferwatcher.cpp:111
+#: src/shell/qml/TransfersPage.qml:385 src/shell/transferwatcher.cpp:173
 msgid "Waiting for the other device to accept"
 msgstr "Wachten tot het andere apparaat accepteert"
 
-#: src/shell/qml/TransfersPage.qml:388 src/shell/transferwatcher.cpp:127
+#: src/shell/qml/TransfersPage.qml:388 src/shell/transferwatcher.cpp:189
 msgid "Switching to Wi-Fi…"
 msgstr "Overschakelen naar wifi…"
 
@@ -1158,53 +1941,96 @@ msgstr ""
 "De geschiedenis is uitgeschakeld, dus overdrachten worden alleen getoond "
 "zolang het programma geopend is."
 
-#: src/shell/qml/TransfersPage.qml:602
+#: src/shell/qml/TransfersPage.qml:607
 msgid "%1/s"
 msgstr "%1/s"
 
-#: src/shell/qml/TransfersPage.qml:654
+#: src/shell/qml/TransfersPage.qml:659
 msgid "Unknown device"
 msgstr "Onbekend apparaat"
 
-#: src/shell/qml/TransfersPage.qml:679
+#: src/shell/qml/TransfersPage.qml:684
 msgid "Trusted"
 msgstr "Vertrouwd"
 
-#: src/shell/qml/TransfersPage.qml:688
+#: src/shell/qml/TransfersPage.qml:693
 msgid "%1%"
 msgstr "%1%"
 
-#: src/shell/qml/TransfersPage.qml:695
+#: src/shell/qml/TransfersPage.qml:700
 msgid "Cancel"
 msgstr "Annuleren"
 
-#: src/shell/qml/TransfersPage.qml:702
+#: src/shell/qml/TransfersPage.qml:707
 msgid "Remove from list"
 msgstr "Verwijderen van lijst"
 
-#: src/shell/qml/TransfersPage.qml:712
+#: src/shell/qml/TransfersPage.qml:717
 msgid "Wants to share with you · PIN %1"
 msgstr "wil bestanden met je delen · pincode: %1"
 
-#: src/shell/qml/TransfersPage.qml:721
+#: src/shell/qml/TransfersPage.qml:726
 msgid "More details"
 msgstr "Meer informatie"
 
-#: src/shell/qml/TransfersPage.qml:760 src/shell/transferwatcher.cpp:206
+#: src/shell/qml/TransfersPage.qml:765 src/shell/transferwatcher.cpp:276
 msgid "Accept"
 msgstr "Goedkeuren"
 
-#: src/shell/qml/TransfersPage.qml:766 src/shell/transferwatcher.cpp:221
+#: src/shell/qml/TransfersPage.qml:771 src/shell/transferwatcher.cpp:291
 msgid "Decline"
 msgstr "Afwijzen"
 
-#: src/shell/qml/TransfersPage.qml:772 src/shell/transferwatcher.cpp:269
+#: src/shell/qml/TransfersPage.qml:777 src/shell/transferwatcher.cpp:340
 msgid "Open folder"
 msgstr "Map openen"
 
-#: src/shell/qml/TransfersPage.qml:778
-msgid "Join network"
-msgstr "Met netwerk verbinden"
+#: src/shell/qml/WifiRequirementsDialog.qml:86
+#: src/shell/qml/WifiRequirementsDialog.qml:235
+msgid "Refresh"
+msgstr "Vernieuwen"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:92
+msgid "Copy diagnostic report"
+msgstr "Diagnoserapport kopiëren"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:152
+msgid "Details"
+msgstr "Meer informatie"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:182
+msgid "Affects: %1"
+msgstr "Heeft invloed op: %1"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:189
+msgid "How it was checked: %1"
+msgstr "Hoe het is gecontroleerd: %1"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:211
+msgid "Copy command"
+msgstr "Opdracht kopiëren"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:229
+msgid ""
+"What Wi-Fi Direct needs on this computer. Checking never changes Bluetooth, "
+"Wi-Fi or the firewall"
+msgstr "Wat Wi-Fi Direct op deze computer nodig heeft. Controleren wijzigt nooit Bluetooth, wifi of de firewall"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:248
+msgid "The result could not be read. Refresh to try again"
+msgstr "Het resultaat kon niet worden gelezen. Vernieuw om het opnieuw te proberen"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:254
+msgid "These results are out of date. Refresh to check again"
+msgstr "Deze resultaten zijn verouderd. Vernieuw om opnieuw te controleren"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:320
+msgid "Last checked: %1"
+msgstr "Laatst gecontroleerd: %1"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:366
+msgid "Nothing limits this"
+msgstr "Niets beperkt dit"
 
 #: src/shell/transferjob.cpp:33
 msgid "Sending files"
@@ -1230,44 +2056,52 @@ msgstr "Bestanden"
 msgid "The transfer was interrupted"
 msgstr "De overdracht is onderbroken"
 
-#: src/shell/transferwatcher.cpp:178
+#: src/shell/transferwatcher.cpp:240
 msgid "a nearby device"
 msgstr "een apparaat in de buurt"
 
-#: src/shell/transferwatcher.cpp:188
+#: src/shell/transferwatcher.cpp:245
+msgid "Offer refused"
+msgstr "Verzoek geweigerd"
+
+#: src/shell/transferwatcher.cpp:245
+msgid "From %1: %2"
+msgstr "Van %1: %2"
+
+#: src/shell/transferwatcher.cpp:256
 msgid "Could not start the transfer to %1 over Bluetooth"
 msgstr "De overdracht naar %1 via Bluetooth kon niet worden gestart"
 
-#: src/shell/transferwatcher.cpp:189
+#: src/shell/transferwatcher.cpp:257
 msgid "%1 declined the transfer or could not receive it"
 msgstr ""
 "%1 heeft de overdracht afgewezen of kan deze om andere redenen niet ontvangen"
 
-#: src/shell/transferwatcher.cpp:190
+#: src/shell/transferwatcher.cpp:258
 msgid "Transfer not accepted"
 msgstr "De overdracht is afgewezen"
 
-#: src/shell/transferwatcher.cpp:194
+#: src/shell/transferwatcher.cpp:262
 msgid "Transfer interrupted"
 msgstr "De overdracht is onderbroken"
 
-#: src/shell/transferwatcher.cpp:194
+#: src/shell/transferwatcher.cpp:262
 msgid "The connection with %1 was lost"
 msgstr "De verbinding met %1 is verbroken"
 
-#: src/shell/transferwatcher.cpp:202
+#: src/shell/transferwatcher.cpp:270
 msgid "Incoming transfer"
 msgstr "Inkomende overdracht"
 
-#: src/shell/transferwatcher.cpp:203
+#: src/shell/transferwatcher.cpp:271
 msgid "A nearby device"
 msgstr "Een apparaat in de buurt"
 
-#: src/shell/transferwatcher.cpp:204
+#: src/shell/transferwatcher.cpp:272
 msgid "%1 wants to share with you"
 msgstr "%1 wil bestanden met je delen"
 
-#: src/shell/transferwatcher.cpp:204
+#: src/shell/transferwatcher.cpp:272
 msgid ""
 "%1 wants to share with you\n"
 "PIN: %2"
@@ -1275,19 +2109,27 @@ msgstr ""
 "%1 wil bestanden met je delen\n"
 "Pincode: %2"
 
-#: src/shell/transferwatcher.cpp:215
+#: src/shell/transferwatcher.cpp:285
 msgid "Accept and trust"
 msgstr "Goedkeuren en vertrouwen"
 
-#: src/shell/transferwatcher.cpp:241
+#: src/shell/transferwatcher.cpp:289
+msgid ""
+"“Accept and trust” recognises this device by its name and network address, "
+"which another device on the same network can copy"
+msgstr ""
+"“Goedkeuren en vertrouwen” herkent dit apparaat aan naam en netwerkadres, "
+"wat een ander apparaat op hetzelfde netwerk kan kopiëren"
+
+#: src/shell/transferwatcher.cpp:312
 msgid "Link received"
 msgstr "Link ontvangen"
 
-#: src/shell/transferwatcher.cpp:241
+#: src/shell/transferwatcher.cpp:312
 msgid "Text received"
 msgstr "Tekst ontvangen"
 
-#: src/shell/transferwatcher.cpp:242
+#: src/shell/transferwatcher.cpp:313
 msgid ""
 "From %1:\n"
 "%2"
@@ -1295,26 +2137,26 @@ msgstr ""
 "Van %1:\n"
 "%2"
 
-#: src/shell/transferwatcher.cpp:243
+#: src/shell/transferwatcher.cpp:314
 msgid "Copy link"
 msgstr "Link kopiëren"
 
-#: src/shell/transferwatcher.cpp:243
+#: src/shell/transferwatcher.cpp:314
 msgid "Copy text"
 msgstr "Tekst kopiëren"
 
-#: src/shell/transferwatcher.cpp:252
+#: src/shell/transferwatcher.cpp:323
 msgid "View"
 msgstr "Bekijken"
 
-#: src/shell/transferwatcher.cpp:259
+#: src/shell/transferwatcher.cpp:330
 msgid "Files received"
 msgstr "Bestanden ontvangen"
 
-#: src/shell/transferwatcher.cpp:260
+#: src/shell/transferwatcher.cpp:331
 msgid "From %1"
 msgstr "Van %1"
 
-#: src/shell/transferwatcher.cpp:265
+#: src/shell/transferwatcher.cpp:336
 msgid "Open file"
 msgstr "Bestand openen"

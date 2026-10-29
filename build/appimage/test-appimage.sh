@@ -5,7 +5,9 @@
 #     libraries Qt dlopens for it (libxkbcommon-x11, libxcb-xkb) are in the bundle
 #   - direct launch: the core answers on D-Bus (DeviceName), no QML errors, no files outside the app's own
 #     settings/data under HOME, a second launch hands its file to the running instance
-# Usage: build/appimage/test-appimage.sh dist/KuickShare-x86_64.AppImage [debian alpine nix ubuntu]
+# Usage: [KUICKSHARE_EXPECT_VERSION=1.2.3] build/appimage/test-appimage.sh dist/KuickShare-x86_64.AppImage [debian alpine nix ubuntu]
+# KUICKSHARE_EXPECT_VERSION (optional): the version `--version` must print. main.cpp has no flag of its own: it comes
+# from KAboutData::setupCommandLine, which prints "kuickshare <version>" (a "kuickshare: <version>" line is accepted too).
 # Needs no FUSE: the AppImage runs with --appimage-extract-and-run. Nothing is installed on the host.
 set -eu
 
@@ -28,7 +30,7 @@ if [ ! -e /run/.containerenv ]; then
             *) echo "unknown target $target" >&2; exit 2 ;;
         esac
         echo "=== $target ($image)"
-        podman run --rm --security-opt label=disable \
+        podman run --rm --security-opt label=disable -e KUICKSHARE_EXPECT_VERSION \
             -v "$appimage:/app.AppImage:ro" -v "$root/build/appimage/test-appimage.sh:/test.sh:ro" \
             "$image" sh -c "$setup && exec sh /test.sh /app.AppImage" || failed="$failed $target"
     done
@@ -46,6 +48,7 @@ cp "$1" "$app" # a copy the runtime can extract next to (APPIMAGE must name an e
 export APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1
 [ -e /run/dbus ] || mkdir -p /run/dbus
 export XDG_RUNTIME_DIR=/tmp/xdg-run
+# shellcheck disable=SC2174 # only the last component needs the mode; the script runs twice (dbus-run-session), so -p stays
 mkdir -p -m 700 "$XDG_RUNTIME_DIR"
 
 if [ "${KS_INNER:-}" != 1 ]; then
@@ -64,6 +67,12 @@ owner() {
 files() { (cd "$HOME" && find . -type f ! -path './.cache/*' | sort); }
 
 newhome
+if [ -n "${KUICKSHARE_EXPECT_VERSION:-}" ]; then
+    out=$("$app" --version 2>&1) || fail "--version failed: $out"
+    printf '%s\n' "$out" | grep -qxF -e "kuickshare $KUICKSHARE_EXPECT_VERSION" -e "kuickshare: $KUICKSHARE_EXPECT_VERSION" \
+        || fail "--version is not $KUICKSHARE_EXPECT_VERSION: $out"
+    ok "version $KUICKSHARE_EXPECT_VERSION"
+fi
 "$app" --background >"$HOME/app.log" 2>&1 &
 pid=$!
 for _ in $(seq 40); do owner >/dev/null && break; sleep 1; done

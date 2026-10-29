@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
+#include <QDBusError>
 #include <QDBusPendingCall>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
@@ -23,6 +24,7 @@
 #include <QStandardPaths>
 #include <QLocale>
 #include <QMimeDatabase>
+#include <QRegularExpression>
 
 #include <KLocalizedString>
 
@@ -44,6 +46,25 @@ namespace
     QDBusMessage methodCall(const QString &interface, const QString &method)
     {
         return QDBusMessage::createMethodCall(service, path, interface, method);
+    }
+}
+
+namespace
+{
+    /// The reply says nobody answered (no core, or none in time), as opposed to the core refusing.
+    bool coreUnreachable(const QDBusError &error)
+    {
+        switch (error.type()) {
+        case QDBusError::ServiceUnknown:
+        case QDBusError::NoReply:
+        case QDBusError::Disconnected:
+        case QDBusError::NoServer:
+        case QDBusError::TimedOut:
+        case QDBusError::UnknownObject:
+            return true;
+        default:
+            return false;
+        }
     }
 }
 
@@ -73,6 +94,8 @@ CoreBridge::CoreBridge(QObject *parent)
     bus.connect(service, path, iface, QStringLiteral("DeviceLost"), this, SLOT(onDeviceLost(QString)));
     bus.connect(service, path, iface, QStringLiteral("PairingCode"), this, SLOT(onPairingCode(QString, QString)));
     bus.connect(service, path, iface, QStringLiteral("PairingFinished"), this, SLOT(onPairingFinished(bool, QString, QString)));
+    bus.connect(service, path, iface, QStringLiteral("WifiUpgradeBlocked"), this, SLOT(onWifiUpgradeBlocked(QString)));
+    bus.connect(service, path, iface, QStringLiteral("WifiRequirementsChanged"), this, SLOT(onWifiRequirementsSignal(QString)));
     bus.connect(service, path, QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("PropertiesChanged"), this, SLOT(onPropertiesChanged(QString, QVariantMap, QStringList)));
     bus.connect(service, path, iface, QStringLiteral("TrustedChanged"), this, SLOT(loadTrustedDevices()));
 
@@ -85,6 +108,15 @@ CoreBridge::CoreBridge(QObject *parent)
     m_discoveryStopTimer.setSingleShot(true);
     m_discoveryStopTimer.setInterval(30000);
     connect(&m_discoveryStopTimer, &QTimer::timeout, this, &CoreBridge::stopDiscoveryNow);
+
+    // A report goes stale when its time to live is over (see `adoptRequirements`).
+    m_requirementsStaleTimer.setSingleShot(true);
+    connect(&m_requirementsStaleTimer, &QTimer::timeout, this, [this]
+            {
+        if (m_requirementsHasReport && !m_requirementsStale) {
+            markRequirementsStale(m_requirementsError);
+        } });
+    rebuildRequirementsMap();
 
     removeOldClipboardImages();
 
@@ -255,8 +287,13 @@ void CoreBridge::onServiceRegistered()
     m_suspended = false; // a fresh core is not suspended
     emit suspendedChanged();
     emit connectedChanged();
+    // A report of an earlier core says nothing about this one, and its late replies are ignored.
+    m_requirementsTracker.invalidate();
+    setRequirementsBusy(false);
+    markRequirementsStale(QString());
     refreshProperties();
     m_transfers.clearAll();
+    emit transfersReset();
     loadHistory();
     loadHistorySize();
     loadTrustedDevices();
@@ -278,6 +315,9 @@ void CoreBridge::onServiceUnregistered()
     m_discoveryResume = m_discoveryRunning;
     m_discoveryRunning = false;
     m_devices.clear();
+    m_requirementsTracker.invalidate();
+    setRequirementsBusy(false);
+    markRequirementsStale(QStringLiteral("unavailable"));
     // The core will not report these any more.
     for (const QString &id : m_transfers.disconnectLive())
     {
@@ -349,9 +389,15 @@ void CoreBridge::refreshProperties()
         const bool trusted = props.value(QStringLiteral("TrustedDevicesEnabled"), m_trustedDevicesEnabled).toBool();
         const bool trustedChanged = trusted != m_trustedDevicesEnabled;
         m_trustedDevicesEnabled = trusted;
+        const bool reset = props.value(QStringLiteral("TrustedDevicesReset"), m_trustedDevicesReset).toBool();
+        const bool resetChanged = reset != m_trustedDevicesReset;
+        m_trustedDevicesReset = reset;
         const bool wifiUpgrade = props.value(QStringLiteral("WifiUpgrade"), m_wifiUpgrade).toBool();
         const bool wifiChanged = wifiUpgrade != m_wifiUpgrade;
         m_wifiUpgrade = wifiUpgrade;
+        const bool insecure = props.value(QStringLiteral("InsecureHotspotAllowed"), m_insecureHotspotAllowed).toBool();
+        const bool insecureChanged = insecure != m_insecureHotspotAllowed;
+        m_insecureHotspotAllowed = insecure;
         const bool trayChanged = tray != m_trayIcon;
         const bool dolphinChanged = dolphin != m_dolphinIntegration;
         m_trayIcon = tray;
@@ -388,11 +434,17 @@ void CoreBridge::refreshProperties()
         if (trustedChanged) {
             emit trustedDevicesEnabledChanged();
         }
+        if (resetChanged) {
+            emit trustedDevicesResetChanged();
+        }
         if (dolphinChanged) {
             emit dolphinIntegrationChanged();
         }
         if (wifiChanged) {
             emit wifiUpgradeChanged();
+        }
+        if (insecureChanged) {
+            emit insecureHotspotAllowedChanged();
         }
         if (keepChanged) {
             emit historyKeepDaysChanged();
@@ -490,6 +542,650 @@ void CoreBridge::loadAllowedDevices()
         emit allowedDevicesChanged(); });
 }
 
+void CoreBridge::answerTransfer(const QString &id, const QString &answer)
+{
+    answerWithToken(id, m_transfers.info(id).value(QStringLiteral("consent")).toULongLong(), answer);
+}
+
+void CoreBridge::answerWithToken(const QString &id, quint64 token, const QString &answer)
+{
+    if (token == 0)
+    {
+        // The core reported no consent for this transfer: nothing waits for an answer.
+        emit answerRefused(id);
+        return;
+    }
+    auto msg = methodCall(iface, QStringLiteral("AnswerTransfer"));
+    msg << id << token << answer;
+    auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(msg), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, id](QDBusPendingCallWatcher *w)
+            {
+        w->deleteLater();
+        const QDBusPendingReply<> reply = *w;
+        if (!reply.isError()) {
+            return;
+        }
+        // The core names why it refused (`<interface>.Error.<Name>`).
+        const QString name = reply.error().name();
+        const auto is = [&name](const char *suffix) { return name.endsWith(QLatin1String(suffix)); };
+        if (is(".Error.NotWaiting") || is(".Error.Expired") || is(".Error.StaleToken")) {
+            // Nothing waits for this answer any more: the prompt is stale.
+            emit errorOccurred(i18n("This transfer is no longer waiting for an answer"));
+            emit answerRefused(id);
+            return;
+        }
+        // The transfer still waits (the sender cannot be trusted, or something else went wrong):
+        // the prompt stays, so the user can accept it without trusting.
+        if (is(".Error.NoMac")) {
+            emit errorOccurred(i18n("This device cannot be trusted: its network address is not known"));
+        } else if (is(".Error.NoName")) {
+            emit errorOccurred(i18n("This device cannot be trusted: it sent no name"));
+        } else if (is(".Error.DeviceChanged")) {
+            emit errorOccurred(i18n("This device cannot be trusted: its network address now belongs to another device"));
+        } else {
+            emit errorOccurred(reply.error().message());
+        }
+        emit answerNotApplied(id); });
+}
+
+QString CoreBridge::refusalText(const QString &reason)
+{
+    if (reason == QLatin1String("too_many_files"))
+    {
+        return i18n("The offer has too many files");
+    }
+    if (reason == QLatin1String("not_enough_space"))
+    {
+        return i18n("There is not enough free space in the download folder");
+    }
+    if (reason == QLatin1String("destination"))
+    {
+        return i18n("The download folder cannot be used");
+    }
+    if (reason == QLatin1String("bad_name"))
+    {
+        return i18n("A file name in the offer cannot be saved");
+    }
+    if (reason == QLatin1String("bad_size") || reason == QLatin1String("duplicate_id"))
+    {
+        return i18n("The offer is malformed");
+    }
+    // A code this version does not know.
+    return reason.isEmpty() ? QString() : i18n("The offer was refused");
+}
+
+namespace
+{
+    namespace RR = RequirementsReport;
+
+    struct RequirementText
+    {
+        QString text;
+        QString hint;
+        QString command;
+    };
+
+    QString overrideCommand(const QString &option)
+    {
+        return QStringLiteral("flatpak override --user %1 %2").arg(option, Launcher::flatpakId());
+    }
+
+    QString talkCommand(const QString &busName)
+    {
+        return overrideCommand(QStringLiteral("--system-talk-name=") + busName);
+    }
+
+    /// An interface name that is safe to put in a command (the core sends only such names).
+    bool isInterfaceName(const QString &name)
+    {
+        static const QRegularExpression pattern(QStringLiteral("^[A-Za-z0-9_.:-]{1,32}$"));
+        return pattern.match(name).hasMatch();
+    }
+
+    QString requirementTitle(const QString &id)
+    {
+        if (id == QLatin1String("bluez.service")) {
+            return i18n("Bluetooth service (BlueZ)");
+        }
+        if (id == QLatin1String("bluez.adapter")) {
+            return i18n("Bluetooth adapter");
+        }
+        if (id == QLatin1String("bluez.powered")) {
+            return i18n("Bluetooth power");
+        }
+        if (id == QLatin1String("bluez.le")) {
+            return i18n("Bluetooth Low Energy");
+        }
+        if (id == QLatin1String("bluez.advertising")) {
+            return i18n("Bluetooth advertising");
+        }
+        if (id == QLatin1String("bluez.scanning")) {
+            return i18n("Bluetooth scanning");
+        }
+        if (id == QLatin1String("bluez.transport")) {
+            return i18n("Bluetooth GATT services");
+        }
+        if (id == QLatin1String("bluez.l2cap")) {
+            return i18n("Bluetooth fast channel (L2CAP)");
+        }
+        if (id == QLatin1String("nm.service")) {
+            return i18n("NetworkManager");
+        }
+        if (id == QLatin1String("nm.networking")) {
+            return i18n("Networking switch");
+        }
+        if (id == QLatin1String("nm.wifi_enabled")) {
+            return i18n("Wi-Fi switch");
+        }
+        if (id == QLatin1String("nm.hardware_enabled")) {
+            return i18n("Wi-Fi radio switch");
+        }
+        if (id == QLatin1String("nm.device")) {
+            return i18n("Wi-Fi adapter");
+        }
+        if (id == QLatin1String("nm.managed")) {
+            return i18n("Wi-Fi adapter management");
+        }
+        if (id == QLatin1String("nm.firmware")) {
+            return i18n("Wi-Fi adapter firmware");
+        }
+        if (id == QLatin1String("nm.driver")) {
+            return i18n("Wi-Fi adapter driver");
+        }
+        if (id == QLatin1String("nm.permissions")) {
+            return i18n("NetworkManager permissions");
+        }
+        if (id == QLatin1String("wifi.client")) {
+            return i18n("Wi-Fi client mode");
+        }
+        if (id == QLatin1String("wifi.ap")) {
+            return i18n("Wi-Fi hotspot mode");
+        }
+        if (id == QLatin1String("wifi.dhcp")) {
+            return i18n("Hotspot addresses (dnsmasq)");
+        }
+        if (id == QLatin1String("firewall.integration")) {
+            return i18n("Firewall (firewalld)");
+        }
+        if (id == QLatin1String("sandbox.permissions")) {
+            return i18n("Flatpak permissions");
+        }
+        // A requirement this version does not know: its id is all there is to show.
+        return id;
+    }
+
+    /// What a reason code means and what to do about it. Hints name the one thing to fix (a switched-off adapter is
+    /// not a missing package); commands are only shown to be copied, never run.
+    RequirementText requirementText(const QString &id, const QString &reason, const QString &device)
+    {
+        const auto isId = [&id](const char *want) { return id == QLatin1String(want); };
+        const auto isReason = [&reason](const char *want) { return reason == QLatin1String(want); };
+
+        // Reasons any requirement can have.
+        if (isReason("ok")) {
+            return {i18n("Nothing is missing"), {}, {}};
+        }
+        if (isReason("timeout")) {
+            return {i18n("The check took too long"), i18n("Refresh to check again; if it keeps happening, the service it asks may be busy or stuck"), {}};
+        }
+        if (isReason("bus_unreachable")) {
+            return {i18n("The system message bus could not be reached"), i18n("The check needs the system D-Bus; refresh to try again"), {}};
+        }
+        if (isReason("malformed_reply")) {
+            return {i18n("The service gave an answer that could not be understood"), i18n("Refresh to try again; if it persists, update the service"), {}};
+        }
+        if (isReason("query_failed")) {
+            return {i18n("The check failed"), i18n("Refresh to try again"), {}};
+        }
+        if (isReason("skipped")) {
+            return {i18n("Not checked, because something it depends on is not ready"), i18n("Fix the items that are blocked or unknown first"), {}};
+        }
+
+        if (isId("bluez.service")) {
+            if (isReason("not_running")) {
+                return {i18n("The Bluetooth service is not running"), i18n("Start the Bluetooth service; if BlueZ is not installed, install it first"), QStringLiteral("sudo systemctl enable --now bluetooth.service")};
+            }
+            if (isReason("not_running_activatable")) {
+                return {i18n("The Bluetooth service is installed but not running"), i18n("It starts when something needs it; to start it now, use the command"), QStringLiteral("sudo systemctl start bluetooth.service")};
+            }
+            if (isReason("sandbox_denied")) {
+                return {i18n("The sandbox hides the Bluetooth service"), i18n("Allow the sandbox to talk to BlueZ, then restart KuickShare"), talkCommand(QStringLiteral("org.bluez"))};
+            }
+        } else if (isId("bluez.adapter")) {
+            if (isReason("no_adapter")) {
+                return {i18n("No Bluetooth adapter was found"), i18n("Plug in or enable a Bluetooth adapter; if one is installed, check that its driver is loaded"), {}};
+            }
+        } else if (isId("bluez.powered")) {
+            if (isReason("powered_off")) {
+                return {i18n("The Bluetooth adapter is turned off"), i18n("KuickShare turns it on when it needs it; you can also turn Bluetooth on in the system settings"), {}};
+            }
+            if (isReason("rfkill_blocked")) {
+                return {i18n("Blocked by a radio switch"), i18n("Turn Bluetooth on in the system settings"), {}};
+            }
+        } else if (isId("bluez.le")) {
+            if (isReason("no_le_roles")) {
+                return {i18n("The Bluetooth adapter does not support Bluetooth Low Energy"), i18n("Use an adapter that supports Bluetooth 4.0 or newer"), {}};
+            }
+            if (isReason("roles_unreported")) {
+                return {i18n("BlueZ does not report what the adapter can do"), i18n("This may still work; a newer BlueZ reports it"), {}};
+            }
+        } else if (isId("bluez.advertising")) {
+            if (isReason("unsupported")) {
+                return {i18n("The Bluetooth adapter cannot advertise"), i18n("Receiving by Bluetooth needs an adapter that can advertise; sending is not affected"), {}};
+            }
+            if (isReason("no_free_slot")) {
+                return {i18n("The adapter has no free advertising slot now"), i18n("Another program uses them; close it and refresh"), {}};
+            }
+        } else if (isId("bluez.scanning")) {
+            if (isReason("no_central_role")) {
+                return {i18n("The Bluetooth adapter cannot scan for devices"), i18n("Sending needs an adapter that can scan; use another one"), {}};
+            }
+            if (isReason("filters_unreported")) {
+                return {i18n("BlueZ does not report how the adapter can scan"), i18n("This may still work; a newer BlueZ reports it"), {}};
+            }
+        } else if (isId("bluez.transport")) {
+            if (isReason("no_gatt_manager")) {
+                return {i18n("BlueZ offers no GATT services"), i18n("Update BlueZ to a version with GATT support"), {}};
+            }
+        } else if (isId("bluez.l2cap")) {
+            if (isReason("sandbox_denied")) {
+                return {i18n("The sandbox does not allow Bluetooth sockets"), i18n("Transfers still work over a slower path; allow Bluetooth for the Flatpak to use the faster one"), overrideCommand(QStringLiteral("--allow=bluetooth"))};
+            }
+            if (isReason("kernel_unreported")) {
+                return {i18n("The kernel does not report Bluetooth socket support"), i18n("Transfers still work over a slower path if it is missing"), {}};
+            }
+        } else if (isId("nm.service")) {
+            if (isReason("not_running")) {
+                return {i18n("NetworkManager is not running"), i18n("Wi-Fi Direct needs NetworkManager; start it, or install it if this computer uses another network tool"), QStringLiteral("sudo systemctl enable --now NetworkManager.service")};
+            }
+            if (isReason("not_running_activatable")) {
+                return {i18n("NetworkManager is installed but not running"), i18n("It starts when something needs it; to start it now, use the command"), QStringLiteral("sudo systemctl start NetworkManager.service")};
+            }
+            if (isReason("sandbox_denied")) {
+                return {i18n("The sandbox hides NetworkManager"), i18n("Allow the sandbox to talk to NetworkManager, then restart KuickShare"), talkCommand(QStringLiteral("org.freedesktop.NetworkManager"))};
+            }
+        } else if (isId("nm.networking")) {
+            if (isReason("disabled")) {
+                return {i18n("Networking is turned off in NetworkManager"), i18n("Turn networking on in the network settings"), QStringLiteral("nmcli networking on")};
+            }
+        } else if (isId("nm.wifi_enabled")) {
+            if (isReason("disabled")) {
+                return {i18n("Wi-Fi is turned off"), i18n("Turn Wi-Fi on in the system settings"), QStringLiteral("nmcli radio wifi on")};
+            }
+        } else if (isId("nm.hardware_enabled")) {
+            if (isReason("switch_off")) {
+                return {i18n("A hardware switch has turned the Wi-Fi radio off"), i18n("Use the Wi-Fi switch or key of this computer"), {}};
+            }
+        } else if (isId("nm.device")) {
+            if (isReason("ok_first_of_many")) {
+                return {i18n("There are several Wi-Fi adapters; the first one is used"), i18n("If transfers fail, turn off the adapters you do not need"), {}};
+            }
+            if (isReason("no_wifi_device")) {
+                return {i18n("No Wi-Fi adapter was found"), i18n("Plug in a Wi-Fi adapter, or check that the driver of the built-in one is loaded"), {}};
+            }
+        } else if (isId("nm.managed")) {
+            if (isReason("unmanaged")) {
+                return {i18n("NetworkManager does not manage the Wi-Fi adapter"), i18n("Let NetworkManager manage it: another network tool or an unmanaged-devices setting may be holding it"), isInterfaceName(device) ? QStringLiteral("nmcli device set %1 managed yes").arg(device) : QString()};
+            }
+        } else if (isId("nm.firmware")) {
+            if (isReason("firmware_missing")) {
+                return {i18n("The Wi-Fi adapter needs firmware that is not installed"), i18n("Install the firmware package for the adapter (often linux-firmware), then restart the computer"), {}};
+            }
+        } else if (isId("nm.driver")) {
+            if (isReason("plugin_missing")) {
+                return {i18n("The NetworkManager plugin for the Wi-Fi adapter is missing"), i18n("Install the NetworkManager Wi-Fi plugin package of your distribution, then restart NetworkManager"), {}};
+            }
+            if (isReason("unavailable")) {
+                return {i18n("NetworkManager reports the Wi-Fi adapter as unavailable"), i18n("Check that its driver loaded and its radio is on"), {}};
+            }
+        } else if (isId("nm.permissions")) {
+            if (isReason("auth_required")) {
+                return {i18n("NetworkManager asks for authentication to control the network"), i18n("The hotspot may prompt for a password or be refused; allow network control for your user in the PolicyKit settings"), {}};
+            }
+            if (isReason("denied")) {
+                return {i18n("NetworkManager does not allow this user to control the network"), i18n("Ask the administrator to allow network control and changes to system connections for your user"), {}};
+            }
+        } else if (isId("wifi.client")) {
+            if (isReason("prerequisite_blocked")) {
+                return {i18n("Joining Wi-Fi cannot work: something it needs is blocked"), i18n("Fix the blocked items of NetworkManager and the Wi-Fi adapter"), {}};
+            }
+            if (isReason("prerequisite_uncertain")) {
+                return {i18n("It is not known whether joining Wi-Fi works: something it needs could not be checked"), i18n("Refresh when the items above are sorted out"), {}};
+            }
+            if (isReason("sandbox_no_network")) {
+                return {i18n("The sandbox has no network access"), i18n("Allow the network for the Flatpak"), overrideCommand(QStringLiteral("--share=network"))};
+            }
+        } else if (isId("wifi.ap")) {
+            if (isReason("no_ap_mode")) {
+                return {i18n("The Wi-Fi adapter cannot create a hotspot"), i18n("Receiving by Wi-Fi needs an adapter with access point mode; Bluetooth still works"), {}};
+            }
+            if (isReason("no_wpa2")) {
+                return {i18n("The Wi-Fi adapter cannot protect a hotspot with WPA2"), i18n("Receiving by Wi-Fi needs WPA2 on the adapter; Bluetooth still works"), {}};
+            }
+            if (isReason("no_band")) {
+                return {i18n("The Wi-Fi adapter reports no 2.4 GHz or 5 GHz band for a hotspot"), i18n("Receiving by Wi-Fi needs one of them; Bluetooth still works"), {}};
+            }
+            if (isReason("caps_unreported")) {
+                return {i18n("The Wi-Fi driver does not report what the adapter can do"), i18n("The hotspot may still work; it could not be checked"), {}};
+            }
+            if (isReason("share_auth_required")) {
+                return {i18n("NetworkManager asks for authentication to share a connection"), i18n("The hotspot may prompt for a password or be refused; allow it in the PolicyKit settings"), {}};
+            }
+            if (isReason("share_denied")) {
+                return {i18n("This user may not share a connection"), i18n("Ask the administrator to allow sharing connections in NetworkManager"), {}};
+            }
+            if (isReason("sandbox_no_network")) {
+                return {i18n("The sandbox has no network access"), i18n("Allow the network for the Flatpak"), overrideCommand(QStringLiteral("--share=network"))};
+            }
+        } else if (isId("wifi.dhcp")) {
+            if (isReason("binary_present")) {
+                return {i18n("dnsmasq is installed"), {}, {}};
+            }
+            if (isReason("worked_this_session")) {
+                return {i18n("The hotspot already handed out addresses in this session"), {}, {}};
+            }
+            if (isReason("not_found")) {
+                return {i18n("dnsmasq was not found"), i18n("The hotspot hands out addresses with dnsmasq; install the dnsmasq or dnsmasq-base package"), {}};
+            }
+            if (isReason("sandbox_unobservable")) {
+                return {i18n("dnsmasq cannot be looked for from inside the sandbox"), i18n("If the hotspot gets no addresses, install dnsmasq or dnsmasq-base on this computer"), {}};
+            }
+            if (isReason("shared_start_failed")) {
+                return {i18n("The hotspot could not start its address service"), i18n("Install the dnsmasq or dnsmasq-base package"), {}};
+            }
+        } else if (isId("firewall.integration")) {
+            if (isReason("not_running")) {
+                return {i18n("The firewall service (firewalld) is not running"), i18n("KuickShare cannot open the hotspot port by itself; it asks you before the hotspot uses an open zone"), {}};
+            }
+            if (isReason("sandbox_denied")) {
+                return {i18n("The sandbox hides the firewall service"), i18n("Allow the sandbox to talk to firewalld, then restart KuickShare"), talkCommand(QStringLiteral("org.fedoraproject.FirewallD1"))};
+            }
+            if (isReason("zone_missing")) {
+                return {i18n("The firewall has no zone for the hotspot (nm-shared)"), i18n("The hotspot may be blocked or open; add the zone or check its rules"), {}};
+            }
+            if (isReason("permission_auth")) {
+                return {i18n("Changing the firewall asks for authentication"), i18n("Opening the hotspot port may prompt for a password or be refused"), {}};
+            }
+            if (isReason("permission_denied")) {
+                return {i18n("This user may not change the firewall"), i18n("The hotspot port cannot be opened; ask the administrator to allow it"), {}};
+            }
+            if (isReason("permission_unverifiable")) {
+                return {i18n("It cannot be checked whether this user may change the firewall"), i18n("A sandbox cannot ask for this; the hotspot is tried anyway"), {}};
+            }
+            if (isReason("denied_this_session")) {
+                return {i18n("The firewall refused the hotspot in this session"), i18n("Allow the hotspot in the firewall, or let it use an open zone when asked"), {}};
+            }
+            if (isReason("consent_given")) {
+                return {i18n("You allowed the hotspot to use an open firewall zone in this session"), i18n("Turning the setting off takes this back"), {}};
+            }
+        } else if (isId("sandbox.permissions")) {
+            if (isReason("missing")) {
+                return {i18n("The Flatpak lacks permissions it needs"), i18n("Allow the permissions named in the details with flatpak override"), {}};
+            }
+            if (isReason("filesystem_host")) {
+                return {i18n("The Flatpak can see the whole file system"), i18n("It does not need to; take that permission away"), overrideCommand(QStringLiteral("--nofilesystem=host"))};
+            }
+        }
+        // A code this version does not know.
+        return {i18n("No more information is available"), {}, {}};
+    }
+
+    QString statusText(RR::Status status)
+    {
+        switch (status) {
+        case RR::Status::Ready:
+            return i18n("Ready");
+        case RR::Status::Warning:
+            return i18n("Warning");
+        case RR::Status::Blocked:
+            return i18n("Blocked");
+        case RR::Status::Checking:
+            return i18n("Checking");
+        case RR::Status::Unknown:
+            break;
+        }
+        return i18n("Unknown");
+    }
+
+    QString statusIcon(RR::Status status)
+    {
+        switch (status) {
+        case RR::Status::Ready:
+            return QStringLiteral("dialog-ok");
+        case RR::Status::Warning:
+            return QStringLiteral("dialog-warning");
+        case RR::Status::Blocked:
+            return QStringLiteral("dialog-error");
+        case RR::Status::Checking:
+            return QStringLiteral("view-refresh");
+        case RR::Status::Unknown:
+            break;
+        }
+        return QStringLiteral("dialog-question");
+    }
+
+    QString capabilityLabel(RR::Capability capability)
+    {
+        switch (capability) {
+        case RR::Capability::Available:
+            return i18n("Available");
+        case RR::Capability::Degraded:
+            return i18n("Limited");
+        case RR::Capability::Unavailable:
+            return i18n("Unavailable");
+        case RR::Capability::Unknown:
+            break;
+        }
+        return i18n("Unknown");
+    }
+
+    QString capabilityIcon(RR::Capability capability)
+    {
+        switch (capability) {
+        case RR::Capability::Available:
+            return QStringLiteral("dialog-ok");
+        case RR::Capability::Degraded:
+            return QStringLiteral("dialog-warning");
+        case RR::Capability::Unavailable:
+            return QStringLiteral("dialog-error");
+        case RR::Capability::Unknown:
+            break;
+        }
+        return QStringLiteral("dialog-question");
+    }
+
+    QVariantMap capabilityMap(RR::Capability capability)
+    {
+        return {{QStringLiteral("status"), RR::capabilityCode(capability)},
+                {QStringLiteral("label"), capabilityLabel(capability)},
+                {QStringLiteral("iconName"), capabilityIcon(capability)}};
+    }
+
+    QString affectsText(const QStringList &affects)
+    {
+        QStringList words;
+        if (affects.contains(QLatin1String("sending"))) {
+            words << i18n("sending");
+        }
+        if (affects.contains(QLatin1String("receiving"))) {
+            words << i18n("receiving");
+        }
+        if (affects.contains(QLatin1String("join_network"))) {
+            words << i18n("joining networks");
+        }
+        return QLocale().createSeparatedList(words);
+    }
+
+    QVariantMap rowMap(const RR::Row &row)
+    {
+        const RequirementText text = requirementText(row.id, row.reasonCode, row.device);
+        return {{QStringLiteral("id"), row.id},
+                {QStringLiteral("title"), requirementTitle(row.id)},
+                {QStringLiteral("status"), RR::statusCode(row.status)},
+                {QStringLiteral("statusText"), statusText(row.status)},
+                {QStringLiteral("iconName"), statusIcon(row.status)},
+                {QStringLiteral("category"), RR::categoryCode(row.category)},
+                {QStringLiteral("reasonCode"), row.reasonCode},
+                {QStringLiteral("reasonText"), text.text},
+                {QStringLiteral("hint"), text.hint},
+                {QStringLiteral("command"), text.command},
+                {QStringLiteral("details"), row.details},
+                {QStringLiteral("device"), row.device},
+                {QStringLiteral("verification"), row.verification},
+                {QStringLiteral("affectsText"), affectsText(row.affects)}};
+    }
+
+    /// `rows` that feed `capability` and are not ready, or every row when `capability` is empty.
+    QVariantMap sectionMap(const QString &key, const QString &title, const QList<RR::Row> &rows, const QString &capability)
+    {
+        QVariantList list;
+        for (const RR::Row &row : rows) {
+            if (capability.isEmpty() || (row.status != RR::Status::Ready && row.affects.contains(capability))) {
+                list << rowMap(row);
+            }
+        }
+        return {{QStringLiteral("key"), key}, {QStringLiteral("title"), title}, {QStringLiteral("rows"), list}};
+    }
+}
+
+void CoreBridge::requestWifiRequirements(bool force)
+{
+    if (!m_connected) {
+        markRequirementsStale(QStringLiteral("unavailable"));
+        return;
+    }
+    if (m_wifiRequirementsBusy && !force) {
+        return; // the check on its way answers this one too
+    }
+    // Only the reply of the newest request, from the core that was there when it was sent, is used.
+    const RR::RequestTracker::Ticket ticket = m_requirementsTracker.begin();
+    setRequirementsBusy(true);
+    auto msg = methodCall(iface, QStringLiteral("WifiRequirements"));
+    msg << force;
+    auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(msg), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, ticket](QDBusPendingCallWatcher *w)
+            {
+        w->deleteLater();
+        if (!m_requirementsTracker.sameEpoch(ticket)) {
+            return; // the core restarted since: this reply is from before
+        }
+        const bool latest = m_requirementsTracker.isCurrent(ticket);
+        if (latest) {
+            setRequirementsBusy(false);
+        }
+        const QDBusPendingReply<QString> reply = *w;
+        if (reply.isError()) {
+            qWarning() << "WifiRequirements failed:" << reply.error().name();
+            if (latest) {
+                markRequirementsStale(coreUnreachable(reply.error()) ? QStringLiteral("unavailable") : QStringLiteral("schema"));
+            }
+            return;
+        }
+        const RR::Parsed report = RR::parse(reply.value().toUtf8());
+        if (!report.ok()) {
+            qWarning() << "WifiRequirements: the reply could not be read";
+            if (latest) {
+                markRequirementsStale(QStringLiteral("schema"));
+            }
+            return;
+        }
+        if (m_requirementsTracker.accept(ticket)) {
+            adoptRequirements(report);
+        } });
+}
+
+void CoreBridge::onWifiRequirementsSignal(const QString &json)
+{
+    const RequirementsReport::Parsed report = RequirementsReport::parse(json.toUtf8());
+    if (!report.ok()) {
+        qWarning() << "WifiRequirementsChanged: the report could not be read";
+        markRequirementsStale(QStringLiteral("schema"));
+        return;
+    }
+    if (m_requirementsTracker.acceptSignal()) {
+        adoptRequirements(report);
+    }
+}
+
+void CoreBridge::adoptRequirements(const RequirementsReport::Parsed &report)
+{
+    m_requirementsReport = report;
+    m_requirementsHasReport = true;
+    m_requirementsError.clear();
+    const qint64 left = RR::staleInMs(report.generatedAtMs, report.ttlMs, QDateTime::currentMSecsSinceEpoch());
+    m_requirementsStale = left <= 0;
+    if (m_requirementsStale) {
+        m_requirementsStaleTimer.stop();
+    } else {
+        m_requirementsStaleTimer.start(static_cast<int>(left));
+    }
+    rebuildRequirementsMap();
+}
+
+void CoreBridge::markRequirementsStale(const QString &error)
+{
+    m_requirementsStaleTimer.stop();
+    m_requirementsStale = true;
+    m_requirementsError = error;
+    rebuildRequirementsMap();
+}
+
+void CoreBridge::setRequirementsBusy(bool busy)
+{
+    if (busy != m_wifiRequirementsBusy) {
+        m_wifiRequirementsBusy = busy;
+        emit wifiRequirementsBusyChanged();
+    }
+}
+
+void CoreBridge::rebuildRequirementsMap()
+{
+    const RR::Parsed &report = m_requirementsReport;
+    const bool valid = m_requirementsHasReport;
+    QVariantMap map;
+    map.insert(QStringLiteral("valid"), valid);
+    map.insert(QStringLiteral("stale"), valid && m_requirementsStale);
+    map.insert(QStringLiteral("error"), m_requirementsError);
+    map.insert(QStringLiteral("generatedAtMs"), valid ? report.generatedAtMs : qint64(0));
+    map.insert(QStringLiteral("ttlMs"), valid ? report.ttlMs : qint64(0));
+    map.insert(QStringLiteral("packaging"), valid ? report.packaging : QString());
+    map.insert(QStringLiteral("coreVersion"), valid ? report.coreVersion : QString());
+    QVariantMap capabilities;
+    capabilities.insert(QStringLiteral("sending"), capabilityMap(valid ? report.sending : RR::Capability::Unknown));
+    capabilities.insert(QStringLiteral("receiving"), capabilityMap(valid ? report.receiving : RR::Capability::Unknown));
+    capabilities.insert(QStringLiteral("joinNetwork"), capabilityMap(valid ? report.joinNetwork : RR::Capability::Unknown));
+    map.insert(QStringLiteral("capabilities"), capabilities);
+    QVariantList sections;
+    if (valid) {
+        sections << sectionMap(QStringLiteral("sending"), i18n("Sending"), report.rows, QStringLiteral("sending"))
+                 << sectionMap(QStringLiteral("receiving"), i18n("Receiving"), report.rows, QStringLiteral("receiving"))
+                 << sectionMap(QStringLiteral("join_network"), i18n("Join network"), report.rows, QStringLiteral("join_network"))
+                 << sectionMap(QStringLiteral("system"), i18n("System components"), report.rows, QString());
+    }
+    map.insert(QStringLiteral("sections"), sections);
+    if (map != m_wifiRequirements) {
+        m_wifiRequirements = map;
+        emit wifiRequirementsChanged();
+    }
+}
+
+void CoreBridge::copyWifiRequirementsReport()
+{
+    copyToClipboard(RR::formatReport(m_requirementsHasReport ? m_requirementsReport : RR::Parsed(), QStringLiteral(KUICKSHARE_VERSION), m_requirementsStale));
+}
+
+void CoreBridge::acknowledgeTrustedDevicesReset()
+{
+    if (!m_trustedDevicesReset)
+    {
+        return;
+    }
+    m_trustedDevicesReset = false;
+    emit trustedDevicesResetChanged();
+    // A failure reads the property again, which brings the notice back.
+    callAsync(methodCall(iface, QStringLiteral("AcknowledgeTrustedDevicesReset")));
+}
+
 void CoreBridge::allowDevice(const QString &transferId)
 {
     auto msg = methodCall(iface, QStringLiteral("AllowDevice"));
@@ -539,15 +1235,46 @@ void CoreBridge::setTrustedDevicesEnabled(bool enabled)
 
 void CoreBridge::setWifiUpgrade(bool enabled)
 {
-    if (enabled == m_wifiUpgrade) {
-        return;
-    }
-    m_wifiUpgrade = enabled;
-    emit wifiUpgradeChanged();
-    setRemoteProperty(QStringLiteral("WifiUpgrade"), enabled);
+    // Not optimistic: `m_wifiUpgrade` only takes what the core reports, so a refusal leaves the setting as it was.
+    requestWifiUpgrade(enabled, false);
 }
 
-void CoreBridge::requestWifiUpgrade()
+void CoreBridge::requestWifiUpgrade(bool enabled, bool allowInsecure)
+{
+    auto msg = methodCall(iface, QStringLiteral("RequestWifiUpgrade"));
+    msg << enabled << allowInsecure;
+    auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(msg), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *w)
+            {
+        w->deleteLater();
+        const QDBusPendingReply<> reply = *w;
+        if (!reply.isError()) {
+            refreshProperties();
+            loadWifiRequirements();
+            return;
+        }
+        const QDBusError error = reply.error();
+        QString reason = QStringLiteral("failed");
+        if (error.name().endsWith(QLatin1String(".Error.RequirementsBlocked"))) {
+            reason = QStringLiteral("requirements_blocked");
+        } else if (coreUnreachable(error)) {
+            reason = QStringLiteral("service_unavailable");
+        }
+        if (reason == QLatin1String("failed")) {
+            emit errorOccurred(error.message());
+        }
+        // The switch shows the value of the core again, whatever the user did to it.
+        emit wifiUpgradeChanged();
+        emit wifiUpgradeRefused(reason);
+        if (reason != QLatin1String("service_unavailable")) {
+            refreshProperties();
+        }
+        if (reason == QLatin1String("requirements_blocked")) {
+            loadWifiRequirements(); // the dialog the user opens next shows what blocked it
+        } });
+}
+
+void CoreBridge::enableWifiUpgrade()
 {
     auto *watcher = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(methodCall(iface, QStringLiteral("FirewallManaged"))), this);
     connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *w)
@@ -556,7 +1283,7 @@ void CoreBridge::requestWifiUpgrade()
         const QDBusPendingReply<bool> reply = *w;
         // A core that cannot answer is not a reason to refuse the setting.
         if (reply.isError() || reply.value()) {
-            setWifiUpgrade(true);
+            requestWifiUpgrade(true, false);
         } else {
             emit firewallWarning();
         } });

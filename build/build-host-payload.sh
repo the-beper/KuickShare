@@ -13,7 +13,7 @@ version=$(sed -n 's/^project(kuickshare VERSION \([0-9.]*\).*/\1/p' src/shell/CM
 
 mkdir -p dist/tmp
 cargo build --release --locked
-cmake -S src/shell -B dist/tmp/cmake-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake -S src/shell -B dist/tmp/cmake-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 cmake --build dist/tmp/cmake-release
 
 stage=dist/tmp/host
