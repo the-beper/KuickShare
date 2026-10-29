@@ -40,7 +40,7 @@ tmp=$(mktemp -d "$scratch/sign.XXXXXX")
 gnupg=$(mktemp -d "$scratch/gnupg.XXXXXX")
 cleanup() {
     set +e
-    gpgconf --homedir "$gnupg" --kill gpg-agent 2> /dev/null
+    gpgconf --homedir "$gnupg" --kill all 2> /dev/null
     rm -rf "$gnupg" "$tmp"
 }
 trap cleanup EXIT
@@ -74,23 +74,6 @@ while IFS=$tab read -r ref commit parent; do
 done < "$refs"
 [ $# -gt 0 ] || bad_input "refs.txt lists no ref"
 
-# ---- the key ----
-want_fpr=$(gpg --batch --show-keys --with-colons "$pubkey" | awk -F: '$1 == "pub" { p = 1 } p && $1 == "fpr" { print $10; exit }')
-printf '%s\n' "$want_fpr" | grep -Eq '^[0-9A-F]{40}$' || bad_input "cannot read the fingerprint of $pubkey"
-if printf '%s\n' "$FLATPAK_GPG_PRIVATE_KEY" | gpg --batch --quiet --import 2> "$tmp/import.log"; then :; else
-    sed 's/^/gpg: /' "$tmp/import.log" >&2
-    bad_input "the secret FLATPAK_GPG_PRIVATE_KEY cannot be imported"
-fi
-unset FLATPAK_GPG_PRIVATE_KEY
-secret_count=$(gpg --batch --list-secret-keys --with-colons | awk -F: '$1 == "sec" { n++ } END { print n + 0 }')
-[ "$secret_count" -eq 1 ] || bad_input "the secret holds $secret_count keys, expected exactly one"
-fpr=$(gpg --batch --list-secret-keys --with-colons | awk -F: '$1 == "fpr" { print $10; exit }')
-[ "$fpr" = "$want_fpr" ] || bad_input "the secret key is $fpr, but $pubkey is $want_fpr: refusing to sign (that would make every installed client reject the repository)"
-echo probe > "$tmp/probe"
-gpg --batch --yes --quiet --pinentry-mode error --local-user "$fpr" --detach-sign -o "$tmp/probe.sig" "$tmp/probe" \
-    || bad_input "the key cannot sign without a passphrase"
-echo "sign-flatpak-repo: signing key $fpr matches $(basename "$pubkey")"
-
 # ---- the published repository ----
 heads=$(git ls-remote --heads "$remote" gh-pages | cut -f1)
 pages=$tmp/pages
@@ -119,6 +102,28 @@ for ref in "$@"; do
     want=$(awk -F'\t' -v r="$ref" '$1 == r { print $2 }' "$refs")
     [ "$(ostree --repo="$repo" rev-parse "$ref")" = "$want" ] || fail "$ref is not at the exported commit after the pull"
 done
+
+# ---- the key ----
+want_fpr=$(gpg --batch --show-keys --with-colons "$pubkey" | awk -F: '$1 == "pub" { p = 1 } p && $1 == "fpr" { print $10; exit }')
+printf '%s\n' "$want_fpr" | grep -Eq '^[0-9A-F]{40}$' || bad_input "cannot read the fingerprint of $pubkey"
+if printf '%s\n' "$FLATPAK_GPG_PRIVATE_KEY" | gpg --batch --quiet --import 2> "$tmp/import.log"; then :; else
+    sed 's/^/gpg: /' "$tmp/import.log" >&2
+    bad_input "the secret FLATPAK_GPG_PRIVATE_KEY cannot be imported"
+fi
+# Something to look for in the site before it is archived: the secret key text and the keygrips of its keys.
+secret_probe=$(printf '%s\n' "$FLATPAK_GPG_PRIVATE_KEY" | sed -n '3p')
+unset FLATPAK_GPG_PRIVATE_KEY
+secret_count=$(gpg --batch --list-secret-keys --with-colons | awk -F: '$1 == "sec" { n++ } END { print n + 0 }')
+[ "$secret_count" -eq 1 ] || bad_input "the secret holds $secret_count keys, expected exactly one"
+fpr=$(gpg --batch --list-secret-keys --with-colons | awk -F: '$1 == "fpr" { print $10; exit }')
+[ "$fpr" = "$want_fpr" ] || bad_input "the secret key is $fpr, but $pubkey is $want_fpr: refusing to sign (that would make every installed client reject the repository)"
+gpg --batch --list-secret-keys --with-keygrip --with-colons | awk -F: '$1 == "grp" { print $10 }' > "$tmp/leaks"
+[ "${#secret_probe}" -lt 20 ] || printf '%s\n' "$secret_probe" >> "$tmp/leaks"
+echo "PRIVATE KEY BLOCK" >> "$tmp/leaks"
+echo probe > "$tmp/probe"
+gpg --batch --yes --quiet --pinentry-mode error --local-user "$fpr" --detach-sign -o "$tmp/probe.sig" "$tmp/probe" \
+    || bad_input "the key cannot sign without a passphrase"
+echo "sign-flatpak-repo: signing key $fpr matches $(basename "$pubkey")"
 
 # ---- sign, then finish: the deltas and the summary carry the commit signatures, so every ref is signed first ----
 for ref in "$@"; do
@@ -162,6 +167,10 @@ else
 fi
 
 # ---- the site, without git metadata and scratch files ----
+# The key lives in $gnupg, outside the site; make sure nothing of it was copied in.
+if grep -rqaF -f "$tmp/leaks" --exclude-dir=.git "$pages"; then
+    fail "key material found in the site directory"
+fi
 tar --sort=name --owner=0 --group=0 --numeric-owner --exclude=./.git --exclude=./repo/tmp -C "$pages" -cf "$out/site.tar" .
 cp "$refs" "$out/refs.txt"
 site_sha=$(sha256sum "$out/site.tar" | cut -d' ' -f1)

@@ -460,6 +460,14 @@ run "$rel/sign-flatpak-repo.sh" "$w/commits/flatpak-commits.tar" "$w/signed"
 drop_secret
 check "sign refuses commits that are not the ones the build job reported" rc_is 1
 check "(no keyring is left)" no_leftovers
+FAKE_FLATPAK_LEAK=1
+export FAKE_FLATPAK_LEAK
+job_sign
+unset FAKE_FLATPAK_LEAK
+check "sign refuses to archive a site that holds key material" rc_is 1
+check "(the message says so)" out_has "key material found"
+check "(no site was written)" not test -e "$w/signed/site.tar"
+check "(no keyring is left)" no_leftovers
 mkdir "$w/evil"
 tar -xf "$w/commits/flatpak-commits.tar" -C "$w/evil"
 ln -s /etc/passwd "$w/evil/repo/objects/link"

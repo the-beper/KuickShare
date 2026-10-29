@@ -100,6 +100,9 @@ def main():
         for ref, commit in refs_of(repo):
             if not os.path.isfile(os.path.join(repo, "objects", commit + ".commitmeta")):
                 die("build-update-repo: the commit of %s is not signed" % ref)
+        if os.environ.get("FAKE_FLATPAK_LEAK"):  # a tool that copies a secret into the site, to see the check catch it
+            with open(os.path.join(repo, "leak.txt"), "w") as f:
+                f.write("-----BEGIN PGP PRIVATE KEY BLOCK-----\n")
         summary = "".join("%s %s\n" % pair for pair in refs_of(repo))
         for name in ("summary", "summary.idx"):
             with open(os.path.join(repo, name), "w") as f:
