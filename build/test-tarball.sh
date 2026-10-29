@@ -16,7 +16,7 @@ TARBALL=${TARBALL:-$(readlink -f "$1")} # set by the launcher above; CI already 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 # A data folder with characters that need quoting in an Exec line and in a shell word.
-export HOME=$work/home XDG_DATA_HOME="$work/my data|&\$x/share" XDG_CONFIG_HOME= QT_QPA_PLATFORM=offscreen
+export HOME=$work/home XDG_DATA_HOME="$work/my data|&\$x/share" QT_QPA_PLATFORM=offscreen
 unset XDG_CONFIG_HOME
 mkdir -p "$HOME" "$work/src"
 tar -xzf "$TARBALL" -C "$work/src"

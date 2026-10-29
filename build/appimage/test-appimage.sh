@@ -48,6 +48,7 @@ cp "$1" "$app" # a copy the runtime can extract next to (APPIMAGE must name an e
 export APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1
 [ -e /run/dbus ] || mkdir -p /run/dbus
 export XDG_RUNTIME_DIR=/tmp/xdg-run
+# shellcheck disable=SC2174 # only the last component needs the mode; the script runs twice (dbus-run-session), so -p stays
 mkdir -p -m 700 "$XDG_RUNTIME_DIR"
 
 if [ "${KS_INNER:-}" != 1 ]; then

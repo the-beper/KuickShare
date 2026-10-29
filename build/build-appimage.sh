@@ -17,7 +17,6 @@
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
-version=$(sed -n 's/^project(kuickshare VERSION \([0-9.]*\).*/\1/p' src/shell/CMakeLists.txt)
 
 if [ ! -e /run/.containerenv ]; then
     image=localhost/kuickshare-appimage:arch
