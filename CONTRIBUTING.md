@@ -180,7 +180,7 @@ The tag triggers [`release.yml`](.github/workflows/release.yml), one run for one
 
 - Fix a transient problem and use "Re-run failed jobs": `publish` is idempotent (same asset content is skipped, a different one stops the run, nothing is overwritten; `gh-pages` is pushed only if it is not already the new site). To rebuild, "Re-run all jobs".
 - `stale base` (exit 3 in `sign-flatpak` or `publish`), or `the push to gh-pages was refused` (exit 3 in `publish`): another release changed `gh-pages` after the build; re-run all jobs.
-- `the newest release tag is vX.Y.Z` (`validate`): a newer release tag exists, so this tag cannot be released. Delete the tag only if it has no release, otherwise cut the next version.
+- `the newest release tag is vX.Y.Z` (`validate`): a newer release tag exists, so this tag cannot be released. If the newer tag was a mistake and has no release, delete it and re-run; otherwise cut the next version.
 - `ci-gate` fails: CI is red or missing on the tagged commit. Fix on `main`, then tag the new commit. Do not move a tag that was pushed: delete it and push a new one only if no release exists for it.
 - An asset with different content on the release (`refusing to overwrite`): look at why; delete that asset by hand only if it is the wrong one, then re-run `publish`.
 - Rollback of a bad Flatpak repository: `git fetch origin gh-pages-previous && git push --force origin FETCH_HEAD:gh-pages`, then `gh release edit vX.Y.Z --draft=true`. Clients that already updated keep the new commit; fix forward with a new version.
@@ -191,11 +191,11 @@ The release builds with fixed tool versions, bumped by hand in a pull request. D
 
 | Tool | Pin | Where | Re-check |
 |---|---|---|---|
-| Rust of the tarball | `1.99.1` | `RUST_VERSION` in `release.yml` | run `build/build-env.sh build/check.sh` with that toolchain; the `rustup-init` script itself is not pinned, it only installs this toolchain |
+| Rust of the tarball | `1.99.1` | `RUST_VERSION` in `release.yml`, and CI's tarball job (`check.sh` keeps them equal) | run `build/build-env.sh build/check.sh` with that toolchain; the `rustup-init` script itself is not pinned, it only installs this toolchain |
 | Rust of the Flatpak | `org.freedesktop.Sdk.Extension.rust-stable//25.08` at `09784a99…1507` (rustc 1.98.1) | `rust_commit` in `build/flatpak/build-flatpak.sh` | below |
 | KDE SDK and runtime | `org.kde.Sdk//6.11` at `df314f9c…3a86`, `org.kde.Platform//6.11` at `76fa01ac…c473` | `sdk_commit`, `platform_commit` in the same file | below |
 
-The Flatpak build installs the three refs, moves each to its pinned commit and stops if one is elsewhere, before and after `flatpak-builder`. The extension branch (`25.08`) is the freedesktop version of the KDE SDK (`flatpak remote-info --show-metadata flathub org.kde.Sdk//6.11`, `[Extension org.freedesktop.Sdk.Extension]`). The freedesktop runtime and the other extensions the KDE runtime pulls in are not pinned, and neither is the AppImage's Rust (the Arch image has it; images are not pinned by digest).
+The Flatpak build installs the three refs, moves each to its pinned commit and stops if one is elsewhere, before and after `flatpak-builder`, which runs without `--install-deps-from` so it cannot update them. The extension branch (`25.08`) is the freedesktop version of the KDE SDK (`flatpak remote-info --show-metadata flathub org.kde.Sdk//6.11`, `[Extension org.freedesktop.Sdk.Extension]`). The freedesktop runtime and the other extensions the KDE runtime pulls in are not pinned, and neither is the AppImage's Rust (the Arch image has it; images are not pinned by digest).
 
 Re-check or bump a commit with a throwaway Flatpak directory, so nothing touches the real installation:
 
@@ -220,7 +220,7 @@ These are GitHub settings; nothing in the workflows can do them.
 
 Tool versions: the signing job is pinned to `ubuntu-24.04` and uses its flatpak and ostree. CI's `repo-update` job runs `build/flatpak/test-repo-update.sh` on the same runner image with the same apt packages (plus `librsvg2-common`, which only the test's re-export needs), on the repository the `flatpak` job built, so the ephemeral-key proof that installed clients update covers the versions releases use. A runner image or package update can still change them: that job going red is the warning. The first release must still be checked with a real client (below).
 
-The `release` concurrency group keeps one running and one pending run: if three tags are pushed in quick succession, GitHub cancels the middle one. Re-run that tag's workflow from the Actions tab once the others have finished.
+The `release` concurrency group keeps one running and one pending run: if three tags are pushed in quick succession, GitHub cancels the middle one, and it cannot be released any more (`validate` refuses a tag older than the newest one): cut the next version instead.
 
 Not tested with the real tools: the fakes in `simulate.sh` stand in for `gh`, `flatpak`, `ostree` and Pages. `build/flatpak/test-repo-update.sh` (CI, `repo-update` job) drives a real Flatpak client with an ephemeral key. After the first real release check by hand with the real key: the secret imports and has fingerprint `716F…9E68`; the `GPGKey` of the new `kuickshare.flatpakrepo` is byte-identical to the old one; an existing install updates (`flatpak remote-info --log kuickshare io.github.the_beper.KuickShare` shows the old commit as parent).
 

@@ -56,11 +56,11 @@ python3 "$tools/cargo/flatpak-cargo-generator.py" Cargo.lock -o build/flatpak/ca
 sed -i 's/"dest-filename": "config"/"dest-filename": "config.toml"/' build/flatpak/cargo-sources.json
 
 cd build/flatpak
-flatpak-builder --force-clean --disable-rofiles-fuse --install-deps-from=flathub --default-branch=stable \
+flatpak-builder --force-clean --disable-rofiles-fuse --default-branch=stable \
     --state-dir="$builder/state" --repo="$repo" "$@" \
     "$builder/build" "$id.yml"
 cd "$root"
-# flatpak-builder installs what is missing and must not have moved the pins.
+# No --install-deps-from: flatpak-builder would update every installed dependency to the Flathub head.
 pinned "$sdk" "$sdk_commit"
 pinned "$platform" "$platform_commit"
 pinned "$rust" "$rust_commit"
