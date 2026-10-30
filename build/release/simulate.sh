@@ -45,7 +45,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=35
+total=36
 n=0
 passed=0
 failed=0
@@ -264,22 +264,35 @@ job_prepare() { # the keyless job that finishes the repository unsigned
     run env GITHUB_OUTPUT="$w/prepare.gho" "$rel/prepare-flatpak-repo.sh" "$w/commits/flatpak-commits.tar" "$w/prepared"
     cp "$work/last.out" "$w/prepare.out"
 }
-# The jobs sign-flatpak (--check without the secret, then --sign with it) and finish-flatpak, from the files of prepare
-# and the hashes it reported. job_sign runs them in a row and stops at the first that fails, with its status in $rc.
+# The jobs check-flatpak (--check, no secret, from the files of prepare and the hashes it reported), sign-flatpak (--unpack
+# without the secret, then --sign with it, from the files of the check and the hashes it reported, nothing else) and
+# finish-flatpak. job_sign runs them in a row and stops at the first that fails, with its status in $rc.
 out_of() { sed -n "s/^$2=//p" "$1"; } # a value a job wrote to its GITHUB_OUTPUT
-job_sign_check() {
-    rm -rf "$w/signwork" "$w/signed-repo" "$w/signed" "$w/sign.gho"
+job_check() {
+    rm -rf "$w/checked" "$w/signwork" "$w/signed-repo" "$w/signed" "$w/check.gho" "$w/sign.gho"
     EXPECT_PREPARED_SHA256=$(out_of "$w/prepare.gho" prepared_sha256)
     EXPECT_SIGNLIST_SHA256=$(out_of "$w/prepare.gho" signlist_sha256)
     EXPECT_REFS_SHA256=$(sha256_of "$w/commits/refs.txt")
     EXPECT_BASE_SHA=$(out_of "$w/prepare.gho" base_sha)
     export EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256 EXPECT_REFS_SHA256 EXPECT_BASE_SHA
-    run "$rel/sign-flatpak-repo.sh" --check "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
+    run env GITHUB_OUTPUT="$w/check.gho" "$rel/sign-flatpak-repo.sh" --check "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/commits/refs.txt" "$w/checked"
 }
-job_sign_key() { # <key name>
+# What the sign job has of the check job: the two files of its artifact and the two hashes of its outputs, and not the
+# environment of the check (no hash of prepare, no refs.txt, no base).
+sign_side() { run env -u EXPECT_PREPARED_SHA256 -u EXPECT_REFS_SHA256 -u EXPECT_BASE_SHA "$@"; }
+unpack_pinned() { # <checked-repo.tar hash> <sign list hash>: the keyless step of the sign job, with the pins it was given
+    rm -rf "$w/signwork"
+    sign_side EXPECT_CHECKED_SHA256="$1" EXPECT_SIGNLIST_SHA256="$2" "$rel/sign-flatpak-repo.sh" --unpack "$w/checked/checked-repo.tar" "$w/checked/sign-list.txt" "$w/signwork"
+}
+job_unpack() { unpack_pinned "$(out_of "$w/check.gho" checked_sha256)" "$(out_of "$w/check.gho" signlist_sha256)"; }
+job_sign_step() { # <key name>: the step with the secret
     use_secret "${1:-a}"
-    run env GITHUB_OUTPUT="$w/sign.gho" "$rel/sign-flatpak-repo.sh" --sign "$w/signwork" "$w/signed-repo"
+    sign_side GITHUB_OUTPUT="$w/sign.gho" "$rel/sign-flatpak-repo.sh" --sign "$w/signwork" "$w/signed-repo"
     drop_secret
+}
+job_sign_key() { # <key name>: unpack, then the step with the secret
+    job_unpack
+    if [ "$rc" -eq 0 ]; then job_sign_step "${1:-a}"; fi
 }
 job_finish() {
     EXPECT_PREPARED_SHA256=$(out_of "$w/prepare.gho" prepared_sha256)
@@ -291,11 +304,12 @@ job_finish() {
     run env GITHUB_OUTPUT="$w/finish.gho" "$rel/finish-flatpak-repo.sh" "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/signed-repo/signed-repo.tar" "$w/commits/refs.txt" "$w/signed"
 }
 job_sign() { # <key name>
-    job_sign_check
+    job_check
     if [ "$rc" -eq 0 ]; then job_sign_key "${1:-a}"; fi
     if [ "$rc" -eq 0 ]; then job_finish; fi
     cp "$work/last.out" "$w/sign.out"
 }
+tar_has() { tar -tf "$1" | grep -qx -e "$2"; } # a member of a tar (a basic regular expression)
 prepared_has() { tar -tf "$w/prepared/prepared.tar" | grep -qx -e "$1"; }
 prepared_file() { tar -xOf "$w/prepared/prepared.tar" "$1"; }
 # The same job with another tag, commit or public key (the caller's own values are restored).
@@ -491,15 +505,24 @@ check "a new key, not the published one, signs, and finish refuses the site" rc_
 check "(the message says the GPGKey is not the key)" out_has "byte for byte"
 check "(no keyring is left)" no_leftovers
 check "(no site was written)" not test -e "$w/signed/site.tar"
-FAKE_FLATPAK_LEAK=1
+FAKE_FLATPAK_LEAK=summary
 export FAKE_FLATPAK_LEAK
 job_sign
 unset FAKE_FLATPAK_LEAK
-check "sign refuses to archive a repository that holds key material" rc_is 1
+check "sign refuses to archive a repository whose summary holds key material" rc_is 1
 check "(the message says so)" out_has "key material found"
 check "(nothing was signed)" not test -e "$w/signed-repo/signed-repo.tar"
 check "(no keyring is left)" no_leftovers
-job_sign_check
+FAKE_FLATPAK_LEAK=stray
+export FAKE_FLATPAK_LEAK
+job_sign
+unset FAKE_FLATPAK_LEAK
+check "sign refuses to archive a repository with a file it did not have (the scan reads only the files that may change)" rc_is 1
+check "(the message names the file)" out_has "leak.txt"
+check "(nothing was signed)" not test -e "$w/signed-repo/signed-repo.tar"
+check "(no keyring is left)" no_leftovers
+job_check
+job_unpack
 run "$rel/sign-flatpak-repo.sh" --sign "$w/signwork" "$w/signed-repo"
 check "sign without the secret exits 2" rc_is 2
 check "(the message names the secret)" out_has "FLATPAK_GPG_PRIVATE_KEY"
@@ -557,60 +580,61 @@ job_sign
 check "an honest run goes through" rc_is 0
 # config
 tamper_prepared 'printf "[remote \"evil\"]\nurl=file:///etc\ngpg-verify=false\n" >> config'
-job_sign_check
-check "sign --check refuses a config with a remote" rc_is 2
+job_check
+check "--check refuses a config with a remote" rc_is 2
 check "(the message says so)" out_has "config of the repository"
 restore_prepared
 tamper_prepared 'echo "gpg-verify=false" >> config'
-job_sign_check
-check "sign --check refuses a config with another key" rc_is 2
+job_check
+check "--check refuses a config with another key" rc_is 2
 restore_prepared
 # the old summary is gone before the key is used
-job_sign_check
-check "the old summary files are deleted in --check" not test -e "$w/signwork/site/repo/summary"
-check "(and the summaries folder)" not test -e "$w/signwork/site/repo/summaries"
+job_check
+check "the old summary files are not in the checked repository" not tar_has "$w/checked/checked-repo.tar" 'repo/summary[^/]*\|repo/summaries.*'
+check "(and no scratch directory content)" not tar_has "$w/checked/checked-repo.tar" 'repo/tmp/.'
+check "the checked repository holds repo/ and nothing else" same "$(tar -tf "$w/checked/checked-repo.tar" | grep -vc '^repo/')" 0
 # binding of a listed commit
 tamper_prepared "sed -i 's|^binding=.*|binding=app/other.app/x86_64/stable|' $(objfile "$app_commit")"
-job_sign_check
-check "sign --check refuses a listed commit bound to another ref" rc_is 1
+job_check
+check "--check refuses a listed commit bound to another ref" rc_is 1
 check "(the message says so)" out_has "not bound to its own ref"
 restore_prepared
 tamper_prepared "sed -i '/^binding=/d' $(objfile "$app_commit")"
-job_sign_check
-check "sign --check refuses a listed commit with no binding" rc_is 1
+job_check
+check "--check refuses a listed commit with no binding" rc_is 1
 restore_prepared
 # a signature already on a listed commit
 tamper_prepared "touch $(objfile "$app_commit" | sed 's/\.commit$/.commitmeta/')"
-job_sign_check
-check "sign --check refuses a listed commit that has a signature" rc_is 1
+job_check
+check "--check refuses a listed commit that has a signature" rc_is 1
 restore_prepared
 # an unlisted ref rolled back or dropped, which a compromised prepare job would do and the new summary would vouch for
 tamper_prepared "printf '%s\n' $extra_parent > refs/heads/$extra"
 job_sign
-check "sign --check refuses a ref that was rolled back, though it is not on the list" rc_is 1
+check "--check refuses a ref that was rolled back, though it is not on the list" rc_is 1
 check "(the message says so)" out_has "not on the sign list"
 check "(nothing was signed)" not test -e "$w/signed-repo/signed-repo.tar"
 restore_prepared
 tamper_prepared "mkdir -p refs/heads/app/new.app/x86_64; printf '%s\n' $extra_head > refs/heads/app/new.app/x86_64/stable"
 job_sign
-check "sign --check refuses a ref that is new and not on the list" rc_is 1
+check "--check refuses a ref that is new and not on the list" rc_is 1
 restore_prepared
 # the appstream commit continues the published one, or the key does not sign
 tamper_prepared "FAKE_OSTREE_ORPHAN=1 ostree --repo=. fake-commit appstream/x86_64 evil > ../../newappstream"
 sed -i "s/^\(appstream\/x86_64\t\).*/\1$(cat "$w/x/newappstream")/" "$w/prepared/sign-list.txt"
 rehash_prepared
 job_sign
-check "sign --check refuses an appstream commit that does not continue the published one" rc_is 1
+check "--check refuses an appstream commit that does not continue the published one" rc_is 1
 check "(the message says so)" out_has "does not continue the published commit"
 restore_prepared
 tamper_prepared "mkdir deltas; echo x > deltas/x"
 job_sign
-check "sign --check refuses static deltas" rc_is 1
+check "--check refuses static deltas" rc_is 1
 check "(the message says so)" out_has "static deltas"
 restore_prepared
 tamper_prepared "touch 'we\\ird'"
 job_sign
-check "sign --check refuses a member name with a backslash" rc_is 2
+check "--check refuses a member name with a backslash" rc_is 2
 check "(the message says so)" out_has "characters outside"
 restore_prepared
 tamper_prepared "echo '# changed' >> ../kuickshare.flatpakref"
@@ -630,18 +654,18 @@ restore_prepared
 # refs that `ostree refs` does not list, and a new ref whose name matches a published one only as a pattern
 tamper_prepared "mkdir -p refs/mirrors/org.example; printf '%s\n' $extra_head > refs/mirrors/org.example/x"
 job_sign
-check "sign --check refuses a ref under refs/mirrors" rc_is 1
+check "--check refuses a ref under refs/mirrors" rc_is 1
 check "(the message says so)" out_has "refs/mirrors"
 restore_prepared
 # app.other.app/x86_64/stable: as a regex it matches the published app/other.app/x86_64/stable
 dotted=$(printf '%s' "$extra" | sed 's|^app/|app.|')
 tamper_prepared "mkdir -p refs/heads/$(dirname "$dotted"); printf '%s\n' $extra_head > refs/heads/$dotted"
 job_sign
-check "sign --check refuses a new ref that matches a published one only as a pattern" rc_is 1
+check "--check refuses a new ref that matches a published one only as a pattern" rc_is 1
 check "(the message says so)" out_has "not on the sign list"
 restore_prepared
 # a listed commit with another binding, after the signature step
-job_sign_check
+job_check
 job_sign_key
 job_finish
 check "finish accepts the honest signed repository" rc_is 0
@@ -726,7 +750,7 @@ check "(the message says byte for byte)" out_has "byte for byte"
 check "(nothing was written)" not test -e "$w/prepared/prepared.tar"
 # the same, one job later: finish compares the site files with the bytes of its own public key file
 job_prepare
-job_sign_check
+job_check
 job_sign_key a
 SIGNING_PUBKEY=$keys/a2/pub.asc
 job_finish
@@ -760,9 +784,10 @@ check "write-site-files.sh refuses a GPG_KEY_B64 that is not set" rc_fails
 check "(and says it is empty or not set)" out_has "GPG_KEY_B64 is empty or not set"
 check "(nothing was written)" test -z "$(find "$w/s" -mindepth 1)"
 build_jobs
-job_sign_check
+job_check
+job_unpack
 run env FLATPAK_GPG_PRIVATE_KEY= "$rel/sign-flatpak-repo.sh" --sign "$w/signwork" "$w/signed-repo"
-check "sign --sign refuses an empty secret" rc_is 2
+check "--sign refuses an empty secret" rc_is 2
 check "(and says it is empty or not available)" out_has "is empty or not available"
 check "(no scratch directory is left)" no_leftovers
 end_case "empty GPG_KEY_B64 and empty secret: refused, and the message says empty"
@@ -788,31 +813,31 @@ app_ref=app/$app_id/x86_64/stable
 app_commit=$(list_commit "$app_ref")
 now=$(date +%s)
 tamper_prepared "sed -i 's|^date=.*|date=$((now + 7200))|' $(objfile "$app_commit")"
-job_sign_check
-check "sign --check refuses a new commit dated two hours ahead" rc_is 1
+job_check
+check "--check refuses a new commit dated two hours ahead" rc_is 1
 check "(the message says so)" out_has "is dated more than 3600s after now"
 restore_prepared
 tamper_prepared "sed -i 's|^date=.*|date=$((now + 1800))|' $(objfile "$app_commit")"
-job_sign_check
-check "sign --check accepts a new commit dated half an hour ahead (clock skew)" rc_is 0
+job_check
+check "--check accepts a new commit dated half an hour ahead (clock skew)" rc_is 0
 restore_prepared
 tamper_prepared "sed -i 's|^date=.*|date=1000|' $(objfile "$app_commit")"
-job_sign_check
-check "sign --check refuses a new commit older than the published head" rc_is 1
+job_check
+check "--check refuses a new commit older than the published head" rc_is 1
 check "(the message says so)" out_has "is older than the published head"
 restore_prepared
 tamper_prepared "sed -i 's|^date=.*|date=$((now + 7200))|' $(objfile "$(list_commit appstream/x86_64)")"
-job_sign_check
-check "sign --check refuses a new appstream commit dated two hours ahead" rc_is 1
+job_check
+check "--check refuses a new appstream commit dated two hours ahead" rc_is 1
 check "(the message says so)" out_has "is dated more than"
 restore_prepared
-job_sign_check
+job_check
 job_sign_key a
 tamper_signed "sed -i 's|^date=.*|date=$((now + 7200))|' $(objfile "$app_commit")"
 job_finish
 check "finish refuses a signed commit dated two hours ahead" rc_is 1
 check "(the message says so)" out_has "is dated more than 3600s after now"
-end_case "commit dates: a new commit is not dated far ahead of now or before the head it continues, in sign --check and finish"
+end_case "commit dates: a new commit is not dated far ahead of now or before the head it continues, in --check and finish"
 
 # ---- 6l. the appstream commits that prepare makes ----
 make_world 31
@@ -823,37 +848,37 @@ as2=$(list_commit appstream2/x86_64)
 job_sign
 check "an honest run goes through, with appstream commits of the expected shape" rc_is 0
 tamper_prepared "echo 'keys=ostree.collection-binding ostree.ref-binding xa.ref' >> $(objfile "$as1")"
-job_sign_check
-check "sign --check refuses an appstream commit with one more metadata key" rc_is 1
+job_check
+check "--check refuses an appstream commit with one more metadata key" rc_is 1
 check "(the message says so)" out_has "other metadata keys"
 restore_prepared
 tamper_prepared "echo 'keys=ostree.ref-binding ostree.ref-binding ostree.collection-binding' >> $(objfile "$as1")"
-job_sign_check
-check "sign --check refuses an appstream commit with a key twice" rc_is 1
+job_check
+check "--check refuses an appstream commit with a key twice" rc_is 1
 check "(the message says so)" out_has "other metadata keys"
 restore_prepared
 tamper_prepared "echo 'keys=ostree.ref-binding' >> $(objfile "$as2")"
-job_sign_check
-check "sign --check refuses an appstream2 commit without the collection binding" rc_is 1
+job_check
+check "--check refuses an appstream2 commit without the collection binding" rc_is 1
 check "(the message says so)" out_has "other metadata keys"
 restore_prepared
 tamper_prepared "echo 'subject=Something else' >> $(objfile "$as2")"
-job_sign_check
-check "sign --check refuses an appstream commit with another subject" rc_is 1
+job_check
+check "--check refuses an appstream commit with another subject" rc_is 1
 check "(the message says so)" out_has "another subject or a body"
 restore_prepared
 tamper_prepared "echo 'message=a body' >> $(objfile "$as1")"
-job_sign_check
-check "sign --check refuses an appstream commit with a body" rc_is 1
+job_check
+check "--check refuses an appstream commit with a body" rc_is 1
 check "(the message says so)" out_has "another subject or a body"
 restore_prepared
-job_sign_check
+job_check
 job_sign_key a
 tamper_signed "echo 'subject=Something else' >> $(objfile "$as1")"
 job_finish
 check "finish refuses a signed appstream commit with another subject" rc_is 1
 check "(the message says so)" out_has "another subject or a body"
-end_case "appstream commits: exact metadata keys (sorted, duplicates count), subject Update, no body, in sign --check and finish"
+end_case "appstream commits: exact metadata keys (sorted, duplicates count), subject Update, no body, in --check and finish"
 
 # ---- 6m. heads that did not change ----
 make_world 32
@@ -861,16 +886,16 @@ add_published_ref
 build_jobs
 snapshot_prepared
 tamper_prepared "echo '# changed' >> $(objfile "$extra_head")"
-job_sign_check
-check "sign --check refuses an unchanged head whose commit file differs from gh-pages" rc_is 1
+job_check
+check "--check refuses an unchanged head whose commit file differs from gh-pages" rc_is 1
 check "(the message says so)" out_has "differs from gh-pages"
 restore_prepared
 tamper_prepared "printf x >> $(objfile "$extra_head" | sed 's/commit$/commitmeta/')"
-job_sign_check
-check "sign --check refuses an unchanged head whose signature file differs from gh-pages" rc_is 1
+job_check
+check "--check refuses an unchanged head whose signature file differs from gh-pages" rc_is 1
 check "(the message says so)" out_has "differs from gh-pages"
 restore_prepared
-job_sign_check
+job_check
 check "the honest repository is accepted" rc_is 0
 end_case "unchanged heads: their commit and signature files are those of gh-pages"
 
@@ -879,13 +904,13 @@ make_world 33
 build_jobs
 snapshot_prepared
 tamper_prepared "echo x > stray.txt"
-job_sign_check
-check "sign --check refuses a file at the top of repo/ that ostree ignores" rc_is 1
+job_check
+check "--check refuses a file at the top of repo/ that ostree ignores" rc_is 1
 check "(the message names it)" out_has "stray.txt"
 restore_prepared
 tamper_prepared "mkdir old-site"
-job_sign_check
-check "sign --check refuses a directory at the top of repo/ that ostree does not know" rc_is 1
+job_check
+check "--check refuses a directory at the top of repo/ that ostree does not know" rc_is 1
 check "(the message says so)" out_has "entries at its top"
 restore_prepared
 job_sign
@@ -990,18 +1015,18 @@ snapshot_prepared
 as1=$(list_commit appstream/x86_64)
 for stray in "mkdir -p state && echo x > state/stray" "mkdir -p extensions && echo x > extensions/stray" "mkdir -p objects/ab && echo x > objects/ab/stray.txt" "mkdir -p summaries && echo x > summaries/stray"; do
     tamper_prepared "$stray"
-    job_sign_check
-    check "sign --check refuses a file that is no ostree file: $stray" rc_is 1
+    job_check
+    check "--check refuses a file that is no ostree file: $stray" rc_is 1
     check "(the message says so)" out_has "not the files of an ostree repository"
     restore_prepared
 done
 tamper_prepared "echo 'collection=org.example.Collection' >> $(objfile "$as1")"
-job_sign_check
-check "sign --check refuses an appstream commit bound to a collection" rc_is 1
+job_check
+check "--check refuses an appstream commit bound to a collection" rc_is 1
 check "(the message says so)" out_has "bound to a collection"
 restore_prepared
 job_sign
-check "the honest run goes through the same checks, in sign --check and in finish" rc_is 0
+check "the honest run goes through the same checks, in --check and in finish" rc_is 0
 end_case "files of the repository: only ostree objects, refs, summary files and the config; the collection binding of an appstream commit is empty"
 
 # ---- 6b. prepare: the keyless job that finishes the repository unsigned ----
@@ -1112,11 +1137,11 @@ locale_commit=$(awk -F'\t' '$1 ~ /^runtime\// { print $2 }' "$w/commits/refs.txt
 
 # the secret in the environment of the steps that read data of other jobs
 use_secret a
-job_sign_check
+job_check
 drop_secret
-check "sign --check refuses to run with the secret in its environment" rc_is 2
+check "--check refuses to run with the secret in its environment" rc_is 2
 check "(the message says so)" out_has "must run without the secret"
-check "(nothing was unpacked)" not test -e "$w/signwork/sign-list.txt"
+check "(nothing was written)" not test -e "$w/checked/checked-repo.tar"
 
 # no child process of the sign step sees the secret, and the step does what it should and no more
 rt=$work/shim
@@ -1130,12 +1155,12 @@ done
 with_shims() { saved_path=$PATH; PATH=$rt/bin:$PATH; export PATH; "$@"; PATH=$saved_path; export PATH; }
 : > "$rt/seen"
 : > "$rt/calls"
-with_shims job_sign_check
-check "sign --check passes" rc_is 0
+with_shims job_check
+check "--check passes" rc_is 0
 : > "$rt/seen"
 : > "$rt/calls"
 with_shims job_sign_key
-check "sign --sign works" rc_is 0
+check "--sign works" rc_is 0
 check "the secret was seen by no child process" same "$(wc -c < "$rt/seen")" 0
 for t in flatpak gpg ostree; do
     check "(the shim of $t was called: the check proves something)" test "$(grep -c "^$t " "$rt/calls")" -gt 0
@@ -1159,20 +1184,20 @@ cp -a "$w/signed-repo" "$w/signed-repo.orig"
 cp "$w/sign.gho" "$w/sign.gho.orig"
 
 # a tampered prepared site or sign list
-job_sign_check
+job_check
 check "the untouched files pass the checks" rc_is 0
 unpack_prepared
 echo surprise > "$w/x/site/evil.txt"
 pack_prepared
-job_sign_check
+job_check
 check "sign refuses a prepared site that is not the one prepare reported" rc_is 1
 check "(the message says so)" out_has "not the one the earlier job produced"
-check "(nothing was unpacked)" not test -e "$w/signwork/sign-list.txt"
+check "(nothing was written)" not test -e "$w/checked/checked-repo.tar"
 unpack_prepared
 ln -s /etc/passwd "$w/x/site/repo/objects/link"
 pack_prepared
 rehash_prepared
-job_sign_check
+job_check
 check "sign refuses a prepared site with a symlink, whatever hash prepare reported" rc_is 2
 check "(the message says plain files)" out_has "not a plain file"
 restore_prepared
@@ -1180,41 +1205,41 @@ unpack_prepared
 printf '%s\n' "$locale_commit" > "$w/x/site/repo/refs/heads/$app_ref"
 pack_prepared
 rehash_prepared
-job_sign_check
+job_check
 check "sign refuses a repository whose listed ref is not at the listed commit" rc_is 1
 check "(the message names the ref)" out_has "is not at the listed commit"
 restore_prepared
 echo "app/other.app/x86_64/stable	$app_commit" >> "$w/prepared/sign-list.txt"
-job_sign_check
+job_check
 check "sign refuses a sign list that is not the one prepare reported" rc_is 1
 rehash_prepared
-job_sign_check
+job_check
 check "sign refuses a sign list with a ref that is not in refs.txt" rc_is 2
 check "(the message says so)" out_has "is not a ref of the build"
 restore_prepared
 awk -F'\t' -v r="$app_ref" -v c="$locale_commit" 'BEGIN { OFS = "\t" } $1 == r { $2 = c } { print }' "$w/prepared.orig/sign-list.txt" > "$w/prepared/sign-list.txt"
 rehash_prepared
-job_sign_check
+job_check
 check "sign refuses a sign list with another commit than the build made" rc_is 2
 check "(the message says so)" out_has "another commit than the build made"
 restore_prepared
 grep -v "^$app_ref" "$w/prepared.orig/sign-list.txt" > "$w/prepared/sign-list.txt"
 rehash_prepared
-job_sign_check
+job_check
 check "sign refuses a sign list that lacks a ref of the build" rc_is 2
 check "(the message says so)" out_has "of the build is not on it"
 restore_prepared
 sed -i 's/^base_sha=.*/base_sha=0000000000000000000000000000000000000001/' "$w/prepare.gho"
-job_sign_check
+job_check
 check "sign refuses a base that is not the one refs.txt records" rc_is 2
 restore_prepared
-job_sign_check
+job_check
 EXPECT_REFS_SHA256=0
-run "$rel/sign-flatpak-repo.sh" --check "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
+run "$rel/sign-flatpak-repo.sh" --check "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/commits/refs.txt" "$w/checked"
 check "sign refuses a refs.txt that is not the one the build job reported" rc_is 1
 
 # a signed repository that is not the prepared one plus signatures
-job_sign_check
+job_check
 job_sign_key
 restore_signed() { rm -rf "$w/signed-repo"; cp -a "$w/signed-repo.orig" "$w/signed-repo"; cp "$w/sign.gho.orig" "$w/sign.gho"; }
 rehash_signed() { sed -i '/^signed_sha256=/d' "$w/sign.gho"; echo "signed_sha256=$(sha256_of "$w/signed-repo/signed-repo.tar")" >> "$w/sign.gho"; }
@@ -1309,7 +1334,127 @@ job_finish
 check "and accepts everything again once the files are the real ones" rc_is 0
 end_case "split signing: the secret reaches only the sign step; tampered prepared site, sign list, refs, signed repository, stray file, object, signature and key are refused"
 
-# ---- 6d. gh-pages moved since the build: sign refuses before the key is imported ----
+# ---- 6r. check-flatpak and sign-flatpak share only the check's output ----
+make_world 38
+build_jobs
+job_check
+check "the check passes" rc_is 0
+check "(it reports the hash of the checked repository and of the sign list)" test -n "$(out_of "$w/check.gho" checked_sha256)" -a -n "$(out_of "$w/check.gho" signlist_sha256)"
+check "(the sign list is the one prepare made)" same "$(out_of "$w/check.gho" signlist_sha256)" "$(out_of "$w/prepare.gho" signlist_sha256)"
+cp -a "$w/checked" "$w/checked.orig"
+cp "$w/check.gho" "$w/check.gho.orig"
+orig_pin=$(out_of "$w/check.gho" checked_sha256)
+list_pin=$(out_of "$w/check.gho" signlist_sha256)
+rt=$work/shim3
+mkdir -p "$rt/bin"
+for t in flatpak gpg ostree git curl tar; do
+    real=$(command -v "$t")
+    # shellcheck disable=SC2016 # the shim expands its own variables
+    printf '#!/bin/sh\necho "%s $*" >> "%s/calls"\nexec %s "$@"\n' "$t" "$rt" "$real" > "$rt/bin/$t"
+    chmod +x "$rt/bin/$t"
+done
+# The sign job has the files and hashes of the check and nothing else: no prepared site, no refs.txt, no gh-pages.
+mv "$w/prepared" "$w/prepared.away"
+mv "$w/commits" "$w/commits.away"
+mv "$w/prepare.gho" "$w/prepare.gho.away"
+saved_remote=$PAGES_REMOTE
+PAGES_REMOTE=file://$w/no-such-remote.git
+export PAGES_REMOTE
+: > "$rt/calls"
+with_shims job_unpack
+check "unpack works from the check's two files and two hashes, with no remote and no other file of the run" rc_is 0
+check "(the repository is unpacked)" test -d "$w/signwork/repo/objects"
+check "(and the sign list)" test -s "$w/signwork/sign-list.txt"
+check "(the shim of tar was called: the check proves something)" file_has "$rt/calls" "^tar "
+check "unpack ran no ostree, flatpak, gpg, git or curl" not file_has "$rt/calls" "^\\(ostree\\|flatpak\\|gpg\\|git\\|curl\\) "
+check "(no keyring is left)" no_leftovers
+: > "$rt/calls"
+with_shims job_sign_step
+check "the step with the secret works on the same files and the same absence" rc_is 0
+check "it called ostree rev-parse and gpg-sign, once per listed ref" same "$(grep -c '^ostree .* gpg-sign ' "$rt/calls")" "$(wc -l < "$w/checked/sign-list.txt")"
+check "(and the summary signing)" file_has "$rt/calls" "^flatpak build-update-repo --no-update-appstream --gpg-sign="
+check "(and the key import)" file_has "$rt/calls" "^gpg .*--import"
+check "and nothing else: no git, no network, no check of the repository" not grep -Evq '^(ostree --repo=[^ ]+ (rev-parse|gpg-sign) |flatpak build-update-repo --no-update-appstream --gpg-sign=|gpg |tar )' "$rt/calls"
+check "(no keyring is left)" no_leftovers
+PAGES_REMOTE=$saved_remote
+export PAGES_REMOTE
+mv "$w/prepared.away" "$w/prepared"
+mv "$w/commits.away" "$w/commits"
+mv "$w/prepare.gho.away" "$w/prepare.gho"
+job_finish
+check "finish, pinned to prepare and sign as before, accepts what the sign job made" rc_is 0
+
+# a checked repository or sign list replaced after the check: the pins are the outputs of the check job
+rm -rf "$w/y"
+mkdir "$w/y"
+tar -xf "$w/checked.orig/checked-repo.tar" -C "$w/y"
+echo evil > "$w/y/repo/evil.txt"
+tar -C "$w/y" -cf "$w/checked/checked-repo.tar" repo
+: > "$rt/calls"
+rm -rf "$w/signwork"
+with_shims unpack_pinned "$orig_pin" "$list_pin"
+check "unpack refuses a checked repository that is not the one the check reported (the record re-hashed, the pin not)" rc_is 1
+check "(the message says so)" out_has "not the one the earlier job produced"
+check "(it failed before tar read the archive)" not file_has "$rt/calls" "^tar "
+check "(nothing was extracted)" not test -e "$w/signwork"
+cp "$w/checked.orig/checked-repo.tar" "$w/checked/checked-repo.tar"
+echo "app/other.app/x86_64/stable	$(awk -F'\t' 'NR == 1 { print $2 }' "$w/checked/sign-list.txt")" >> "$w/checked/sign-list.txt"
+unpack_pinned "$orig_pin" "$list_pin"
+check "unpack refuses a sign list that is not the one the check reported" rc_is 1
+check "(nothing was extracted)" not test -e "$w/signwork"
+cp "$w/checked.orig/sign-list.txt" "$w/checked/sign-list.txt"
+
+# the artifact of prepare given to unpack
+: > "$rt/calls"
+with_shims sign_side EXPECT_CHECKED_SHA256="$orig_pin" EXPECT_SIGNLIST_SHA256="$list_pin" "$rel/sign-flatpak-repo.sh" --unpack "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/signwork"
+check "unpack refuses the prepared site in place of the checked repository" rc_is 1
+check "(the message says so)" out_has "not the one the earlier job produced"
+check "(nothing was extracted)" not test -e "$w/signwork"
+sign_side EXPECT_CHECKED_SHA256="$(sha256_of "$w/prepared/prepared.tar")" EXPECT_SIGNLIST_SHA256="$list_pin" "$rel/sign-flatpak-repo.sh" --unpack "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/signwork"
+check "unpack refuses the prepared site even under its own hash (it holds site/, not repo/)" rc_is 2
+check "(the message names the folder)" out_has "other than repo/"
+check "(nothing was extracted)" not test -e "$w/signwork"
+
+# a pin that is empty, not set or not a hash
+unpack_pinned "" "$list_pin"
+check "unpack refuses an empty pin of the checked repository" rc_is 2
+check "(nothing was extracted)" not test -e "$w/signwork"
+unpack_pinned "$orig_pin" ""
+check "unpack refuses an empty pin of the sign list" rc_is 2
+check "(nothing was extracted)" not test -e "$w/signwork"
+sign_side -u EXPECT_CHECKED_SHA256 -u EXPECT_SIGNLIST_SHA256 "$rel/sign-flatpak-repo.sh" --unpack "$w/checked/checked-repo.tar" "$w/checked/sign-list.txt" "$w/signwork"
+check "unpack refuses pins that are not set" rc_is 2
+unpack_pinned "not-a-hash" "$list_pin"
+check "unpack refuses a pin that is not a hash" rc_is 2
+check "(nothing was extracted)" not test -e "$w/signwork"
+
+# a symlink member under a matching pin
+rm -rf "$w/y"
+mkdir "$w/y"
+tar -xf "$w/checked.orig/checked-repo.tar" -C "$w/y"
+ln -s /etc/passwd "$w/y/repo/objects/link"
+tar -C "$w/y" -cf "$w/checked/checked-repo.tar" repo
+unpack_pinned "$(sha256_of "$w/checked/checked-repo.tar")" "$list_pin"
+check "unpack refuses a symlink member under a matching pin" rc_is 2
+check "(the message says plain files)" out_has "not a plain file"
+check "(nothing was extracted)" not test -e "$w/signwork"
+cp "$w/checked.orig/checked-repo.tar" "$w/checked/checked-repo.tar"
+use_secret a
+unpack_pinned "$orig_pin" "$list_pin"
+drop_secret
+check "unpack refuses to run with the secret in its environment" rc_is 2
+check "(nothing was extracted)" not test -e "$w/signwork"
+unpack_pinned "$orig_pin" "$list_pin"
+check "and unpacks the real files again" rc_is 0
+SIGNING_PUBKEY=/dev/null
+job_check
+SIGNING_PUBKEY=$keys/a/pub.asc
+check "--check refuses a public key file it cannot read, before anyone is asked to approve" rc_is 2
+check "(the message says so)" out_has "cannot read the fingerprint"
+check "(nothing was written)" not test -e "$w/checked/checked-repo.tar"
+end_case "check and sign share only the check's output: unpack runs no ostree, flatpak, gpg, git or network; a replaced archive or list, prepare's artifact, empty pins and a symlink are refused before tar"
+
+# ---- 6d. gh-pages moved since the build: the check job refuses, long before the key is imported ----
 make_world 23
 build_jobs
 git clone -q "file://$origin" "$w/other"
@@ -1328,13 +1473,13 @@ for t in flatpak gpg ostree git; do
 done
 : > "$rt/calls"
 with_shims job_sign
-check "sign exits 3 when gh-pages is not where the build left it" rc_is 3
+check "the check exits 3 when gh-pages is not where the build left it" rc_is 3
 check "(the message says stale base)" out_has "stale base"
 check "the key was never imported" not file_has "$rt/calls" "--import"
 check "the repository was not touched" not file_has "$rt/calls" "gpg-sign\\|build-update-repo"
 check "gh-pages did ask: git ls-remote ran" file_has "$rt/calls" "^git ls-remote"
 check "(no keyring is left)" no_leftovers
-end_case "stale base: sign refuses before the key is imported, nothing was signed"
+end_case "stale base: the check job refuses, so the sign job is never approved; the key was never imported, nothing was signed"
 
 # ---- 7. an upload fails halfway, then the rerun completes ----
 make_world 8

@@ -7,7 +7,7 @@
 #      build/flatpak/publish-repo.sh finishes the repository. A client adds it from its .flatpakrepo and installs.
 #   2. Site S2 is made the new way: an unsigned commit is exported on top of a clone of S1 (the build job), taken out with
 #      build/release/export-flatpak-commits.sh, finished unsigned by prepare-flatpak-repo.sh, signed with the same key by
-#      sign-flatpak-repo.sh, and checked and archived by finish-flatpak-repo.sh.
+#      sign-flatpak-repo.sh (--check, --unpack, --sign), and checked and archived by finish-flatpak-repo.sh.
 #   3. The same URL then serves S3: S2 whose new commit (and summary) is signed by another key; the client's update must fail
 #      and leave the installed commit alone. Then S2 itself: the update must succeed and reach the new commit, whose parent is
 #      the installed one. There are no static deltas: the client fetches objects.
@@ -115,10 +115,13 @@ EXPECT_COMMITS_SHA256=$(sha256sum "$work/commits/flatpak-commits.tar" | cut -d' 
     GITHUB_OUTPUT=$work/ci/prepare.out "$root/build/release/prepare-flatpak-repo.sh" "$work/commits/flatpak-commits.tar" "$work/prepared"
 EXPECT_PREPARED_SHA256=$(sed -n 's/^prepared_sha256=//p' "$work/ci/prepare.out")
 EXPECT_SIGNLIST_SHA256=$(sed -n 's/^signlist_sha256=//p' "$work/ci/prepare.out")
-# sign-flatpak: the check without the key, then the key in the step that signs
+# check-flatpak: the checks, without the key, on a machine of their own
 EXPECT_PREPARED_SHA256=$EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256=$EXPECT_SIGNLIST_SHA256 EXPECT_BASE_SHA=$base \
-    EXPECT_REFS_SHA256=$(sha256sum "$work/commits/refs.txt" | cut -d' ' -f1) \
-    "$root/build/release/sign-flatpak-repo.sh" --check "$work/prepared/prepared.tar" "$work/prepared/sign-list.txt" "$work/commits/refs.txt" "$work/signwork"
+    EXPECT_REFS_SHA256=$(sha256sum "$work/commits/refs.txt" | cut -d' ' -f1) GITHUB_OUTPUT=$work/ci/check.out \
+    "$root/build/release/sign-flatpak-repo.sh" --check "$work/prepared/prepared.tar" "$work/prepared/sign-list.txt" "$work/commits/refs.txt" "$work/checked"
+# sign-flatpak: the checked files against the hashes of the check, without the key, then the key in the step that signs
+EXPECT_CHECKED_SHA256=$(sed -n 's/^checked_sha256=//p' "$work/ci/check.out") EXPECT_SIGNLIST_SHA256=$(sed -n 's/^signlist_sha256=//p' "$work/ci/check.out") \
+    "$root/build/release/sign-flatpak-repo.sh" --unpack "$work/checked/checked-repo.tar" "$work/checked/sign-list.txt" "$work/signwork"
 FLATPAK_GPG_PRIVATE_KEY=$(GNUPGHOME=$work/key-a gpg --batch --pinentry-mode loopback --passphrase '' --armor --export-secret-keys "$fpr_a") \
     GITHUB_OUTPUT=$work/ci/sign.out "$root/build/release/sign-flatpak-repo.sh" --sign "$work/signwork" "$work/signed-repo"
 # finish-flatpak: no key
