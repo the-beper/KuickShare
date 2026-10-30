@@ -12,7 +12,7 @@
 #   EXPECT_REFS_SHA256       SHA-256 of the refs.txt inside it, as the build job reported it
 #   SITE_URL                 where Pages serves the site (goes into the .flatpakrepo)
 #   GITHUB_SHA               the commit of the run; HEAD of the checkout must be exactly it
-#   GITHUB_REPOSITORY        owner/name, to find the releases and gh-pages (or PAGES_REMOTE: the git URL to clone it from)
+#   GITHUB_REPOSITORY        owner/name, required, to list the releases; also finds gh-pages unless PAGES_REMOTE (the git URL) is set
 #   GH_TOKEN                 for gh, which lists the releases (a read-only token is enough)
 #   RUNNER_TEMP              where the scratch directory goes (default $TMPDIR, then /tmp)
 #   SIGNING_PUBKEY           (optional) the public key of the repository, default build/flatpak/signing-key.asc
@@ -160,7 +160,9 @@ if [ "$base" != - ]; then
     # older, validly signed state, and a new version would be built on it. The version is read from the signed app head (the
     # first <release> of its metainfo, in the repository that was just pulled and verified), not from anything gh-pages says.
     if [ -n "$published" ]; then
-        app_version=$(ostree --repo="$tmp/verify" cat app/io.github.the_beper.KuickShare/x86_64/stable /files/share/metainfo/io.github.the_beper.KuickShare.metainfo.xml 2> /dev/null \
+        app_ref=app/io.github.the_beper.KuickShare/x86_64/stable
+        metainfo=/files/share/metainfo/io.github.the_beper.KuickShare.metainfo.xml
+        app_version=$({ ostree --repo="$tmp/verify" cat "published:$app_ref" "$metainfo" 2> /dev/null || ostree --repo="$tmp/verify" cat "$app_ref" "$metainfo" 2> /dev/null; } \
             | awk '/<release / && !d { v = $0; sub(/.*version="/, "", v); sub(/".*/, "", v); print v; d = 1 }') || app_version=
         printf '%s\n' "$app_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || fail "cannot read the version of the signed app head of gh-pages (metainfo, first <release>), and $published is published"
         [ "$(printf '%s\n%s\n' "v$app_version" "$published" | sort -V | tail -n 1)" = "v$app_version" ] \

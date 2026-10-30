@@ -767,7 +767,7 @@ check "(and says it is empty or not available)" out_has "is empty or not availab
 check "(no scratch directory is left)" no_leftovers
 end_case "empty GPG_KEY_B64 and empty secret: refused, and the message says empty"
 
-# ---- 6k. review findings of PaletoModkit: dates, unlisted heads, appstream commits, top of the repository, rolled-back gh-pages ----
+# ---- 6k. dates of the new commits ----
 snapshot_prepared() { rm -rf "$w/prepared.orig"; cp -a "$w/prepared" "$w/prepared.orig"; cp "$w/prepare.gho" "$w/prepare.gho.orig"; }
 tamper_signed() { # <shell command run in the unpacked signed repository>: a compromised sign job
     rm -rf "$w/y"
@@ -804,6 +804,7 @@ restore_prepared
 tamper_prepared "sed -i 's|^date=.*|date=$((now + 7200))|' $(objfile "$(list_commit appstream/x86_64)")"
 job_sign_check
 check "sign --check refuses a new appstream commit dated two hours ahead" rc_is 1
+check "(the message says so)" out_has "is dated more than"
 restore_prepared
 job_sign_check
 job_sign_key a
@@ -813,6 +814,7 @@ check "finish refuses a signed commit dated two hours ahead" rc_is 1
 check "(the message says so)" out_has "is dated more than 3600s after now"
 end_case "commit dates: a new commit is not dated far ahead of now or before the head it continues, in sign --check and finish"
 
+# ---- 6l. the appstream commits that prepare makes ----
 make_world 31
 build_jobs
 snapshot_prepared
@@ -828,10 +830,12 @@ restore_prepared
 tamper_prepared "echo 'keys=ostree.ref-binding ostree.ref-binding ostree.collection-binding' >> $(objfile "$as1")"
 job_sign_check
 check "sign --check refuses an appstream commit with a key twice" rc_is 1
+check "(the message says so)" out_has "other metadata keys"
 restore_prepared
 tamper_prepared "echo 'keys=ostree.ref-binding' >> $(objfile "$as2")"
 job_sign_check
 check "sign --check refuses an appstream2 commit without the collection binding" rc_is 1
+check "(the message says so)" out_has "other metadata keys"
 restore_prepared
 tamper_prepared "echo 'subject=Something else' >> $(objfile "$as2")"
 job_sign_check
@@ -841,14 +845,17 @@ restore_prepared
 tamper_prepared "echo 'message=a body' >> $(objfile "$as1")"
 job_sign_check
 check "sign --check refuses an appstream commit with a body" rc_is 1
+check "(the message says so)" out_has "another subject or a body"
 restore_prepared
 job_sign_check
 job_sign_key a
 tamper_signed "echo 'subject=Something else' >> $(objfile "$as1")"
 job_finish
 check "finish refuses a signed appstream commit with another subject" rc_is 1
+check "(the message says so)" out_has "another subject or a body"
 end_case "appstream commits: exact metadata keys (sorted, duplicates count), subject Update, no body, in sign --check and finish"
 
+# ---- 6m. heads that did not change ----
 make_world 32
 add_published_ref
 build_jobs
@@ -867,6 +874,7 @@ job_sign_check
 check "the honest repository is accepted" rc_is 0
 end_case "unchanged heads: their commit and signature files are those of gh-pages"
 
+# ---- 6n. the top of repo/ ----
 make_world 33
 build_jobs
 snapshot_prepared
@@ -878,11 +886,13 @@ restore_prepared
 tamper_prepared "mkdir old-site"
 job_sign_check
 check "sign --check refuses a directory at the top of repo/ that ostree does not know" rc_is 1
+check "(the message says so)" out_has "entries at its top"
 restore_prepared
 job_sign
 check "the honest run goes through (config objects refs summary... are allowed)" rc_is 0
 end_case "repo/ has only the entries of an ostree repository at its top"
 
+# ---- 6o. a gh-pages older than the newest published release, and the first publication ----
 fake_release() { # <tag> <draft true|false> <name of the one asset, or - for none>: a release in the fake gh
     python3 -I - "$FAKE_GH_STATE" "$1" "$2" "$3" << 'PY'
 import json

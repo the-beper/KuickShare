@@ -100,9 +100,12 @@ git init -q --initial-branch=main "$work/checkout"
 git -C "$work/checkout" commit -q --allow-empty -m "Release"
 sha=$(git -C "$work/checkout" rev-parse HEAD)
 export GITHUB_SHA=$sha KUICKSHARE_ROOT=$work/checkout PAGES_REMOTE=file://$work/origin.git SITE_URL=$url RUNNER_TEMP=$work SIGNING_PUBKEY=$work/key-a/public.asc
-# prepare lists the published releases with gh: here there are none (no network, no real repository)
+# prepare lists the published releases with gh (no network, no real repository here): one, at the version of the app that S1
+# publishes, with the Flatpak bundle. prepare reads that version from the signed app head with the real ostree and compares it.
+version=$(ostree --repo="$built" cat "$ref" "/files/share/metainfo/$id.metainfo.xml" | awk '/<release / && !d { v = $0; sub(/.*version="/, "", v); sub(/".*/, "", v); print v; d = 1 }') || true
+[ -n "$version" ] || fail "the built app has no metainfo with a release (/files/share/metainfo/$id.metainfo.xml)"
 mkdir "$work/bin"
-printf '#!/bin/sh\necho "[]"\n' > "$work/bin/gh"
+printf '#!/bin/sh\necho '"'"'[{"tag_name":"v%s","draft":false,"prerelease":false,"assets":[{"name":"KuickShare-x86_64.flatpak","state":"uploaded"}]}]'"'"'\n' "$version" > "$work/bin/gh"
 chmod +x "$work/bin/gh"
 export GITHUB_REPOSITORY=example/KuickShare PATH=$work/bin:$PATH
 base=$(git -C "$work/origin.git" rev-parse gh-pages)
