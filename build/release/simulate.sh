@@ -5,7 +5,7 @@
 # curl replaced by the fakes in build/release/testdata (put first in PATH). The signatures are real GnuPG signatures made
 # with ephemeral keys generated in temporary keyrings; no real key, no network, no container.
 # Needs only sh, git, gpg 2.2+, python3, tar, sha256sum, sha1sum. Everything happens in a mktemp directory that is removed
-# at the end. Output is TAP: "ok N - ..." lines and "# 32/32 passed"; the exit status is not 0 if a case fails.
+# at the end. Output is TAP: "ok N - ..." lines and "# 33/33 passed"; the exit status is not 0 if a case fails.
 #
 # What it does NOT show (see CONTRIBUTING.md, Releases): that real flatpak, ostree, gh and GitHub Pages behave like the
 # fakes. build/flatpak/test-repo-update.sh covers the real Flatpak client; the rest needs a release.
@@ -45,7 +45,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=32
+total=33
 n=0
 passed=0
 failed=0
@@ -882,6 +882,50 @@ restore_prepared
 job_sign
 check "the honest run goes through (config objects refs summary... are allowed)" rc_is 0
 end_case "repo/ has only the entries of an ostree repository at its top"
+
+fake_release() { # <tag> <draft true|false> <name of the one asset, or - for none>: a release in the fake gh
+    python3 -I - "$FAKE_GH_STATE" "$1" "$2" "$3" << 'PY'
+import json
+import sys
+
+path, tag, draft, asset = sys.argv[1:5]
+with open(path) as f:
+    state = json.load(f)
+state["releases"] = [r for r in state["releases"] if r["tag_name"] != tag]
+state["releases"].append({"id": 900 + len(state["releases"]), "tag_name": tag, "name": tag, "draft": draft == "true", "body": "",
+                          "assets": [] if asset == "-" else [{"id": 800, "name": asset, "size": 1, "state": "uploaded"}]})
+with open(path, "w") as f:
+    json.dump(state, f)
+PY
+}
+make_world 34
+build_jobs
+check "prepare accepts a gh-pages when no release is published" rc_is 0
+fake_release v1.2.2 false KuickShare-x86_64.flatpak
+job_prepare
+check "prepare accepts a gh-pages at the newest published release" rc_is 0
+check "(and says which)" out_has "the newest published release is v1.2.2"
+fake_release v1.2.4 false KuickShare-x86_64.flatpak
+job_prepare
+check "prepare refuses a gh-pages older than the newest published release" rc_is 1
+check "(the message says it was rolled back)" out_has "rolled back or never updated"
+check "(nothing was written)" not test -e "$w/prepared/prepared.tar"
+fake_release v1.2.4 false -
+job_prepare
+check "prepare ignores a published release without files (made by hand, never on Pages)" rc_is 0
+fake_release v1.2.4 true KuickShare-x86_64.flatpak
+job_prepare
+check "prepare ignores a draft" rc_is 0
+fake_release v1.2.4 false KuickShare-x86_64.flatpak
+git clone -q "file://$origin" "$w/pubx"
+git -C "$w/pubx" checkout -q gh-pages
+git -C "$w/pubx" commit -q --allow-empty -m "By hand"
+git -C "$w/pubx" push -q origin gh-pages
+base_sha=$(git -C "$w/pubx" rev-parse HEAD)
+build_jobs
+check "prepare refuses a gh-pages that does not say which release it is, when one is published" rc_is 1
+check "(the message says so)" out_has "does not say which release"
+end_case "a gh-pages older than the newest published release (with files) is refused, a draft or a release without files is no anchor"
 
 # ---- 6b. prepare: the keyless job that finishes the repository unsigned ----
 make_world 20

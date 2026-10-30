@@ -12,14 +12,16 @@
 #   EXPECT_REFS_SHA256       SHA-256 of the refs.txt inside it, as the build job reported it
 #   SITE_URL                 where Pages serves the site (goes into the .flatpakrepo)
 #   GITHUB_SHA               the commit of the run; HEAD of the checkout must be exactly it
-#   GITHUB_REPOSITORY        owner/name, to find gh-pages (or PAGES_REMOTE: the git URL to clone it from)
+#   GITHUB_REPOSITORY        owner/name, to find the releases and gh-pages (or PAGES_REMOTE: the git URL to clone it from)
+#   GH_TOKEN                 for gh, which lists the releases (a read-only token is enough)
 #   RUNNER_TEMP              where the scratch directory goes (default $TMPDIR, then /tmp)
 #   SIGNING_PUBKEY           (optional) the public key of the repository, default build/flatpak/signing-key.asc
 #   KUICKSHARE_ROOT          (optional) the checkout whose HEAD is compared
+# Refuses a gh-pages that is older than the newest published release (see the comment where it is checked).
 # Refuses to run when FLATPAK_GPG_PRIVATE_KEY is set. The GPGKey of the .flatpakrepo is SIGNING_PUBKEY, dearmored; a published
 # one with other bytes is refused (installed clients would stop updating, and finish requires these bytes).
 # Writes prepared_sha256=, signlist_sha256= and base_sha= to $GITHUB_OUTPUT when it is set.
-# Needs flatpak, ostree, gpg 2.2+, git, tar, base64. Exit codes: 0 ok, 1 a check failed, 2 bad input or the secret is set,
+# Needs flatpak, ostree, gpg 2.2+, git, tar, base64, gh (GH_TOKEN, to list the releases) and python3. Exit codes: 0 ok, 1 a check failed, 2 bad input or the secret is set,
 # 3 gh-pages is not where the build left it ("stale base").
 # shellcheck disable=SC2154 # $base and $tab come from flatpak-lib.sh
 set -eu
@@ -78,6 +80,43 @@ else
     [ "$heads" = "$base" ] || stale "gh-pages is $heads, the build started from $base"
     git clone --quiet --depth 1 --branch gh-pages "$remote" "$site"
     [ "$(git -C "$site" rev-parse HEAD)" = "$base" ] || stale "the clone of gh-pages is not at $base"
+fi
+# gh-pages must not be older than the last published release: someone who can only push to gh-pages could restore an older,
+# validly signed state, and a new version would be built on it. The record of gh-pages is the subject of its commit that
+# publish.sh writes; the anchor outside it is the newest published release that has the Flatpak bundle (a release made by hand
+# has no files and was never on Pages). Only a draft or no release at all means there is nothing to compare.
+if [ "$base" != - ]; then
+    gh api --paginate "repos/${GITHUB_REPOSITORY:?}/releases?per_page=100" > "$tmp/releases.json" || bad_input "cannot list the releases of $GITHUB_REPOSITORY (gh needs GH_TOKEN)"
+    published=$(python3 -I - "$tmp/releases.json" << 'PY'
+import json
+import re
+import sys
+
+text = open(sys.argv[1]).read()
+decoder = json.JSONDecoder()
+found = []
+pos = 0
+while True:
+    while pos < len(text) and text[pos].isspace():
+        pos += 1
+    if pos >= len(text):
+        break
+    page, pos = decoder.raw_decode(text, pos)
+    for release in page if isinstance(page, list) else [page]:
+        tag = release.get("tag_name", "")
+        has_bundle = any(a.get("name") == "KuickShare-x86_64.flatpak" and a.get("state", "uploaded") == "uploaded" for a in release.get("assets", []))
+        if re.fullmatch(r"v\d+\.\d+\.\d+", tag) and not release.get("draft") and not release.get("prerelease") and has_bundle:
+            found.append(tag)
+print(max(found, key=lambda t: tuple(int(n) for n in t[1:].split("."))) if found else "")
+PY
+    ) || bad_input "cannot read the list of releases"
+    if [ -n "$published" ]; then
+        pages_tag=$(git -C "$site" log -1 --format=%s | sed -n 's/^Flatpak repository for \(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p')
+        [ -n "$pages_tag" ] || fail "the head of gh-pages does not say which release it is ('Flatpak repository for vX.Y.Z'), and $published is published"
+        [ "$(printf '%s\n%s\n' "$pages_tag" "$published" | sort -V | tail -n 1)" = "$pages_tag" ] \
+            || fail "gh-pages is at $pages_tag, but $published is published: gh-pages was rolled back or never updated. Restore it first (CONTRIBUTING.md, Releases, When a run fails)"
+        echo "$me: gh-pages is at $pages_tag, the newest published release is $published"
+    fi
 fi
 repo=$site/repo
 if [ ! -d "$repo" ]; then ostree --repo="$repo" init --mode=archive-z2; fi

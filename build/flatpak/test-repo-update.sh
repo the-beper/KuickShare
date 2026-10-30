@@ -100,6 +100,11 @@ git init -q --initial-branch=main "$work/checkout"
 git -C "$work/checkout" commit -q --allow-empty -m "Release"
 sha=$(git -C "$work/checkout" rev-parse HEAD)
 export GITHUB_SHA=$sha KUICKSHARE_ROOT=$work/checkout PAGES_REMOTE=file://$work/origin.git SITE_URL=$url RUNNER_TEMP=$work SIGNING_PUBKEY=$work/key-a/public.asc
+# prepare lists the published releases with gh: here there are none (no network, no real repository)
+mkdir "$work/bin"
+printf '#!/bin/sh\necho "[]"\n' > "$work/bin/gh"
+chmod +x "$work/bin/gh"
+export GITHUB_REPOSITORY=example/KuickShare PATH=$work/bin:$PATH
 base=$(git -C "$work/origin.git" rev-parse gh-pages)
 mkdir "$work/ci"
 # prepare-flatpak: no key

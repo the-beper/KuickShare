@@ -341,11 +341,13 @@ jobs:
           name: flatpak-commits
           path: flatpak-commits
 
+      # GH_TOKEN is the read-only token of the job (contents: read): the script lists the published releases with it.
       - name: Prepare the Flatpak repository (unsigned)
         id: prepare
         env:
           EXPECT_COMMITS_SHA256: ${{ needs.build-flatpak.outputs.commits_sha256 }}
           EXPECT_REFS_SHA256: ${{ needs.build-flatpak.outputs.refs_sha256 }}
+          GH_TOKEN: ${{ github.token }}
         run: build/release/prepare-flatpak-repo.sh flatpak-commits/flatpak-commits.tar flatpak-prepared
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
