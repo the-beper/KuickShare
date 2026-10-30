@@ -16,6 +16,7 @@ import hashlib
 import os
 import subprocess
 import sys
+import time
 
 LOG = os.environ.get("FAKE_FLATPAK_LOG")
 
@@ -29,6 +30,8 @@ def log(line):
     if LOG:
         with open(LOG, "a") as f:
             f.write(line + "\n")
+            if os.environ.get("GH_TOKEN"):
+                f.write("SAW GH_TOKEN in the environment of flatpak\n")
 
 
 def options(args):
@@ -78,11 +81,12 @@ def add_appstream(repo, key, home):
             with open(obj(repo, parent, ".commit")) as f:
                 if f.read().split("\n")[1] == body:
                     continue
-        commit = hashlib.sha256((ref + "\n" + parent + "\n" + body).encode()).hexdigest()
+        content = "parent=%s\n%s\nbinding=%s\ndate=%d\nsubject=Update\n" % (parent, body, ref, time.time())
+        commit = hashlib.sha256(content.encode()).hexdigest()  # as in ostree: the id is the checksum of the commit object
         os.makedirs(os.path.dirname(path), exist_ok=True)
         os.makedirs(os.path.dirname(obj(repo, commit, ".commit")), exist_ok=True)
         with open(obj(repo, commit, ".commit"), "w") as f:
-            f.write("parent=%s\n%s\nbinding=%s\n" % (parent, body, ref))
+            f.write(content)
         with open(path, "w") as f:
             f.write(commit + "\n")
         if key:
@@ -135,10 +139,24 @@ def main():
                     die("build-update-repo: the commit of %s is not signed" % ref)
         if "no-update-appstream" not in opts:
             add_appstream(repo, opts.get("gpg-sign"), opts.get("gpg-homedir"))
-        if os.environ.get("FAKE_FLATPAK_LEAK"):  # a tool that copies a secret into the site, to see the check catch it
+        leak = os.environ.get("FAKE_FLATPAK_LEAK")  # a tool that copies a secret into the site, to see the check catch it
+        if leak == "stray":  # into a file of its own
             with open(os.path.join(repo, "leak.txt"), "w") as f:
                 f.write("-----BEGIN PGP PRIVATE KEY BLOCK-----\n")
+        if leak == "link":  # a symbolic link
+            os.symlink("/etc/passwd", os.path.join(repo, "leak-link"))
+        if leak == "inplace":  # over the start of an existing file, which keeps its name and size
+            with open(os.path.join(repo, "config"), "r+") as f:
+                size = len(f.read())
+                f.seek(0)
+                f.write(("-----BEGIN PGP PRIVATE KEY BLOCK-----\n" + " " * size)[:size])
+        for _ref, commit in refs_of(repo):  # flatpak writes xa.reachable beside every head, signed or not (the tool of the CI image)
+            if not os.path.exists(obj(repo, commit, ".commitmeta2")):
+                with open(obj(repo, commit, ".commitmeta2"), "w") as f:
+                    f.write("xa.reachable\n")
         summary = "".join("%s %s\n" % pair for pair in refs_of(repo, ("app/", "runtime/", "appstream")))
+        if leak == "summary":  # into the summary
+            summary += "-----BEGIN PGP PRIVATE KEY BLOCK-----\n"
         for name in ("summary", "summary.idx"):
             with open(os.path.join(repo, name), "w") as f:
                 f.write(summary)

@@ -9,8 +9,11 @@ name: Release
 #                   commits are exported unsigned
 #   verify          the exact set of files, their hashes, their version
 #   prepare-flatpak the Flatpak repository on top of gh-pages, unsigned: everything that parses the build's output. No secret
-#   sign-flatpak    the only job with the signing key (environment release-signing): checks what prepare made, then signs
-#                   the listed commits and the summary and parses or generates nothing. Pushes nothing
+#   check-flatpak   another keyless machine: checks everything prepare made (and gh-pages), and archives the checked repository.
+#                   No environment, no secret. Its outputs pin what the next job reads
+#   sign-flatpak    the only job with the signing key (environment release-signing, approved once the checks are green): unpacks
+#                   the archive of check-flatpak against pins of prepare, build and check, signs the listed commits and the
+#                   summary and makes nothing new. Pushes nothing
 #   finish-flatpak  another machine, no secret: checks the signed repository against the prepared one and as a client with
 #                   only the public key, writes the site archive
 #   publish         the only job with write permission: draft release, assets, gh-pages, then publishes the release.
@@ -322,6 +325,7 @@ jobs:
     outputs:
       prepared_sha256: ${{ steps.prepare.outputs.prepared_sha256 }}
       signlist_sha256: ${{ steps.prepare.outputs.signlist_sha256 }}
+      heads_sha256: ${{ steps.prepare.outputs.heads_sha256 }}
       base_sha: ${{ steps.prepare.outputs.base_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -341,11 +345,13 @@ jobs:
           name: flatpak-commits
           path: flatpak-commits
 
+      # GH_TOKEN is the read-only token of the job (contents: read): the script gives it to gh alone, to list the published releases.
       - name: Prepare the Flatpak repository (unsigned)
         id: prepare
         env:
           EXPECT_COMMITS_SHA256: ${{ needs.build-flatpak.outputs.commits_sha256 }}
           EXPECT_REFS_SHA256: ${{ needs.build-flatpak.outputs.refs_sha256 }}
+          GH_TOKEN: ${{ github.token }}
         run: build/release/prepare-flatpak-repo.sh flatpak-commits/flatpak-commits.tar flatpak-prepared
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -358,13 +364,74 @@ jobs:
           retention-days: 14
           compression-level: 0
 
+  # Everything that was checked before the key, on a machine of its own with no environment and no secret: the hashes, gh-pages
+  # still at the base of the build, the archive, the sign list against the build's refs.txt, the repository itself. It writes
+  # the checked repository with its own tar; the sign job takes that archive by artifact id and against the hash below, and
+  # checks it again against what prepare and build reported. The environment approval is asked only when this job is green.
+  check-flatpak:
+    needs: [validate, build-flatpak, prepare-flatpak]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      checked_sha256: ${{ steps.check.outputs.checked_sha256 }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install flatpak and ostree
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak ostree
+          flatpak --version
+          ostree --version | head -n 2
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: flatpak-refs
+          path: flatpak-refs
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: flatpak-prepared
+          path: flatpak-prepared
+
+      - name: Check what prepare-flatpak made
+        id: check
+        env:
+          EXPECT_PREPARED_SHA256: ${{ needs.prepare-flatpak.outputs.prepared_sha256 }}
+          EXPECT_SIGNLIST_SHA256: ${{ needs.prepare-flatpak.outputs.signlist_sha256 }}
+          EXPECT_REFS_SHA256: ${{ needs.build-flatpak.outputs.refs_sha256 }}
+          EXPECT_BASE_SHA: ${{ needs.prepare-flatpak.outputs.base_sha }}
+          EXPECT_HEADS_SHA256: ${{ needs.prepare-flatpak.outputs.heads_sha256 }}
+        run: build/release/sign-flatpak-repo.sh --check flatpak-prepared/prepared.tar flatpak-prepared/sign-list.txt flatpak-refs/refs.txt flatpak-checked
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload
+        with:
+          name: flatpak-checked
+          path: |
+            flatpak-checked/checked-repo.tar
+            flatpak-checked/sign-list.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
   # The only job that sees the signing key, and the only one with an environment. The environment release-signing must exist
   # with the secret FLATPAK_GPG_PRIVATE_KEY and a required reviewer (CONTRIBUTING.md, Releases, one-time setup): a job that
   # names an environment that does not exist makes GitHub create it unprotected, and then the repository secret of the same
-  # name is readable here. The secret is given to one step only, which signs what the step before it checked and parses and
-  # generates nothing. No --privileged: signing needs no sandbox.
+  # name is readable here. It needs check-flatpak, so the approval is asked for only after every check is green. It reads the
+  # archive of that job, downloaded by artifact id, and unpacks it in a step of its own against the hash of that job and, for
+  # the sign list and refs.txt, against the hashes of prepare-flatpak and build-flatpak, so that a compromised check job alone
+  # cannot change what is signed. The secret is given to one step only. ostree and flatpak still parse the commit objects and
+  # the config with the key at hand (content checked before), and make no commit, no appstream data and no delta. No
+  # --privileged: signing needs no sandbox.
   sign-flatpak:
-    needs: [validate, ci-gate, verify, build-flatpak, prepare-flatpak]
+    needs: [validate, ci-gate, verify, build-flatpak, prepare-flatpak, check-flatpak]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: release-signing
@@ -387,24 +454,30 @@ jobs:
           flatpak --version
           ostree --version | head -n 2
 
+      # refs.txt of the build, checked against the hash of build-flatpak in the next step.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: flatpak-refs
           path: flatpak-refs
 
+      # The artifact of check-flatpak by its id, not by a name another job could also have used; its files are checked against
+      # hashes in the next step. merge-multiple puts the two files straight into the folder.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: flatpak-prepared
-          path: flatpak-prepared
+          artifact-ids: ${{ needs.check-flatpak.outputs.artifact_id }}
+          merge-multiple: true
+          path: flatpak-checked
 
-      # No secret: the hashes, gh-pages still at the base of the build, the archive and the list against refs.txt.
-      - name: Check what prepare-flatpak made
+      # No secret, no ostree, gpg, flatpak, git or network: the hashes (the sign list and refs.txt are pinned by the jobs that
+      # made them), the member types, the structure of the repository, the listed commits against their ids, an empty folder.
+      # Not in the step with the secret, whose environment any child process could read.
+      - name: Unpack what check-flatpak checked
         env:
-          EXPECT_PREPARED_SHA256: ${{ needs.prepare-flatpak.outputs.prepared_sha256 }}
+          EXPECT_CHECKED_SHA256: ${{ needs.check-flatpak.outputs.checked_sha256 }}
           EXPECT_SIGNLIST_SHA256: ${{ needs.prepare-flatpak.outputs.signlist_sha256 }}
           EXPECT_REFS_SHA256: ${{ needs.build-flatpak.outputs.refs_sha256 }}
-          EXPECT_BASE_SHA: ${{ needs.prepare-flatpak.outputs.base_sha }}
-        run: build/release/sign-flatpak-repo.sh --check flatpak-prepared/prepared.tar flatpak-prepared/sign-list.txt flatpak-refs/refs.txt "$RUNNER_TEMP/flatpak-sign-work"
+          EXPECT_HEADS_SHA256: ${{ needs.prepare-flatpak.outputs.heads_sha256 }}
+        run: build/release/sign-flatpak-repo.sh --unpack flatpak-checked/checked-repo.tar flatpak-checked/sign-list.txt flatpak-refs/refs.txt "$RUNNER_TEMP/flatpak-sign-work"
 
       - name: Sign the Flatpak repository
         id: sign

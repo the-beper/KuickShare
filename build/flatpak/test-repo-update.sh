@@ -7,7 +7,7 @@
 #      build/flatpak/publish-repo.sh finishes the repository. A client adds it from its .flatpakrepo and installs.
 #   2. Site S2 is made the new way: an unsigned commit is exported on top of a clone of S1 (the build job), taken out with
 #      build/release/export-flatpak-commits.sh, finished unsigned by prepare-flatpak-repo.sh, signed with the same key by
-#      sign-flatpak-repo.sh, and checked and archived by finish-flatpak-repo.sh.
+#      sign-flatpak-repo.sh (--check, --unpack, --sign), and checked and archived by finish-flatpak-repo.sh.
 #   3. The same URL then serves S3: S2 whose new commit (and summary) is signed by another key; the client's update must fail
 #      and leave the installed commit alone. Then S2 itself: the update must succeed and reach the new commit, whose parent is
 #      the installed one. There are no static deltas: the client fetches objects.
@@ -100,6 +100,14 @@ git init -q --initial-branch=main "$work/checkout"
 git -C "$work/checkout" commit -q --allow-empty -m "Release"
 sha=$(git -C "$work/checkout" rev-parse HEAD)
 export GITHUB_SHA=$sha KUICKSHARE_ROOT=$work/checkout PAGES_REMOTE=file://$work/origin.git SITE_URL=$url RUNNER_TEMP=$work SIGNING_PUBKEY=$work/key-a/public.asc
+# prepare lists the published releases with gh (no network, no real repository here): one, at the version of the app that S1
+# publishes, with the Flatpak bundle. prepare reads that version from the signed app head with the real ostree and compares it.
+version=$(ostree --repo="$built" cat "$ref" "/files/share/metainfo/$id.metainfo.xml" | awk '/<release / && !d { v = $0; sub(/.*version="/, "", v); sub(/".*/, "", v); print v; d = 1 }') || true
+[ -n "$version" ] || fail "the built app has no metainfo with a release (/files/share/metainfo/$id.metainfo.xml)"
+mkdir "$work/bin"
+printf '#!/bin/sh\necho '"'"'[{"tag_name":"v%s","draft":false,"prerelease":false,"assets":[{"name":"KuickShare-x86_64.flatpak","state":"uploaded"}]}]'"'"'\n' "$version" > "$work/bin/gh"
+chmod +x "$work/bin/gh"
+export GITHUB_REPOSITORY=example/KuickShare PATH=$work/bin:$PATH
 base=$(git -C "$work/origin.git" rev-parse gh-pages)
 mkdir "$work/ci"
 # prepare-flatpak: no key
@@ -107,10 +115,14 @@ EXPECT_COMMITS_SHA256=$(sha256sum "$work/commits/flatpak-commits.tar" | cut -d' 
     GITHUB_OUTPUT=$work/ci/prepare.out "$root/build/release/prepare-flatpak-repo.sh" "$work/commits/flatpak-commits.tar" "$work/prepared"
 EXPECT_PREPARED_SHA256=$(sed -n 's/^prepared_sha256=//p' "$work/ci/prepare.out")
 EXPECT_SIGNLIST_SHA256=$(sed -n 's/^signlist_sha256=//p' "$work/ci/prepare.out")
-# sign-flatpak: the check without the key, then the key in the step that signs
+# check-flatpak: the checks, without the key, on a machine of their own
 EXPECT_PREPARED_SHA256=$EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256=$EXPECT_SIGNLIST_SHA256 EXPECT_BASE_SHA=$base \
-    EXPECT_REFS_SHA256=$(sha256sum "$work/commits/refs.txt" | cut -d' ' -f1) \
-    "$root/build/release/sign-flatpak-repo.sh" --check "$work/prepared/prepared.tar" "$work/prepared/sign-list.txt" "$work/commits/refs.txt" "$work/signwork"
+    EXPECT_REFS_SHA256=$(sha256sum "$work/commits/refs.txt" | cut -d' ' -f1) GITHUB_OUTPUT=$work/ci/check.out EXPECT_HEADS_SHA256=$(sed -n 's/^heads_sha256=//p' "$work/ci/prepare.out") \
+    "$root/build/release/sign-flatpak-repo.sh" --check "$work/prepared/prepared.tar" "$work/prepared/sign-list.txt" "$work/commits/refs.txt" "$work/checked"
+# sign-flatpak: the checked files against the hashes of the check, prepare and build, without the key, then the key in the step that signs
+EXPECT_CHECKED_SHA256=$(sed -n 's/^checked_sha256=//p' "$work/ci/check.out") EXPECT_SIGNLIST_SHA256=$EXPECT_SIGNLIST_SHA256 \
+    EXPECT_REFS_SHA256=$(sha256sum "$work/commits/refs.txt" | cut -d' ' -f1) EXPECT_HEADS_SHA256=$(sed -n 's/^heads_sha256=//p' "$work/ci/prepare.out") \
+    "$root/build/release/sign-flatpak-repo.sh" --unpack "$work/checked/checked-repo.tar" "$work/checked/sign-list.txt" "$work/commits/refs.txt" "$work/signwork"
 FLATPAK_GPG_PRIVATE_KEY=$(GNUPGHOME=$work/key-a gpg --batch --pinentry-mode loopback --passphrase '' --armor --export-secret-keys "$fpr_a") \
     GITHUB_OUTPUT=$work/ci/sign.out "$root/build/release/sign-flatpak-repo.sh" --sign "$work/signwork" "$work/signed-repo"
 # finish-flatpak: no key

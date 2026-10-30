@@ -5,14 +5,21 @@ body). It implements the calls the release scripts make, plus `fake-commit`, whi
 exports a build. `gpg-sign` writes <rest>.commitmeta, a detached GnuPG signature of the commit, and refuses a commit that
 has one, as ostree does; `remote add` and `pull` check commit signatures with the key imported into the remote;
 `show --print-detached-metadata-key=ostree.gpgsigs` prints something only for a signed commit; `fsck` only checks that
-every ref names a commit that exists. A commit file has the lines `parent=<id or ->`, the body and `binding=<ref>`, what
+every ref names a commit that exists. The id of a commit is the SHA-256 of its file. A commit file has the lines
+`parent=<id or ->`, the body and `binding=<ref>`, what
 `show --print-metadata-key=ostree.ref-binding` prints (as `['<ref>']`); `init` writes the config of an archive-z2 repository.
+Optional lines after those: `date=<seconds>` (default: now, or $FAKE_OSTREE_DATE for fake-commit), `keys=<metadata keys>`
+(`show --list-metadata-keys`, default the two bindings), `subject=` (default the body) and `message=` (a body); `version=` (what `cat` prints
+as the first release of the metainfo) and `collection=` (the value of ostree.collection-binding, default empty); `show` prints
+the header with the date, then the subject and the message, and for a signed commit the lines about its signature, as ostree does.
 """
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
+import time
 
 LOG = os.environ.get("FAKE_OSTREE_LOG")
 
@@ -41,6 +48,17 @@ def read_ref(repo, ref):
     if os.path.isfile(commit_path(repo, ref)):
         return ref
     die("rev-parse: %s not found" % ref)
+
+
+def commit_lines(repo, commit):
+    """The optional lines of a commit file (the second line is the body and can hold anything)."""
+    found = {}
+    with open(commit_path(repo, commit)) as f:
+        for number, line in enumerate(f):
+            for name in ("date", "keys", "subject", "message", "version", "collection"):
+                if number != 1 and line.startswith(name + "="):
+                    found[name] = line.rstrip("\n").split("=", 1)[1]
+    return found
 
 
 def parent_of(repo, commit):
@@ -80,6 +98,8 @@ def main():
         die("no command", 99)
     command, rest = rest[0], rest[1:]
     log(command + " " + " ".join(rest))
+    if os.environ.get("GH_TOKEN"):
+        log("SAW GH_TOKEN in the environment of " + command)
 
     if command == "init":
         os.makedirs(os.path.join(repo, "refs", "heads"), exist_ok=True)
@@ -196,6 +216,9 @@ def main():
     elif command == "show":
         key = [r for r in rest if r.startswith("--print-detached-metadata-key=")]
         commit = read_ref(repo, [r for r in rest if not r.startswith("--")][0])
+        if "--print-metadata-key=ostree.collection-binding" in rest:
+            print(repr(commit_lines(repo, commit).get("collection", "")))
+            return
         if "--print-metadata-key=ostree.ref-binding" in rest:
             with open(commit_path(repo, commit)) as f:
                 found = [line.strip()[len("binding="):] for line in f if line.startswith("binding=")]
@@ -203,8 +226,32 @@ def main():
                 die("show: no such metadata key")
             print("['%s']" % found[0])
             return
+        if "--list-metadata-keys" in rest:
+            print("\n".join(commit_lines(repo, commit).get("keys", "ostree.collection-binding ostree.ref-binding").split()))
+            return
+        if not [r for r in rest if r.startswith("--")]:
+            lines = commit_lines(repo, commit)
+            with open(commit_path(repo, commit)) as f:
+                body = f.read().split("\n")[1]
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S +0000", time.gmtime(int(lines.get("date", time.time()))))
+            print("commit %s\nContentChecksum:  %s\nDate:  %s\n\n    %s\n" % (commit, "0" * 64, stamp, lines.get("subject", body)))
+            if "message" in lines:
+                print("    %s\n" % lines["message"])
+            if os.path.isfile(commit_path(repo, commit, ".commitmeta")):
+                print("Found 1 signature:\n\n  Signature made Fri Oct 30 20:42:25 2026 using EdDSA key ID 0000000000000000\n  Can't check signature: public key not found")
+            return
         if key and os.path.isfile(commit_path(repo, commit, ".commitmeta")):
             print("[signature]")
+    elif command == "cat":
+        # cat REF PATH: only the metainfo of the app, whose first <release> is the version of the commit (a `version=` line, else the
+        # first x.y.z of the body)
+        commit = read_ref(repo, rest[0])
+        with open(commit_path(repo, commit)) as f:
+            body = f.read().split("\n")[1]
+        version = commit_lines(repo, commit).get("version") or (re.findall(r"\d+\.\d+\.\d+", body) or [None])[0]
+        if not version or not rest[1].endswith(".metainfo.xml"):
+            die("cat: no such file " + rest[1])
+        print('<component><releases><release version="%s" date="2026-01-01"/></releases></component>' % version)
     elif command == "fsck":
         base = os.path.join(repo, "refs", "heads")
         for root, _, files in os.walk(base):
@@ -218,10 +265,11 @@ def main():
             write_config(repo)
         path = os.path.join(repo, "refs", "heads", ref)
         parent = read_ref(repo, ref) if os.path.isfile(path) and not os.environ.get("FAKE_OSTREE_ORPHAN") else "-"
-        commit = hashlib.sha256((ref + "\n" + parent + "\n" + body).encode()).hexdigest()
+        content = "parent=%s\n%s\nbinding=%s\ndate=%d\n" % (parent, body, ref, int(os.environ.get("FAKE_OSTREE_DATE") or time.time()))
+        commit = hashlib.sha256(content.encode()).hexdigest()  # as in ostree: the id is the checksum of the commit object
         os.makedirs(os.path.dirname(commit_path(repo, commit)), exist_ok=True)
         with open(commit_path(repo, commit), "w") as f:
-            f.write("parent=%s\n%s\nbinding=%s\n" % (parent, body, ref))
+            f.write(content)
         write_ref(repo, ref, commit)
         print(commit)
     else:

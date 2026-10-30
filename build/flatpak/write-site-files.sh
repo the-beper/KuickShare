@@ -7,7 +7,7 @@ set -eu
 site=$(readlink -f "$1")
 url=${2%/}
 id=io.github.the_beper.KuickShare
-key=${GPG_KEY_B64:?set GPG_KEY_B64 to the public key}
+key=${GPG_KEY_B64:?GPG_KEY_B64 is empty or not set: it must be the base64 of the binary public key}
 
 cat > "$site/kuickshare.flatpakrepo" <<REPO
 [Flatpak Repo]
