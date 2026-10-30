@@ -4,7 +4,7 @@
 #   code       anything except documentation and repository chrome: rustfmt, Clippy, the tests, cargo deny
 #   packaging  the files the AppImage, tarball and Flatpak are built from, or how they are built
 # Inputs come from the environment, never from the command line (the workflow passes event data through env:):
-#   EVENT_NAME  github.event_name; only a pull_request is diffed, every other event (push to main, manual run) runs everything
+#   EVENT_NAME  github.event_name; only a pull_request is diffed, every other event (push to main, manual or scheduled run) runs everything
 #   BASE_SHA    the commit the pull request is based on (github.event.pull_request.base.sha)
 # Run it in a checkout that has the history of both commits. If the base is not there, everything runs.
 set -eu

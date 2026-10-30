@@ -36,6 +36,21 @@ step "Metainfo and desktop file"
 xmllint --noout data/*.metainfo.xml
 appstreamcli validate --no-net data/*.metainfo.xml
 desktop-file-validate data/io.github.the_beper.KuickShare.desktop
+# The Dolphin service menu is a KDE `Type=Service`, which desktop-file-validate rejects: check what KDE needs instead.
+# Every name in Actions= has a [Desktop Action] group with Name and Exec, and every such group is listed.
+awk -F= '
+    /^\[/ { group = ($0 ~ /^\[Desktop Action /) ? substr($0, 17, length($0) - 17) : ($0 == "[Desktop Entry]" ? "-" : "?"); if (group !~ /^[-?]$/) have[group] = 1; next }
+    group == "-" && $1 == "Type" { type = $2 }
+    group == "-" && $1 == "Actions" { listed = $2 }
+    group !~ /^[-?]$/ && $1 == "Name" { name[group] = 1 }
+    group !~ /^[-?]$/ && $1 == "Exec" { exec_[group] = 1 }
+    END {
+        bad = (type != "Service") || (listed == "")
+        n = split(listed, acts, ";")
+        for (i = 1; i <= n; i++) if (acts[i] != "" && !(acts[i] in have)) bad = 1
+        for (g in have) if (!(g in name) || !(g in exec_) || index(";" listed ";", ";" g ";") == 0) bad = 1
+        exit bad
+    }' data/kuickshare-send.desktop || { echo "data/kuickshare-send.desktop is not a valid service menu" >&2; exit 1; }
 
 step "Catalogs"
 while read -r l; do msgfmt -c --statistics -o /dev/null "po/$l.po"; done < po/LINGUAS

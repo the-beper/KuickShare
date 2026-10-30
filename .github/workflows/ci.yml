@@ -1,13 +1,15 @@
 name: CI
 
-# Pull requests, pushes to main and manual runs. Tags do not run it again: a release needs the `required` job green on
-# its commit. There is no path filter on the triggers (a skipped workflow would leave a required check pending): the
+# Pull requests, pushes to main, manual runs and a weekly run of main (new advisories for `cargo deny`, and the rebuilt
+# images). Tags do not run it again: a release needs the `required` job green on its commit. There is no path filter on the triggers (a skipped workflow would leave a required check pending): the
 # `changes` job decides what runs, and `required` checks that every skip was intended.
 on:
   pull_request:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: "47 5 * * 1" # weekly, after images.yml (04:17) has rebuilt the images
 
 permissions: {}
 
@@ -17,7 +19,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Which jobs the change needs (build/ci/changes.sh). Main and manual runs always run everything.
+  # Which jobs the change needs (build/ci/changes.sh). Main, manual and scheduled runs always run everything.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -56,7 +58,7 @@ jobs:
       - name: shellcheck
         run: |
           shellcheck --version
-          find build scripts -name '*.sh' -print0 | xargs -0 shellcheck --severity=warning
+          find build scripts po \( -name '*.sh' -o -name '*.hook' \) -print0 | xargs -0 shellcheck --severity=warning
 
       # The release scripts against fakes of gh, flatpak and ostree, with ephemeral GnuPG keys (build/release/simulate.sh).
       - name: Release simulation
