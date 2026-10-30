@@ -5,7 +5,8 @@ body). It implements the calls the release scripts make, plus `fake-commit`, whi
 exports a build. `gpg-sign` writes <rest>.commitmeta, a detached GnuPG signature of the commit, and refuses a commit that
 has one, as ostree does; `remote add` and `pull` check commit signatures with the key imported into the remote;
 `show --print-detached-metadata-key=ostree.gpgsigs` prints something only for a signed commit; `fsck` only checks that
-every ref names a commit that exists. The id of a commit is the SHA-256 of its file. A commit file has the lines `parent=<id or ->`, the body and `binding=<ref>`, what
+every ref names a commit that exists. The id of a commit is the SHA-256 of its file. A commit file has the lines
+`parent=<id or ->`, the body and `binding=<ref>`, what
 `show --print-metadata-key=ostree.ref-binding` prints (as `['<ref>']`); `init` writes the config of an archive-z2 repository.
 Optional lines after those: `date=<seconds>` (default: now, or $FAKE_OSTREE_DATE for fake-commit), `keys=<metadata keys>`
 (`show --list-metadata-keys`, default the two bindings), `subject=` (default the body) and `message=` (a body); `version=` (what `cat` prints

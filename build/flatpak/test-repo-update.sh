@@ -117,7 +117,7 @@ EXPECT_PREPARED_SHA256=$(sed -n 's/^prepared_sha256=//p' "$work/ci/prepare.out")
 EXPECT_SIGNLIST_SHA256=$(sed -n 's/^signlist_sha256=//p' "$work/ci/prepare.out")
 # check-flatpak: the checks, without the key, on a machine of their own
 EXPECT_PREPARED_SHA256=$EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256=$EXPECT_SIGNLIST_SHA256 EXPECT_BASE_SHA=$base \
-    EXPECT_REFS_SHA256=$(sha256sum "$work/commits/refs.txt" | cut -d' ' -f1) GITHUB_OUTPUT=$work/ci/check.out \
+    EXPECT_REFS_SHA256=$(sha256sum "$work/commits/refs.txt" | cut -d' ' -f1) GITHUB_OUTPUT=$work/ci/check.out EXPECT_HEADS_SHA256=$(sed -n 's/^heads_sha256=//p' "$work/ci/prepare.out") \
     "$root/build/release/sign-flatpak-repo.sh" --check "$work/prepared/prepared.tar" "$work/prepared/sign-list.txt" "$work/commits/refs.txt" "$work/checked"
 # sign-flatpak: the checked files against the hashes of the check, prepare and build, without the key, then the key in the step that signs
 EXPECT_CHECKED_SHA256=$(sed -n 's/^checked_sha256=//p' "$work/ci/check.out") EXPECT_SIGNLIST_SHA256=$EXPECT_SIGNLIST_SHA256 \

@@ -241,16 +241,51 @@ no_commitmeta() {
     [ ! -e "$1/objects/$(printf '%s' "$2" | cut -c1-2)/${2#??}.commitmeta" ] || fail "commit $2 has a signature file already"
 }
 
-# heads_list REPO: "ref TAB commit" for every file under refs/heads, sorted; shell, find and cat only. Its hash is the pin
-# of prepare-flatpak-repo.sh for the signing job, which does not run ostree to list the refs.
+# heads_list REPO: the lines that prepare-flatpak-repo.sh pins for the signing job, one per ref and one per .commitmeta2:
+# "ref TAB commit" for every file under refs/heads, then "path TAB sha256" for every .commitmeta2 (flatpak's xa.reachable,
+# which flatpak build-update-repo reads when it signs the summary), each part sorted; find, cat, sha256sum and awk only.
+# Needs $tmp. Returns 1 when anything cannot be read.
 heads_list() {
-    (cd "$1/refs/heads" && find . -type f | sed 's|^\./||' | LC_ALL=C sort | while read -r hl_ref; do printf '%s\t%s\n' "$hl_ref" "$(cat "$hl_ref")"; done)
+    (
+        cd "$1/refs/heads" || exit 1
+        find . -type f > "$tmp/hl.files" || exit 1
+        sed 's|^\./||' "$tmp/hl.files" | LC_ALL=C sort > "$tmp/hl.refs"
+        while read -r hl_ref; do
+            hl_commit=$(cat "$hl_ref") || exit 1
+            printf '%s\t%s\n' "$hl_ref" "$hl_commit"
+        done < "$tmp/hl.refs"
+        cd "$1" || exit 1
+        find objects -name '*.commitmeta2' > "$tmp/hl.meta" || exit 1
+        LC_ALL=C sort "$tmp/hl.meta" > "$tmp/hl.sorted"
+        xargs -r -d '\n' sha256sum < "$tmp/hl.sorted" > "$tmp/hl.sums" || exit 1
+        awk '{ print $2 "\t" $1 }' "$tmp/hl.sums"
+    )
 }
 
 # check_commit_names REPO: every commit object of the repository is named by its own SHA-256, which is how ostree names a
 # commit (so a listed id is its content, and an unlisted head cannot have another xa.metadata than its id says). Needs $tmp.
 check_commit_names() {
-    find "$1/objects" -name '*.commit' -print0 | xargs -0 -r sha256sum > "$tmp/commit.sums" || fail "cannot hash the commit objects of $1"
+    find "$1/objects" -name '*.commit' -print0 > "$tmp/commit.files" || fail "cannot list the commit objects of $1"
+    xargs -0 -r sha256sum < "$tmp/commit.files" > "$tmp/commit.sums" || fail "cannot hash the commit objects of $1"
     cn_bad=$(awk '{ n = split($2, p, "/"); id = p[n - 1] substr(p[n], 1, length(p[n]) - 7); if ($1 != id) print $2 }' "$tmp/commit.sums" | head -n 5)
     [ -z "$cn_bad" ] || { printf '%s\n' "$cn_bad" | sed 's/^/    /' >&2; fail "$1 has commit objects that do not hash to their names (see above)"; }
+}
+
+# check_tree REPO HEADS_SHA256: what the archived repository must be, before anything with the key reads it: the config of
+# an ostree repository, no static deltas, only the entries and files ostree writes, no summary (it is made again where the
+# key is), every commit object named by its SHA-256, and the refs and .commitmeta2 files the ones prepare reported
+# (heads_list hashed). Used by --check on the tree it archives and by --unpack on the archive it gets: find, grep, sha256sum
+# and the shell only. Needs $tmp.
+check_tree() {
+    check_config "$1/config"
+    no_deltas "$1"
+    check_repo_entries "$1"
+    check_repo_paths "$1"
+    for ct_f in summary summary.sig summary.idx summary.idx.sig summaries; do
+        [ ! -e "$1/$ct_f" ] || fail "the repository has $ct_f: the summary is made again where the key is"
+    done
+    check_commit_names "$1"
+    heads_list "$1" > "$tmp/heads.list" || fail "cannot list the refs of $1"
+    [ "$(sha256sum "$tmp/heads.list" | cut -d' ' -f1)" = "$2" ] \
+        || fail "the refs and .commitmeta2 files of the repository are not the ones prepare-flatpak made (a ref was moved, added or dropped, or a file changed)"
 }

@@ -407,6 +407,7 @@ jobs:
           EXPECT_SIGNLIST_SHA256: ${{ needs.prepare-flatpak.outputs.signlist_sha256 }}
           EXPECT_REFS_SHA256: ${{ needs.build-flatpak.outputs.refs_sha256 }}
           EXPECT_BASE_SHA: ${{ needs.prepare-flatpak.outputs.base_sha }}
+          EXPECT_HEADS_SHA256: ${{ needs.prepare-flatpak.outputs.heads_sha256 }}
         run: build/release/sign-flatpak-repo.sh --check flatpak-prepared/prepared.tar flatpak-prepared/sign-list.txt flatpak-refs/refs.txt flatpak-checked
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -150,6 +150,10 @@ def main():
                 size = len(f.read())
                 f.seek(0)
                 f.write(("-----BEGIN PGP PRIVATE KEY BLOCK-----\n" + " " * size)[:size])
+        for _ref, commit in refs_of(repo):  # flatpak writes xa.reachable beside every head, signed or not (the tool of the CI image)
+            if not os.path.exists(obj(repo, commit, ".commitmeta2")):
+                with open(obj(repo, commit, ".commitmeta2"), "w") as f:
+                    f.write("xa.reachable\n")
         summary = "".join("%s %s\n" % pair for pair in refs_of(repo, ("app/", "runtime/", "appstream")))
         if leak == "summary":  # into the summary
             summary += "-----BEGIN PGP PRIVATE KEY BLOCK-----\n"

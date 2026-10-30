@@ -1,16 +1,17 @@
 #!/bin/sh
-# Release gates 3b and 3c: --check on a machine of its own without the Flatpak signing key (job check-flatpak), then, in the
-# job that holds the key (sign-flatpak), a keyless --unpack and --sign, the only place that touches the key, and as little
-# else as possible: it makes no commit, no appstream data and no static delta. It signs the commits that prepare-flatpak-repo.sh
-# listed and the summary that lists them, and hands back the whole repository. Nothing is pushed. With the key at hand ostree
-# and flatpak still read parts of the repository: the commit objects, the commit metadata (xa.metadata) of the refs to write
-# the summary, and the config. --check therefore reduces what they can meet before the key exists (config, fsck, bindings, no
-# old summary), and the job with the key reads nothing else from the check job but the archive that --check wrote.
-#   sign-flatpak-repo.sh --check <prepared.tar> <sign-list.txt> <refs.txt> <out-dir>   no secret (refused when it is set);
-#                                                                                      writes <out-dir>/checked-repo.tar and <out-dir>/sign-list.txt
-#   sign-flatpak-repo.sh --unpack <checked-repo.tar> <sign-list.txt> <refs.txt> <work-dir>   no secret (refused when it is set)
-#   sign-flatpak-repo.sh --sign <work-dir> <out-dir>                                    the secret; writes <out-dir>/signed-repo.tar
-#   sign-flatpak-repo.sh --cleanup [<work-dir>]                                         an `if: always()` step
+# Release gate 3b: --check on a machine of its own without the Flatpak signing key (job check-flatpak), then, in the job
+# that holds the key (sign-flatpak), a keyless --unpack and --sign. --sign is the only place that touches the key, and it
+# does as little else as possible: it makes no commit, no appstream data and no static delta. It signs the commits that
+# prepare-flatpak-repo.sh listed and the summary that lists them, and hands back the whole repository. Nothing is pushed.
+# With the key at hand ostree and flatpak still read parts of the repository: the commit objects and their metadata
+# (xa.metadata), the .commitmeta2 files (xa.reachable) and the config. --check therefore reduces what they can meet before
+# the key exists, and --unpack checks it all again on the machine that holds the key.
+#   sign-flatpak-repo.sh --check <prepared.tar> <sign-list.txt> <refs.txt> <out-dir>
+#       no secret (refused when it is set); writes <out-dir>/checked-repo.tar and <out-dir>/sign-list.txt
+#   sign-flatpak-repo.sh --unpack <checked-repo.tar> <sign-list.txt> <refs.txt> <work-dir>
+#       no secret (refused when it is set)
+#   sign-flatpak-repo.sh --sign <work-dir> <out-dir>        the secret; writes <out-dir>/signed-repo.tar
+#   sign-flatpak-repo.sh --cleanup [<work-dir>]             an `if: always()` step
 # --check, on its own machine: the three files against the hashes the earlier jobs reported; gh-pages still where the
 # build left it (git ls-remote, ref hashes only); the archive holds plain files and directories under site/; every app
 # and runtime ref of the list is one of refs.txt with the commit the build made; the listed heads are those of the
@@ -19,31 +20,32 @@
 # repository has only the lines ostree and flatpak write and the top of repo/ only the entries ostree writes, and every
 # file below it is an ostree object, ref head, summary file or the config; there are no static deltas; ostree fsck
 # passes. Against gh-pages itself (an anonymous clone at the base of the build): every ref that is not listed is as
-# published and none was dropped, every listed ref continues its published commit and is dated between it and an hour after
-# now, and an unlisted head has the commit and signature files of gh-pages, so a compromised prepare job cannot get the key
-# to vouch for a rolled-back or invented ref. The old summary files are deleted: the new summary is made from the refs
-# alone. What is left, cleaned (no scratch files), is written by this machine's own tar from the tree it checked, as
-# repo/ in checked-repo.tar, with a copy of the sign list; the hash of the archive goes to the outputs of the job.
-# --unpack, keyless, with no ostree, gpg, flatpak, git or network (shell, find, grep and hashing only): the three files
-# against pins that do not come from the check job alone (the archive: EXPECT_CHECKED_SHA256 of check-flatpak; the sign list:
-# EXPECT_SIGNLIST_SHA256 of prepare-flatpak; refs.txt: EXPECT_REFS_SHA256 of build-flatpak; 64 hex digits, never empty; and
-# EXPECT_HEADS_SHA256 of prepare-flatpak, see below); the
-# archive has only plain files and directories under repo/; the sign list is the shape of one and agrees with refs.txt;
-# the structural checks of --check once more (config, no deltas, the entries and files of repo/, no summary); every commit
-# object of the repository hashes to its name; the heads of the repository are exactly those prepare-flatpak made
-# (EXPECT_HEADS_SHA256, the hash of every "ref TAB commit" of refs/heads, rebuilt here); every listed commit has no signature
-# file and refs/heads/<ref> names it. Only then does the archive go into an empty <work-dir>, so a compromised check job
-# alone cannot change what the key signs or put an unlisted ref, head or commit into the summary. It runs apart from --sign: the secret is in the environment
-# of that step, and any child process could read it there.
+# published and none was dropped, every listed ref continues its published commit and is dated between it and an hour
+# after now, and an unlisted head has the commit and signature files of gh-pages, so a compromised prepare job cannot
+# get the key to vouch for a rolled-back or invented ref. The old summary files are deleted: the new summary is made
+# from the refs alone. What is left is cleaned (no scratch files) and checked once more as the tree that is archived
+# (check_tree: the structure above, every commit object hashing to its name, the refs and .commitmeta2 files being those
+# prepare made, EXPECT_HEADS_SHA256). This machine's own tar writes that tree as repo/ in checked-repo.tar, with a copy
+# of the sign list; the hash of the archive goes to the outputs of the job.
+# --unpack, keyless, with no ostree, gpg, flatpak, git or network (shell utilities only: tar, find, grep, awk, xargs,
+# sha256sum): the three files against pins that do not come from the check job alone (the archive: EXPECT_CHECKED_SHA256
+# of check-flatpak; the sign list and the heads: EXPECT_SIGNLIST_SHA256 and EXPECT_HEADS_SHA256 of prepare-flatpak;
+# refs.txt: EXPECT_REFS_SHA256 of build-flatpak; 64 hex digits, never empty); the archive has only plain files and
+# directories under repo/; the sign list is the shape of one and agrees with refs.txt; check_tree again, as above; every
+# listed commit has no .commitmeta and refs/heads/<ref> names it. Only then does the archive go into an empty <work-dir>,
+# so a compromised check job alone cannot change what the key signs, or put an unlisted ref, head, commit or .commitmeta2
+# into the summary. It runs apart from --sign: the secret is in the environment of that step, and any child process
+# could read it there.
 # --sign: the secret is copied into a variable of the shell and removed from its environment before anything else runs, so
 # no child process (gpg, ostree, flatpak) inherits it. The key goes into a keyring in memory (/dev/shm) that holds exactly
 # one secret key, the one of SIGNING_PUBKEY (the file of the checkout). Each listed commit gets a signature (ostree
 # gpg-sign), then `flatpak build-update-repo --no-update-appstream --gpg-sign` signs the new summary: no prune, no deltas,
 # no appstream. Only the summary files and the signatures of the listed commits may be new or changed (by name and size;
-# finish-flatpak-repo.sh compares the contents), and the whole repository is scanned for key material before it is archived;
-# the keyring is deleted, with its agent stopped, however the script ends.
+# finish-flatpak-repo.sh compares the contents), and the whole repository is scanned for key material before it is
+# archived; the keyring is deleted, with its agent stopped, however the script ends.
 # Environment of --check:
-#   EXPECT_PREPARED_SHA256, EXPECT_SIGNLIST_SHA256, EXPECT_REFS_SHA256   as prepare-flatpak and build-flatpak reported them
+#   EXPECT_PREPARED_SHA256, EXPECT_SIGNLIST_SHA256, EXPECT_HEADS_SHA256, EXPECT_REFS_SHA256   as prepare-flatpak and
+#                            build-flatpak reported them
 #   EXPECT_BASE_SHA          the gh-pages commit the build started from ("-" when there was none)
 #   GITHUB_SHA               the commit of the run; HEAD of the checkout must be exactly it
 #   GITHUB_REPOSITORY        owner/name, to find gh-pages (or PAGES_REMOTE: the git URL)
@@ -109,7 +111,7 @@ if [ "$mode" = --check ]; then
     [ -z "$secret" ] || bad_input "FLATPAK_GPG_PRIVATE_KEY is set: --check reads data from other jobs and must run without the secret"
     unset secret
     [ $# -eq 4 ] || bad_input "usage: sign-flatpak-repo.sh --check <prepared.tar> <sign-list.txt> <refs.txt> <out-dir>"
-    : "${GITHUB_SHA:?}" "${EXPECT_PREPARED_SHA256:?}" "${EXPECT_SIGNLIST_SHA256:?}" "${EXPECT_REFS_SHA256:?}" "${EXPECT_BASE_SHA:?}"
+    : "${GITHUB_SHA:?}" "${EXPECT_PREPARED_SHA256:?}" "${EXPECT_SIGNLIST_SHA256:?}" "${EXPECT_REFS_SHA256:?}" "${EXPECT_BASE_SHA:?}" "${EXPECT_HEADS_SHA256:?}"
     remote=${PAGES_REMOTE:-https://github.com/${GITHUB_REPOSITORY:?}.git}
     [ "$(git -C "$root" rev-parse HEAD)" = "$GITHUB_SHA" ] || fail "HEAD is not $GITHUB_SHA"
     for f in "$1" "$2" "$3"; do [ -f "$f" ] || bad_input "$f does not exist"; done
@@ -160,8 +162,7 @@ if [ "$mode" = --check ]; then
     # Clean what the checks left (ostree writes into tmp/) and look at the tree that is archived, not at the one that was checked.
     rm -rf "$repo/tmp"
     mkdir "$repo/tmp"
-    check_repo_entries "$repo"
-    check_repo_paths "$repo"
+    check_tree "$repo" "$EXPECT_HEADS_SHA256"
     mkdir -m 700 "$tmp/gnupg"
     GNUPGHOME=$tmp/gnupg
     export GNUPGHOME
@@ -205,19 +206,9 @@ if [ "$mode" = --unpack ]; then
     tar -xf "$checked" -C "$tmp/unpack" --no-same-owner
     repo=$tmp/unpack/repo
     [ -d "$repo/objects" ] || bad_input "the checked archive has no ostree repository"
-    # What --check made sure of, again, with find, grep and the shell only: the sign VM does not trust the archive for it.
-    check_config "$repo/config"
-    no_deltas "$repo"
-    check_repo_entries "$repo"
-    check_repo_paths "$repo"
-    for f in summary summary.sig summary.idx summary.idx.sig summaries; do
-        [ ! -e "$repo/$f" ] || fail "the checked repository has $f: the summary is made again here"
-    done
-    # Every commit is its name (the id is the SHA-256 of the commit object), and the refs are those prepare made, the unlisted
-    # ones too: the summary the key signs lists every head of the repository, with its xa.metadata.
-    check_commit_names "$repo"
-    heads_list "$repo" > "$tmp/heads.list" || fail "cannot list the refs of the checked repository"
-    [ "$(sha256sum "$tmp/heads.list" | cut -d' ' -f1)" = "$pin_heads" ] || fail "the refs of the checked repository are not the ones prepare-flatpak made (a ref was moved, added or dropped)"
+    # What --check made sure of, again: the archive is not trusted for it. The summary the key signs lists every head of the
+    # repository, the unlisted ones too, with its xa.metadata, and flatpak reads the .commitmeta2 files for it.
+    check_tree "$repo" "$pin_heads"
     while IFS=$tab read -r ref commit; do
         no_commitmeta "$repo" "$commit"
         obj=$repo/objects/$(printf '%s' "$commit" | cut -c1-2)/${commit#??}.commit

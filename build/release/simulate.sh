@@ -274,7 +274,8 @@ job_check() {
     EXPECT_SIGNLIST_SHA256=$(out_of "$w/prepare.gho" signlist_sha256)
     EXPECT_REFS_SHA256=$(sha256_of "$w/commits/refs.txt")
     EXPECT_BASE_SHA=$(out_of "$w/prepare.gho" base_sha)
-    export EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256 EXPECT_REFS_SHA256 EXPECT_BASE_SHA
+    EXPECT_HEADS_SHA256=$(out_of "$w/prepare.gho" heads_sha256)
+    export EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256 EXPECT_REFS_SHA256 EXPECT_BASE_SHA EXPECT_HEADS_SHA256
     run env GITHUB_OUTPUT="$w/check.gho" "$rel/sign-flatpak-repo.sh" --check "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/commits/refs.txt" "$w/checked"
 }
 # What the sign job has: the artifact of the check job with the hash of its output, the build's refs.txt, and the hashes that
@@ -834,10 +835,6 @@ job_check
 check "--check refuses a new commit dated two hours ahead" rc_is 1
 check "(the message says so)" out_has "is dated more than 3600s after now"
 restore_prepared
-tamper_prepared "sed -i 's|^date=.*|date=$((now + 1800))|' $(objfile "$app_commit")"
-job_check
-check "--check accepts a new commit dated half an hour ahead (clock skew)" rc_is 0
-restore_prepared
 tamper_prepared "sed -i 's|^date=.*|date=1000|' $(objfile "$app_commit")"
 job_check
 check "--check refuses a new commit older than the published head" rc_is 1
@@ -854,6 +851,14 @@ tamper_signed "sed -i 's|^date=.*|date=$((now + 7200))|' $(objfile "$app_commit"
 job_finish
 check "finish refuses a signed commit dated two hours ahead" rc_is 1
 check "(the message says so)" out_has "is dated more than 3600s after now"
+# a build whose new commits are dated half an hour ahead (a commit object is its checksum, so it is built that way)
+make_world 40
+FAKE_OSTREE_DATE=$((now + 1800))
+export FAKE_OSTREE_DATE
+build_jobs
+unset FAKE_OSTREE_DATE
+job_check
+check "--check accepts a new commit dated half an hour ahead (clock skew)" rc_is 0
 end_case "commit dates: a new commit is not dated far ahead of now or before the head it continues, in --check and finish"
 
 # ---- 6l. the appstream commits that prepare makes ----
@@ -1389,7 +1394,7 @@ check "(no keyring is left)" no_leftovers
 : > "$rt/calls"
 with_shims job_sign_step
 check "the step with the secret works on the same files and the same absence" rc_is 0
-check "it called ostree rev-parse and gpg-sign, once per listed ref" same "$(grep -c '^ostree .* gpg-sign ' "$rt/calls")" "$(wc -l < "$w/checked/sign-list.txt")"
+check "it called ostree rev-parse and gpg-sign, once per listed ref each" same "$(grep -c '^ostree .* \(rev-parse\|gpg-sign\) ' "$rt/calls")" "$(($(wc -l < "$w/checked/sign-list.txt") * 2))"
 check "(and the summary signing)" file_has "$rt/calls" "^flatpak build-update-repo --no-update-appstream --gpg-sign="
 check "(and the key import)" file_has "$rt/calls" "^gpg .*--import"
 check "and nothing else: no git, no network, no check of the repository" not grep -Evq '^(ostree --repo=[^ ]+ (rev-parse|gpg-sign) |flatpak build-update-repo --no-update-appstream --gpg-sign=|gpg |tar )' "$rt/calls"
@@ -1441,6 +1446,7 @@ check "unpack refuses an empty pin of the sign list" rc_is 2
 check "(nothing was extracted)" not test -e "$w/signwork"
 sign_side -u EXPECT_CHECKED_SHA256 -u EXPECT_SIGNLIST_SHA256 -u EXPECT_REFS_SHA256 -u EXPECT_HEADS_SHA256 "$rel/sign-flatpak-repo.sh" --unpack "$w/checked/checked-repo.tar" "$w/checked/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
 check "unpack refuses pins that are not set" rc_is 2
+check "(nothing was extracted)" not test -e "$w/signwork"
 unpack_pinned "$orig_pin" "$list_pin" ""
 check "unpack refuses an empty pin of refs.txt" rc_is 2
 check "(nothing was extracted)" not test -e "$w/signwork"
@@ -1475,7 +1481,7 @@ refused_unpack "a sign list of its own, with the hash of its archive (the pin of
 cp "$w/checked.orig/sign-list.txt" "$w/checked/sign-list.txt"
 fresh_y
 printf '%s\n' "$loc_c" > "$w/y/repo/refs/heads/$app_ref"
-refused_unpack "a ref that points to another commit than the listed one" 1 "refs of the checked repository"
+refused_unpack "a ref that points to another commit than the listed one" 1 "not the ones prepare-flatpak made"
 fresh_y
 echo '# changed' >> "$w/y/repo/$(objfile "$app_c")"
 refused_unpack "a commit object that does not hash to its id" 1 "do not hash to their names"
@@ -1497,7 +1503,7 @@ refused_unpack "a stray file at the top of repo/" 1 "entries at its top"
 fresh_y
 mkdir -p "$w/y/repo/refs/heads/app/evil.app/x86_64"
 printf '%s\n' "$app_c" > "$w/y/repo/refs/heads/app/evil.app/x86_64/stable"
-refused_unpack "a ref that prepare did not make" 1 "refs of the checked repository"
+refused_unpack "a ref that prepare did not make" 1 "not the ones prepare-flatpak made"
 fresh_y
 app_parent=$(awk -F'\t' -v r="$app_ref" '$1 == r { print $3 }' "$w/commits/refs.txt")
 echo '# changed' >> "$w/y/repo/$(objfile "$app_parent")"
@@ -1506,10 +1512,16 @@ fresh_y
 touch "$w/y/repo/objects/$(printf '%s' "$app_c" | cut -c1-2)/${app_c#??}.commitmeta"
 refused_unpack "a signature file of a listed commit" 1 "signature file already"
 fresh_y
-touch "$w/y/repo/objects/$(printf '%s' "$app_c" | cut -c1-2)/${app_c#??}.commitmeta2"
-tar -C "$w/y" -cf "$w/checked/checked-repo.tar" repo
-unpack_pinned "$(sha256_of "$w/checked/checked-repo.tar")" "$list_pin"
-check "unpack accepts a .commitmeta2 on a listed commit: it is no signature (flatpak build-update-repo writes xa.reachable there)" rc_is 0
+check "the honest archive has .commitmeta2 files, as flatpak build-update-repo writes them (xa.reachable)" tar_has "$w/checked.orig/checked-repo.tar" 'repo/objects/.*commitmeta2'
+printf 'crafted\n' >> "$w/y/repo/objects/$(printf '%s' "$app_c" | cut -c1-2)/${app_c#??}.commitmeta2"
+refused_unpack "a .commitmeta2 that was changed (flatpak parses it with the key at hand)" 1 "not the ones prepare-flatpak made"
+fresh_y
+mkdir -p "$w/y/repo/objects/00"
+cp "$w/y/repo/objects/$(printf '%s' "$app_c" | cut -c1-2)/${app_c#??}.commitmeta2" "$w/y/repo/objects/00/$(printf 'a%.0s' $(seq 62)).commitmeta2"
+refused_unpack "a .commitmeta2 that was added" 1 "not the ones prepare-flatpak made"
+fresh_y
+rm "$w/y/repo/objects/$(printf '%s' "$app_c" | cut -c1-2)/${app_c#??}.commitmeta2"
+refused_unpack "a .commitmeta2 that was dropped" 1 "not the ones prepare-flatpak made"
 cp "$w/checked.orig/checked-repo.tar" "$w/checked/checked-repo.tar"
 
 # a symlink member under a matching pin
@@ -1552,10 +1564,10 @@ job_unpack
 check "unpack accepts the honest archive" rc_is 0
 fresh_y
 printf '%s\n' "$extra_parent" > "$w/y/repo/refs/heads/$extra"
-refused_unpack "an unlisted ref moved back to an older signed commit" 1 "refs of the checked repository"
+refused_unpack "an unlisted ref moved back to an older signed commit" 1 "not the ones prepare-flatpak made"
 fresh_y
 rm "$w/y/repo/refs/heads/$extra"
-refused_unpack "an unlisted ref that was dropped" 1 "refs of the checked repository"
+refused_unpack "an unlisted ref that was dropped" 1 "not the ones prepare-flatpak made"
 fresh_y
 echo '# changed' >> "$w/y/repo/$(objfile "$extra_head")"
 refused_unpack "an unlisted head whose commit object was swapped (its xa.metadata would go into the summary)" 1 "do not hash to their names"
