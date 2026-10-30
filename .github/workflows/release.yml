@@ -182,10 +182,11 @@ jobs:
   # Builds the bundle and exports the commits WITHOUT a signature, onto an anonymous clone of the published repository (so that
   # they keep their parent). This job has no secret and no write token. It runs on the plain runner, not in a job container
   # (which would be a rootful, --privileged Docker container): the scripts start the build image with rootless podman, and
-  # bubblewrap inside it needs nothing but /proc unmasked (build/flatpak/build-flatpak.sh).
+  # bubblewrap inside it needs /proc unmasked and the SYS_ADMIN and NET_ADMIN capabilities, inside the container's user
+  # namespace only (build/flatpak/build-flatpak.sh). Pinned runner image, as sign-flatpak: the same podman, flatpak and ostree.
   build-flatpak:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read

@@ -4,7 +4,8 @@
 #   code       anything except documentation and repository chrome: rustfmt, Clippy, the tests, cargo deny
 #   packaging  the files the AppImage, tarball and Flatpak are built from, or how they are built
 # Inputs come from the environment, never from the command line (the workflow passes event data through env:):
-#   EVENT_NAME  github.event_name; only a pull_request is diffed, every other event (push to main, manual or scheduled run) runs everything
+#   EVENT_NAME  github.event_name; a pull_request is diffed, a schedule needs neither (the weekly run is only `cargo deny`,
+#               which ci.yml starts by the event itself), every other event (push to main, manual run) runs everything
 #   BASE_SHA    the commit the pull request is based on (github.event.pull_request.base.sha)
 # Run it in a checkout that has the history of both commits. If the base is not there, everything runs.
 set -eu
@@ -30,7 +31,9 @@ is_packaging() {
     return 1
 }
 
-if [ "${EVENT_NAME:-}" != pull_request ]; then
+if [ "${EVENT_NAME:-}" = schedule ]; then
+    : # the weekly run is only `cargo deny`: no change to look at
+elif [ "${EVENT_NAME:-}" != pull_request ]; then
     code=true
     packaging=true
 elif [ -z "${BASE_SHA:-}" ] || ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then

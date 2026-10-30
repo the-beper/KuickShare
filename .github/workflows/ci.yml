@@ -1,15 +1,16 @@
 name: CI
 
-# Pull requests, pushes to main, manual runs and a weekly run of main (new advisories for `cargo deny`, and the rebuilt
-# images). Tags do not run it again: a release needs the `required` job green on its commit. There is no path filter on the triggers (a skipped workflow would leave a required check pending): the
-# `changes` job decides what runs, and `required` checks that every skip was intended.
+# Pull requests, pushes to main, manual runs and a weekly run of main that runs only `cargo deny` (new advisories). Tags do
+# not run it again: a release needs the `required` job green on its commit. There is no path filter on the triggers (a
+# skipped workflow would leave a required check pending): the `changes` job decides what runs, and `required` checks that
+# every skip was intended.
 on:
   pull_request:
   push:
     branches: [main]
   workflow_dispatch:
   schedule:
-    - cron: "47 5 * * 1" # weekly, after images.yml (04:17) has rebuilt the images
+    - cron: "47 5 * * 1" # weekly, only `deny`
 
 permissions: {}
 
@@ -19,7 +20,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Which jobs the change needs (build/ci/changes.sh). Main, manual and scheduled runs always run everything.
+  # Which jobs the change needs (build/ci/changes.sh). Main and manual runs always run everything; a scheduled run runs
+  # only `deny`.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -42,6 +44,7 @@ jobs:
         run: build/ci/changes.sh
 
   lint:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -180,7 +183,8 @@ jobs:
   flatpak:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
-    runs-on: ubuntu-latest
+    # Pinned, as the release's build-flatpak, sign-flatpak and repo-update: the same podman, flatpak and ostree.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -250,7 +254,7 @@ jobs:
 
   deny:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: github.event_name == 'schedule' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -273,6 +277,7 @@ jobs:
     permissions: {}
     env:
       NEEDS: ${{ toJSON(needs) }}
+      EVENT_NAME: ${{ github.event_name }}
     steps:
       - name: Verify the results
         run: |
@@ -282,7 +287,9 @@ jobs:
           import sys
 
           needs = json.loads(os.environ["NEEDS"])
-          # job -> the `changes` output that makes it mandatory (None: always)
+          # A scheduled run is only `cargo deny`: every other job is skipped on purpose.
+          scheduled = os.environ["EVENT_NAME"] == "schedule"
+          # job -> the `changes` output that makes it mandatory (None: always, except on a schedule)
           flag_of = {
               "lint": None,
               "check": "code",
@@ -304,7 +311,9 @@ jobs:
 
           for job, flag in flag_of.items():
               result = needs.get(job, {}).get("result", "missing")
-              if flag is None:
+              if scheduled:
+                  wanted = job == "deny"
+              elif flag is None:
                   wanted = True
               elif flags.get(flag) in ("true", "false"):
                   wanted = flags[flag] == "true"

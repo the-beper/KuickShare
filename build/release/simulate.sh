@@ -4,7 +4,7 @@
 # curl replaced by the fakes in build/release/testdata (put first in PATH). The signatures are real GnuPG signatures made
 # with ephemeral keys generated in temporary keyrings; no real key, no network, no container.
 # Needs only sh, git, gpg 2.2+, python3, tar, sha256sum, sha1sum. Everything happens in a mktemp directory that is removed
-# at the end. Output is TAP: "ok N - ..." lines and "# 18/18 passed"; the exit status is not 0 if a case fails.
+# at the end. Output is TAP: "ok N - ..." lines and "# 19/19 passed"; the exit status is not 0 if a case fails.
 #
 # What it does NOT show (see CONTRIBUTING.md, Releases): that real flatpak, ostree, gh and GitHub Pages behave like the
 # fakes. build/flatpak/test-repo-update.sh covers the real Flatpak client; the rest needs a release.
@@ -44,7 +44,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=18
+total=19
 n=0
 passed=0
 failed=0
@@ -679,6 +679,27 @@ check "gh-pages is the other writer's commit, not ours" not same "$(pages_head)"
 check "gh-pages-previous was not written" not git -C "$origin" rev-parse --verify -q refs/heads/gh-pages-previous
 check "the release is still a draft" state_is "draft 5 -"
 end_case "a writer moves gh-pages during the push: exit 3, nothing of ours pushed"
+
+# ---- 15b. the push lands, the acknowledgement is lost ----
+make_world 19
+build_jobs
+job_verify
+job_sign
+# A server that takes the push and then dies before it can say so: once the refs are committed (reference-transaction hook,
+# state "committed"), the hook kills its parent, git receive-pack. The client reports "the remote end hung up unexpectedly"
+# while gh-pages and gh-pages-previous have both moved.
+# shellcheck disable=SC2016 # the hook expands its own variables
+printf '#!/bin/sh\n[ "$1" = committed ] || exit 0\ngrep -q " refs/heads/gh-pages$" || exit 0\nkill -9 $PPID\n' > "$origin/hooks/reference-transaction"
+chmod +x "$origin/hooks/reference-transaction"
+job_publish
+rm "$origin/hooks/reference-transaction"
+check "publish exits 0 although git reported a failure" rc_is 0
+check "(the client did see the failure)" out_has "hung up unexpectedly"
+check "(the message says the push had landed)" out_has "the push had landed"
+check "gh-pages is the new site" same "$(pages_file repo/summary)" "$(tar -xOf "$w/signed/site.tar" ./repo/summary)"
+check "gh-pages-previous holds the old repository" same "$(git -C "$origin" rev-parse refs/heads/gh-pages-previous)" "$base_sha"
+check "the release is published and the latest" state_is "published 5 latest"
+end_case "the push lands but its acknowledgement is lost: the run goes on and publishes"
 
 # ---- 16. gh-pages-previous refused, gh-pages alone would pass ----
 make_world 17
