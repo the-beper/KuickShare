@@ -10,10 +10,12 @@
 # --check, before the key exists: the three files against the hashes the earlier jobs reported; gh-pages still where the
 # build left it (git ls-remote, ref hashes only); the archive holds plain files and directories under site/; every app and
 # runtime ref of the list is one of refs.txt with the commit the build made; the listed heads are those of the repository,
-# they have no signature yet and each says it belongs to its own ref (ostree.ref-binding); the config of the repository has
-# only the lines ostree and flatpak write; there are no static deltas; ostree fsck passes. Against gh-pages itself (an anonymous
+# they have no signature yet and each says it belongs to its own ref (ostree.ref-binding); the appstream commits have the
+# metadata keys, subject and empty body of an honest run; the config of the repository has only the lines ostree and flatpak
+# write and the top of repo/ only the entries ostree writes; there are no static deltas; ostree fsck passes. Against gh-pages itself (an anonymous
 # clone at the base of the build): every ref that is not listed is as published and none was dropped, every listed ref continues
-# its published commit, so a compromised prepare job cannot get the key to vouch for a rolled-back or invented ref. The old summary files are deleted: the new summary is made
+# its published commit and is dated between it and an hour after now, and an unlisted head has the commit and signature files
+# of gh-pages, so a compromised prepare job cannot get the key to vouch for a rolled-back or invented ref. The old summary files are deleted: the new summary is made
 # from the refs alone.
 # --sign: the secret is copied into a variable of the shell and removed from its environment before anything else runs, so
 # no child process (gpg, ostree, flatpak) inherits it. The key goes into a keyring in memory (/dev/shm) that holds exactly
@@ -120,10 +122,12 @@ if [ "$mode" = --check ]; then
     done < "$signlist"
     check_config "$repo/config"
     no_deltas "$repo"
+    check_repo_entries "$repo"
     check_pages_base "$repo"
     ostree --repo="$repo" fsck --quiet > "$tmp/fsck.log" 2>&1 || { sed 's/^/    /' "$tmp/fsck.log" >&2; fail "ostree fsck of the prepared repository failed"; }
     while IFS=$tab read -r ref commit; do
         check_binding "$repo" "$ref" "$commit"
+        check_appstream_commit "$repo" "$ref" "$commit"
         no_commitmeta "$repo" "$commit"
         sigs=$(ostree --repo="$repo" show --print-detached-metadata-key=ostree.gpgsigs "$commit" 2> /dev/null || true)
         [ -z "$sigs" ] || fail "$ref $commit has a signature already: prepare lists only new commits"

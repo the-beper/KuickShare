@@ -7,12 +7,16 @@ has one, as ostree does; `remote add` and `pull` check commit signatures with th
 `show --print-detached-metadata-key=ostree.gpgsigs` prints something only for a signed commit; `fsck` only checks that
 every ref names a commit that exists. A commit file has the lines `parent=<id or ->`, the body and `binding=<ref>`, what
 `show --print-metadata-key=ostree.ref-binding` prints (as `['<ref>']`); `init` writes the config of an archive-z2 repository.
+Optional lines after those: `date=<seconds>` (default: now, or $FAKE_OSTREE_DATE for fake-commit), `keys=<metadata keys>`
+(`show --list-metadata-keys`, default the two bindings), `subject=` (default the body) and `message=` (a body); `show` prints
+the header with the date, then the subject and the message, and for a signed commit the lines about its signature, as ostree does.
 """
 import hashlib
 import os
 import shutil
 import subprocess
 import sys
+import time
 
 LOG = os.environ.get("FAKE_OSTREE_LOG")
 
@@ -41,6 +45,17 @@ def read_ref(repo, ref):
     if os.path.isfile(commit_path(repo, ref)):
         return ref
     die("rev-parse: %s not found" % ref)
+
+
+def commit_lines(repo, commit):
+    """The optional lines of a commit file (the second line is the body and can hold anything)."""
+    found = {}
+    with open(commit_path(repo, commit)) as f:
+        for number, line in enumerate(f):
+            for name in ("date", "keys", "subject", "message"):
+                if number != 1 and line.startswith(name + "="):
+                    found[name] = line.rstrip("\n").split("=", 1)[1]
+    return found
 
 
 def parent_of(repo, commit):
@@ -203,6 +218,20 @@ def main():
                 die("show: no such metadata key")
             print("['%s']" % found[0])
             return
+        if "--list-metadata-keys" in rest:
+            print("\n".join(commit_lines(repo, commit).get("keys", "ostree.collection-binding ostree.ref-binding").split()))
+            return
+        if not [r for r in rest if r.startswith("--")]:
+            lines = commit_lines(repo, commit)
+            with open(commit_path(repo, commit)) as f:
+                body = f.read().split("\n")[1]
+            stamp = time.strftime("%Y-%m-%d %H:%M:%S +0000", time.gmtime(int(lines.get("date", time.time()))))
+            print("commit %s\nContentChecksum:  %s\nDate:  %s\n\n    %s\n" % (commit, "0" * 64, stamp, lines.get("subject", body)))
+            if "message" in lines:
+                print("    %s\n" % lines["message"])
+            if os.path.isfile(commit_path(repo, commit, ".commitmeta")):
+                print("Found 1 signature:\n\n  Signature made Fri Oct 30 20:42:25 2026 using EdDSA key ID 0000000000000000\n  Can't check signature: public key not found")
+            return
         if key and os.path.isfile(commit_path(repo, commit, ".commitmeta")):
             print("[signature]")
     elif command == "fsck":
@@ -221,7 +250,7 @@ def main():
         commit = hashlib.sha256((ref + "\n" + parent + "\n" + body).encode()).hexdigest()
         os.makedirs(os.path.dirname(commit_path(repo, commit)), exist_ok=True)
         with open(commit_path(repo, commit), "w") as f:
-            f.write("parent=%s\n%s\nbinding=%s\n" % (parent, body, ref))
+            f.write("parent=%s\n%s\nbinding=%s\ndate=%d\n" % (parent, body, ref, int(os.environ.get("FAKE_OSTREE_DATE") or time.time())))
         write_ref(repo, ref, commit)
         print(commit)
     else:

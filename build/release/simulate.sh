@@ -5,7 +5,7 @@
 # curl replaced by the fakes in build/release/testdata (put first in PATH). The signatures are real GnuPG signatures made
 # with ephemeral keys generated in temporary keyrings; no real key, no network, no container.
 # Needs only sh, git, gpg 2.2+, python3, tar, sha256sum, sha1sum. Everything happens in a mktemp directory that is removed
-# at the end. Output is TAP: "ok N - ..." lines and "# 28/28 passed"; the exit status is not 0 if a case fails.
+# at the end. Output is TAP: "ok N - ..." lines and "# 32/32 passed"; the exit status is not 0 if a case fails.
 #
 # What it does NOT show (see CONTRIBUTING.md, Releases): that real flatpak, ostree, gh and GitHub Pages behave like the
 # fakes. build/flatpak/test-repo-update.sh covers the real Flatpak client; the rest needs a release.
@@ -45,7 +45,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=28
+total=32
 n=0
 passed=0
 failed=0
@@ -766,6 +766,122 @@ check "sign --sign refuses an empty secret" rc_is 2
 check "(and says it is empty or not available)" out_has "is empty or not available"
 check "(no scratch directory is left)" no_leftovers
 end_case "empty GPG_KEY_B64 and empty secret: refused, and the message says empty"
+
+# ---- 6k. review findings of PaletoModkit: dates, unlisted heads, appstream commits, top of the repository, rolled-back gh-pages ----
+snapshot_prepared() { rm -rf "$w/prepared.orig"; cp -a "$w/prepared" "$w/prepared.orig"; cp "$w/prepare.gho" "$w/prepare.gho.orig"; }
+tamper_signed() { # <shell command run in the unpacked signed repository>: a compromised sign job
+    rm -rf "$w/y"
+    mkdir "$w/y"
+    tar -xf "$w/signed-repo/signed-repo.tar" -C "$w/y"
+    (cd "$w/y/repo" && eval "$1")
+    tar -C "$w/y" -cf "$w/signed-repo/signed-repo.tar" repo
+    sed -i '/^signed_sha256=/d' "$w/sign.gho"
+    echo "signed_sha256=$(sha256_of "$w/signed-repo/signed-repo.tar")" >> "$w/sign.gho"
+    rm -rf "$w/signed"
+}
+list_commit() { awk -F'\t' -v r="$1" '$1 == r { print $2 }' "$w/prepared.orig/sign-list.txt"; }
+
+make_world 30
+build_jobs
+snapshot_prepared
+app_ref=app/$app_id/x86_64/stable
+app_commit=$(list_commit "$app_ref")
+now=$(date +%s)
+tamper_prepared "sed -i 's|^date=.*|date=$((now + 7200))|' $(objfile "$app_commit")"
+job_sign_check
+check "sign --check refuses a new commit dated two hours ahead" rc_is 1
+check "(the message says so)" out_has "is dated more than 3600s after now"
+restore_prepared
+tamper_prepared "sed -i 's|^date=.*|date=$((now + 1800))|' $(objfile "$app_commit")"
+job_sign_check
+check "sign --check accepts a new commit dated half an hour ahead (clock skew)" rc_is 0
+restore_prepared
+tamper_prepared "sed -i 's|^date=.*|date=1000|' $(objfile "$app_commit")"
+job_sign_check
+check "sign --check refuses a new commit older than the published head" rc_is 1
+check "(the message says so)" out_has "is older than the published head"
+restore_prepared
+tamper_prepared "sed -i 's|^date=.*|date=$((now + 7200))|' $(objfile "$(list_commit appstream/x86_64)")"
+job_sign_check
+check "sign --check refuses a new appstream commit dated two hours ahead" rc_is 1
+restore_prepared
+job_sign_check
+job_sign_key a
+tamper_signed "sed -i 's|^date=.*|date=$((now + 7200))|' $(objfile "$app_commit")"
+job_finish
+check "finish refuses a signed commit dated two hours ahead" rc_is 1
+check "(the message says so)" out_has "is dated more than 3600s after now"
+end_case "commit dates: a new commit is not dated far ahead of now or before the head it continues, in sign --check and finish"
+
+make_world 31
+build_jobs
+snapshot_prepared
+as1=$(list_commit appstream/x86_64)
+as2=$(list_commit appstream2/x86_64)
+job_sign
+check "an honest run goes through, with appstream commits of the expected shape" rc_is 0
+tamper_prepared "echo 'keys=ostree.collection-binding ostree.ref-binding xa.ref' >> $(objfile "$as1")"
+job_sign_check
+check "sign --check refuses an appstream commit with one more metadata key" rc_is 1
+check "(the message says so)" out_has "other metadata keys"
+restore_prepared
+tamper_prepared "echo 'keys=ostree.ref-binding ostree.ref-binding ostree.collection-binding' >> $(objfile "$as1")"
+job_sign_check
+check "sign --check refuses an appstream commit with a key twice" rc_is 1
+restore_prepared
+tamper_prepared "echo 'keys=ostree.ref-binding' >> $(objfile "$as2")"
+job_sign_check
+check "sign --check refuses an appstream2 commit without the collection binding" rc_is 1
+restore_prepared
+tamper_prepared "echo 'subject=Something else' >> $(objfile "$as2")"
+job_sign_check
+check "sign --check refuses an appstream commit with another subject" rc_is 1
+check "(the message says so)" out_has "another subject or a body"
+restore_prepared
+tamper_prepared "echo 'message=a body' >> $(objfile "$as1")"
+job_sign_check
+check "sign --check refuses an appstream commit with a body" rc_is 1
+restore_prepared
+job_sign_check
+job_sign_key a
+tamper_signed "echo 'subject=Something else' >> $(objfile "$as1")"
+job_finish
+check "finish refuses a signed appstream commit with another subject" rc_is 1
+end_case "appstream commits: exact metadata keys (sorted, duplicates count), subject Update, no body, in sign --check and finish"
+
+make_world 32
+add_published_ref
+build_jobs
+snapshot_prepared
+tamper_prepared "echo '# changed' >> $(objfile "$extra_head")"
+job_sign_check
+check "sign --check refuses an unchanged head whose commit file differs from gh-pages" rc_is 1
+check "(the message says so)" out_has "differs from gh-pages"
+restore_prepared
+tamper_prepared "printf x >> $(objfile "$extra_head" | sed 's/commit$/commitmeta/')"
+job_sign_check
+check "sign --check refuses an unchanged head whose signature file differs from gh-pages" rc_is 1
+check "(the message says so)" out_has "differs from gh-pages"
+restore_prepared
+job_sign_check
+check "the honest repository is accepted" rc_is 0
+end_case "unchanged heads: their commit and signature files are those of gh-pages"
+
+make_world 33
+build_jobs
+snapshot_prepared
+tamper_prepared "echo x > stray.txt"
+job_sign_check
+check "sign --check refuses a file at the top of repo/ that ostree ignores" rc_is 1
+check "(the message names it)" out_has "stray.txt"
+restore_prepared
+tamper_prepared "mkdir old-site"
+job_sign_check
+check "sign --check refuses a directory at the top of repo/ that ostree does not know" rc_is 1
+restore_prepared
+job_sign
+check "the honest run goes through (config objects refs summary... are allowed)" rc_is 0
+end_case "repo/ has only the entries of an ostree repository at its top"
 
 # ---- 6b. prepare: the keyless job that finishes the repository unsigned ----
 make_world 20

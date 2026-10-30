@@ -10,7 +10,9 @@
 #     were signed, and no ref or commit was added, moved or dropped), and the sign list is on it;
 #   - against gh-pages itself (a read-only clone at the base the build started from, which the prepare job is not trusted
 #     for): every ref that is not on the sign list is as published, none was dropped, none is new, and every listed ref
-#     continues its published commit; every listed commit says it belongs to its own ref (ostree.ref-binding);
+#     continues its published commit and is dated between it and an hour after now, and every unlisted head has the commit and
+#     signature files of gh-pages; every listed commit says it belongs to its own ref (ostree.ref-binding), the appstream
+#     ones have the metadata keys, subject and empty body of an honest run, and repo/ has only the entries ostree writes at its top;
 #   - the files of the site outside repo/ are exactly what build/flatpak/write-site-files.sh writes for SITE_URL and the key;
 #   - no file of the signed repository differs from the prepared one except the summary files and the signatures of the
 #     listed commits (no other object, no stray file, no config change);
@@ -94,10 +96,15 @@ while IFS=$tab read -r ref commit; do
     grep -qxF "$ref $commit" "$tmp/refs.new" || fail "$ref is not at the listed commit $commit in the signed repository"
 done < "$signlist"
 ostree --repo="$new" fsck --quiet > "$tmp/fsck.log" 2>&1 || { sed 's/^/    /' "$tmp/fsck.log" >&2; fail "ostree fsck of the signed repository failed"; }
-while IFS=$tab read -r ref commit; do check_binding "$new" "$ref" "$commit"; done < "$signlist"
+while IFS=$tab read -r ref commit; do
+    check_binding "$new" "$ref" "$commit"
+    check_appstream_commit "$new" "$ref" "$commit"
+done < "$signlist"
 
 no_deltas "$old"
 no_deltas "$new"
+check_repo_entries "$old"
+check_repo_entries "$new"
 # ---- against gh-pages: the prepared repository is not trusted for what the build did not make ----
 check_pages_base "$new"
 # The only files that may be new, changed or gone: the summary files and the signatures of commits.

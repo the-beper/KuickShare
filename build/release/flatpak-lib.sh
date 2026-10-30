@@ -2,6 +2,9 @@
 # Shared by prepare-flatpak-repo.sh, sign-flatpak-repo.sh and finish-flatpak-repo.sh (sourced). The caller sets $me (its
 # name, for the messages) and $tmp (its scratch directory) before it calls anything here.
 tab=$(printf '\t')
+# Seconds a new commit may be dated ahead of the clock of the job that checks it (clock skew between runners). A signed commit
+# dated far ahead would stay the newest in a client's history for as long (inferred), so the margin is small.
+commit_future_margin=3600
 fail() { echo "$me: $*" >&2; exit 1; }
 bad_input() { echo "$me: $*" >&2; exit 2; }
 stale() { echo "$me: stale base: $*" >&2; exit 3; }
@@ -130,10 +133,29 @@ no_deltas() {
     [ ! -e "$1/deltas" ] && [ ! -e "$1/delta-indexes" ] || fail "the repository has static deltas (deltas/ or delta-indexes/)"
 }
 
+# commit_time REPO COMMIT: the date of a commit, in seconds since 1970; fails if there is none.
+commit_time() {
+    ct=$(ostree --repo="$1" show "$2" 2> /dev/null | sed -n 's/^Date: *//p' | head -n1)
+    [ -n "$ct" ] && date -u -d "$ct" +%s
+}
+
+# check_commit_dates REPO REF COMMIT [PUBLISHED]: a commit the key is about to sign is not dated more than commit_future_margin
+# after now, and not before the commit it continues (PUBLISHED, read in the clone of gh-pages that check_pages_base made).
+check_commit_dates() {
+    cd_time=$(commit_time "$1" "$3") || fail "$2: cannot read the date of $3"
+    [ "$cd_time" -le $(($(date +%s) + commit_future_margin)) ] || fail "$2: the new commit $3 is dated more than ${commit_future_margin}s after now"
+    [ -z "${4:-}" ] || {
+        cd_base=$(commit_time "$tmp/pages/repo" "$4") || fail "$2: cannot read the date of the published $4"
+        [ "$cd_time" -ge "$cd_base" ] || fail "$2: the new commit $3 is older than the published head $4"
+    }
+}
+
 # check_pages_base REPO: the repository (prepared or signed) against gh-pages as the build saw it, which the job that made
 # the repository is not trusted for. Needs $remote, $base, $tmp and $tmp/sign.refs (read_signlist). Clones gh-pages at $base
-# (anonymous, read-only) and requires: every ref that is not on the sign list is unchanged and none was dropped; every listed
-# ref continues its published commit (its parent is the published head), or has no parent when it is new; nothing else is new.
+# (anonymous, read-only) and requires: every ref that is not on the sign list is unchanged, with the same commit and detached
+# metadata files as on gh-pages, and none was dropped; every listed ref continues its published commit (its parent is the
+# published head) and is not older than it, or has no parent when it is new; no listed commit is dated beyond the margin of
+# now (check_commit_dates); nothing else is new.
 # Leaves "ref commit" of the published repository in $tmp/refs.pub.
 check_pages_base() {
     ref_map "$1" > "$tmp/refs.checked"
@@ -153,15 +175,48 @@ check_pages_base() {
         [ -n "$now" ] || fail "$ref of gh-pages is missing in the repository"
         if grep -qxF "$ref" "$tmp/sign.refs"; then
             [ "$(ostree --repo="$1" rev-parse "$now^" 2> /dev/null)" = "$commit" ] || fail "$ref: the new commit $now does not continue the published commit $commit"
+            check_commit_dates "$1" "$ref" "$now" "$commit"
         else
             [ "$now" = "$commit" ] || fail "$ref is at $now in the repository and at $commit on gh-pages, and it is not on the sign list"
+            # An unlisted head is signed already and stays so, but flatpak build-update-repo reads it with the key at hand.
+            pb_obj=objects/$(printf '%s' "$commit" | cut -c1-2)/${commit#??}
+            for pb_ext in commit commitmeta; do
+                if [ -e "$tmp/pages/repo/$pb_obj.$pb_ext" ] || [ -e "$1/$pb_obj.$pb_ext" ]; then
+                    cmp -s "$tmp/pages/repo/$pb_obj.$pb_ext" "$1/$pb_obj.$pb_ext" || fail "$ref: the head $commit differs from gh-pages in the repository (.$pb_ext)"
+                fi
+            done
         fi
     done < "$tmp/refs.pub"
     while read -r ref commit; do
         if awk -v r="$ref" '$1 == r { f = 1 } END { exit !f }' "$tmp/refs.pub"; then continue; fi
         grep -qxF "$ref" "$tmp/sign.refs" || fail "$ref is new in the repository and not on the sign list"
         if ostree --repo="$1" rev-parse "$commit^" > /dev/null 2>&1; then fail "$ref is new but its commit $commit has a parent"; fi
+        check_commit_dates "$1" "$ref" "$commit"
     done < "$tmp/refs.checked"
+}
+
+# check_appstream_commit REPO REF COMMIT: the appstream commits (flatpak build-update-repo makes them in prepare, so they are not
+# pinned by id like the build's) have the metadata keys, subject and empty body of an honest run (flatpak 1.14.6, tried): the
+# two bindings (sorted, a duplicate counts), "Update", no body. Their ref-binding is checked by check_binding. Other refs pass.
+check_appstream_commit() {
+    case $2 in appstream/* | appstream2/*) ;; *) return 0 ;; esac
+    ostree --repo="$1" show --list-metadata-keys "$3" > "$tmp/as.keys" 2> /dev/null || fail "cannot read the metadata keys of $2 $3"
+    [ "$(LC_ALL=C sort "$tmp/as.keys")" = "$(printf 'ostree.collection-binding\nostree.ref-binding')" ] || fail "$2 $3 has other metadata keys than ostree.collection-binding and ostree.ref-binding"
+    ostree --repo="$1" show "$3" > "$tmp/as.show" 2> /dev/null || fail "cannot read $2 $3"
+    # What follows the header: the subject and the body, indented, each followed by an empty line, and for a signed commit
+    # the lines of ostree about its signatures ("Found 1 signature:", not indented), which are not part of the message.
+    sed -e '1,/^$/d' -e '/^Found [0-9][0-9]* signature/,$d' "$tmp/as.show" > "$tmp/as.msg"
+    printf '    Update\n\n' | cmp -s - "$tmp/as.msg" || fail "$2 $3 has another subject or a body than 'Update' with none"
+}
+
+# check_repo_entries REPO: the top of an ostree repository holds only what ostree and flatpak write (tried: flatpak 1.14.6). ostree
+# ignores any other file and the site would publish it as it is; deltas are refused by no_deltas.
+check_repo_entries() {
+    find "$1" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort > "$tmp/repo.entries"
+    if bad=$(grep -Evx '\.lock|config|extensions|objects|refs|state|summaries|summary|summary\.idx|summary\.idx\.sig|summary\.sig|tmp' "$tmp/repo.entries"); then
+        printf '%s\n' "$bad" | sed 's/^/    /' >&2
+        fail "$1 has entries at its top that an ostree repository of this release does not have (see above)"
+    fi
 }
 
 # no_commitmeta REPO COMMIT: a commit about to be signed has no signature file (and none inside the repository's metadata).
