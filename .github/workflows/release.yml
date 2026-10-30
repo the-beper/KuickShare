@@ -29,6 +29,9 @@ defaults:
 
 env:
   SITE_URL: https://the-beper.github.io/KuickShare
+  # The Rust of the tarball build, bumped by hand (CONTRIBUTING.md, Pinned tools). The Flatpak build uses the SDK extension at
+  # the commit pinned in build/flatpak/build-flatpak.sh; the AppImage uses the Rust of its image.
+  RUST_VERSION: "1.99.1"
 
 jobs:
   validate:
@@ -147,9 +150,9 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Install Rust (stable)
+      - name: Install Rust ${{ env.RUST_VERSION }}
         run: |
-          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_VERSION"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       # The scripts start the build container themselves unless they find /run/.containerenv: this job already runs in it.

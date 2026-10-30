@@ -15,11 +15,12 @@ Quick Share client for KDE Plasma 6: Rust daemon `kuickshared` (`src/core`, prot
 - The hotspot subnet `192.168.49.0/24` is written in two places: `GATEWAY` in `src/core/link.rs` and the mDNS exclusion in `third_party/rqs_lib/src/hdl/mdns.rs`. Change both.
 - Outgoing transfers are keyed by the device id (`ble:XXXX` or `ip:port`), which repeats: `TransferModel` treats a non-final event on a finished id as a new row. A send adds a "Starting" row at once (`TransferModel::beginPending`).
 - BLE timings are tied together: scan window 12 s for a send, GATT dial 22 s, watchdog `BLE_START_TIMEOUT` 40 s in `src/core/app.rs`, shell timer 45 s in `corebridge.cpp`; at stop the library's wind-down 0.4 s (`STOP_WIND_DOWN` in rqs_lib) < the engine's stop 0.5 s (`SHUTDOWN_STOP`) + drain 0.2 s, all within `SHUTDOWN_ENGINE_BOUND` 0.8 s (the wait for the Core lock included), then Wi-Fi cleanup 2 s (total 2.8 s), within the shell's 3 s SIGTERM wait; a test asserts these. Change one, check the others.
+- Never hold the Core lock across slow I/O or D-Bus awaits.
 
 ## Hand tests with the phones
 See the `/phone-test` skill. Time zones differ between log files (daemon UTC, system and btmon local). Only a Pixel 7 and a Galaxy A55 were ever tested.
 
 ## Working with the user
-- Run `code-reviewer` before suggesting a commit (plus `rqs-reviewer` when `third_party/rqs_lib`, `link.rs` or `app.rs` changed); `/code-review` only when asked.
-- Project agents in `.claude/agents/`: `translator` (haiku, catalogs), `phone-log-analyzer` (a `dist/logs` session), `rqs-reviewer` (transfer code). `commit-message` is global.
-- Use parallel agents for independent files. When an agent edits code, tell it not to build; build and test once at the end.
+- Run `rqs-reviewer` besides `code-reviewer` when `third_party/rqs_lib`, `link.rs` or `app.rs` changed.
+- Project agents in `.claude/agents/`: `translator` (haiku, catalogs), `phone-log-analyzer` (a `dist/logs` session), `rqs-reviewer` (transfer code).
+- When an agent edits code, tell it not to build; build and test once at the end.

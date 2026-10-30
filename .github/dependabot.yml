@@ -4,10 +4,17 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
     groups:
       cargo:
         patterns: ["*"]
+        update-types: ["patch"]
