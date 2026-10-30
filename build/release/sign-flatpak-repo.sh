@@ -8,7 +8,7 @@
 # old summary), and the job with the key reads nothing else from the check job but the archive that --check wrote.
 #   sign-flatpak-repo.sh --check <prepared.tar> <sign-list.txt> <refs.txt> <out-dir>   no secret (refused when it is set);
 #                                                                                      writes <out-dir>/checked-repo.tar and <out-dir>/sign-list.txt
-#   sign-flatpak-repo.sh --unpack <checked-repo.tar> <sign-list.txt> <work-dir>        no secret (refused when it is set)
+#   sign-flatpak-repo.sh --unpack <checked-repo.tar> <sign-list.txt> <refs.txt> <work-dir>   no secret (refused when it is set)
 #   sign-flatpak-repo.sh --sign <work-dir> <out-dir>                                    the secret; writes <out-dir>/signed-repo.tar
 #   sign-flatpak-repo.sh --cleanup [<work-dir>]                                         an `if: always()` step
 # --check, on its own machine: the three files against the hashes the earlier jobs reported; gh-pages still where the
@@ -23,17 +23,21 @@
 # now, and an unlisted head has the commit and signature files of gh-pages, so a compromised prepare job cannot get the key
 # to vouch for a rolled-back or invented ref. The old summary files are deleted: the new summary is made from the refs
 # alone. What is left, cleaned (no scratch files), is written by this machine's own tar from the tree it checked, as
-# repo/ in checked-repo.tar, with the sign list; their hashes go to the outputs of the job and are the pins of the next hop.
-# --unpack, keyless, with no ostree, gpg, flatpak, git or network: both files against the pins (EXPECT_CHECKED_SHA256,
-# EXPECT_SIGNLIST_SHA256: 64 hex digits, never empty), the archive has only plain files and directories under repo/, the sign
-# list has the shape of one, then the archive goes into an empty <work-dir>. It runs apart from --sign: the secret is in the
-# environment of that step, and any child process could read it there.
+# repo/ in checked-repo.tar, with a copy of the sign list; the hash of the archive goes to the outputs of the job.
+# --unpack, keyless, with no ostree, gpg, flatpak, git or network (shell, find, grep and hashing only): the three files
+# against pins that do not come from the check job alone (the archive: EXPECT_CHECKED_SHA256 of check-flatpak; the sign list:
+# EXPECT_SIGNLIST_SHA256 of prepare-flatpak; refs.txt: EXPECT_REFS_SHA256 of build-flatpak; 64 hex digits, never empty); the
+# archive has only plain files and directories under repo/; the sign list is the shape of one and agrees with refs.txt;
+# the structural checks of --check once more (config, no deltas, the entries and files of repo/, no summary); every listed
+# commit object hashes to its id and refs/heads/<ref> names it. Only then does the archive go into an empty <work-dir>, so a
+# compromised check job alone cannot change what the key signs. It runs apart from --sign: the secret is in the environment
+# of that step, and any child process could read it there.
 # --sign: the secret is copied into a variable of the shell and removed from its environment before anything else runs, so
 # no child process (gpg, ostree, flatpak) inherits it. The key goes into a keyring in memory (/dev/shm) that holds exactly
 # one secret key, the one of SIGNING_PUBKEY (the file of the checkout). Each listed commit gets a signature (ostree
 # gpg-sign), then `flatpak build-update-repo --no-update-appstream --gpg-sign` signs the new summary: no prune, no deltas,
 # no appstream. Only the summary files and the signatures of the listed commits may be new or changed (by name and size;
-# finish-flatpak-repo.sh compares the contents), and those are scanned for key material before the repository is archived;
+# finish-flatpak-repo.sh compares the contents), and the whole repository is scanned for key material before it is archived;
 # the keyring is deleted, with its agent stopped, however the script ends.
 # Environment of --check:
 #   EXPECT_PREPARED_SHA256, EXPECT_SIGNLIST_SHA256, EXPECT_REFS_SHA256   as prepare-flatpak and build-flatpak reported them
@@ -41,13 +45,15 @@
 #   GITHUB_SHA               the commit of the run; HEAD of the checkout must be exactly it
 #   GITHUB_REPOSITORY        owner/name, to find gh-pages (or PAGES_REMOTE: the git URL)
 # Environment of --unpack:
-#   EXPECT_CHECKED_SHA256, EXPECT_SIGNLIST_SHA256   as the check job reported them
+#   EXPECT_CHECKED_SHA256    as check-flatpak reported it
+#   EXPECT_SIGNLIST_SHA256   as prepare-flatpak reported it
+#   EXPECT_REFS_SHA256       as build-flatpak reported it
 # Environment of all:
 #   FLATPAK_GPG_PRIVATE_KEY  (--sign only) the armored secret key, without a passphrase (an environment secret, on that step only)
 #   RUNNER_TEMP              where scratch files go (default $TMPDIR, then /tmp)
 #   SIGNING_PUBKEY           (optional) the public key the secret must match, default build/flatpak/signing-key.asc
 #   KUICKSHARE_ROOT          (optional) the checkout whose HEAD is compared
-# Writes checked_sha256= and signlist_sha256= (--check) or signed_sha256= (--sign) to $GITHUB_OUTPUT when it is set.
+# Writes checked_sha256= (--check) or signed_sha256= (--sign) to $GITHUB_OUTPUT when it is set.
 # --check needs flatpak, ostree, gpg 2.2+, git, tar; --unpack tar and the shell utilities; --sign flatpak, ostree, gpg 2.2+, tar.
 # Exit codes: 0 ok, 1 a check failed, 2 key or input problem, 3 gh-pages is not where the build left it ("stale base").
 # shellcheck disable=SC2154,SC2034 # $base and $tab come from flatpak-lib.sh
@@ -163,14 +169,8 @@ if [ "$mode" = --check ]; then
     tar --sort=name --owner=0 --group=0 --numeric-owner -C "$work/site" -cf "$out/checked-repo.tar" repo
     cp "$signlist" "$out/sign-list.txt"
     checked_sha=$(sha256sum "$out/checked-repo.tar" | cut -d' ' -f1)
-    signlist_sha=$(sha256sum "$out/sign-list.txt" | cut -d' ' -f1)
     echo "$me: checked: $(wc -l < "$signlist") refs to sign, key $want_fpr; checked-repo.tar $checked_sha"
-    if [ -n "${GITHUB_OUTPUT:-}" ]; then
-        {
-            echo "checked_sha256=$checked_sha"
-            echo "signlist_sha256=$signlist_sha"
-        } >> "$GITHUB_OUTPUT"
-    fi
+    if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "checked_sha256=$checked_sha" >> "$GITHUB_OUTPUT"; fi
     exit 0
 fi
 
@@ -178,24 +178,46 @@ fi
 if [ "$mode" = --unpack ]; then
     [ -z "$secret" ] || bad_input "FLATPAK_GPG_PRIVATE_KEY is set: --unpack reads data from another job and must run without the secret"
     unset secret
-    [ $# -eq 3 ] || bad_input "usage: sign-flatpak-repo.sh --unpack <checked-repo.tar> <sign-list.txt> <work-dir>"
+    [ $# -eq 4 ] || bad_input "usage: sign-flatpak-repo.sh --unpack <checked-repo.tar> <sign-list.txt> <refs.txt> <work-dir>"
     pin_checked=${EXPECT_CHECKED_SHA256:-}
     pin_signlist=${EXPECT_SIGNLIST_SHA256:-}
-    for pin in "$pin_checked" "$pin_signlist"; do
-        printf '%s\n' "$pin" | grep -Eq '^[0-9a-f]{64}$' || bad_input "EXPECT_CHECKED_SHA256 and EXPECT_SIGNLIST_SHA256 must be the hashes the check job reported (64 hex digits, not empty)"
+    pin_refs=${EXPECT_REFS_SHA256:-}
+    for pin in "$pin_checked" "$pin_signlist" "$pin_refs"; do
+        printf '%s\n' "$pin" | grep -Eq '^[0-9a-f]{64}$' || bad_input "EXPECT_CHECKED_SHA256, EXPECT_SIGNLIST_SHA256 and EXPECT_REFS_SHA256 must be the hashes the earlier jobs reported (64 hex digits, not empty)"
     done
-    for f in "$1" "$2"; do [ -f "$f" ] || bad_input "$f does not exist"; done
+    for f in "$1" "$2" "$3"; do [ -f "$f" ] || bad_input "$f does not exist"; done
     checked=$(readlink -f "$1")
     signlist=$(readlink -f "$2")
+    refs=$(readlink -f "$3")
     check_sha256 "$checked" "$pin_checked" "the checked repository"
     check_sha256 "$signlist" "$pin_signlist" "the sign list"
+    check_sha256 "$refs" "$pin_refs" "refs.txt"
     tar_safe "$checked" repo
-    read_signlist "$signlist"
-    [ ! -e "$3" ] || [ -z "$(ls -A "$3")" ] || bad_input "$3 is not empty"
-    mkdir -p "$3"
-    work=$(cd "$3" && pwd)
-    tar -xf "$checked" -C "$work" --no-same-owner
-    [ -d "$work/repo/objects" ] || bad_input "the checked archive has no ostree repository"
+    read_refs "$refs"
+    read_signlist "$signlist" "$refs"
+    [ ! -e "$4" ] || [ -z "$(ls -A "$4")" ] || bad_input "$4 is not empty"
+    mkdir "$tmp/unpack"
+    tar -xf "$checked" -C "$tmp/unpack" --no-same-owner
+    repo=$tmp/unpack/repo
+    [ -d "$repo/objects" ] || bad_input "the checked archive has no ostree repository"
+    # What --check made sure of, again, with find, grep and the shell only: the sign VM does not trust the archive for it.
+    check_config "$repo/config"
+    no_deltas "$repo"
+    check_repo_entries "$repo"
+    check_repo_paths "$repo"
+    for f in summary summary.sig summary.idx summary.idx.sig summaries; do
+        [ ! -e "$repo/$f" ] || fail "the checked repository has $f: the summary is made again here"
+    done
+    # A listed commit is its content (the id is the SHA-256 of the commit object) and its ref names it.
+    while IFS=$tab read -r ref commit; do
+        obj=$repo/objects/$(printf '%s' "$commit" | cut -c1-2)/${commit#??}.commit
+        [ -f "$obj" ] || fail "$ref: the commit object $commit is not in the checked repository"
+        [ "$(sha256sum "$obj" | cut -d' ' -f1)" = "$commit" ] || fail "$ref: the commit object does not hash to its id $commit"
+        [ -f "$repo/refs/heads/$ref" ] && [ "$(cat "$repo/refs/heads/$ref")" = "$commit" ] || fail "$ref does not point to the listed commit $commit in the checked repository"
+    done < "$signlist"
+    mkdir -p "$4"
+    work=$(cd "$4" && pwd)
+    mv "$repo" "$work/repo"
     cp "$signlist" "$work/sign-list.txt"
     echo "$me: unpacked: $(wc -l < "$signlist") refs to sign"
     exit 0
@@ -245,7 +267,7 @@ echo "$me: signing key $fpr matches $(basename "$pubkey")"
 
 # ---- sign the listed commits, then the summary that lists them ----
 # Names and sizes of the files before: only the summary files and the signatures of the listed commits may come out different.
-repo_files() { (cd "$repo" && find . -path ./tmp -prune -o -type f -printf '%p %s\n' | LC_ALL=C sort); }
+repo_files() { (cd "$repo" && find . -path ./tmp -prune -o ! -type d -printf '%p %s\n' | LC_ALL=C sort); }
 repo_files > "$gnupg/files.before"
 while IFS=$tab read -r ref commit; do
     [ "$(ostree --repo="$repo" rev-parse "$ref")" = "$commit" ] || bad_input "$ref is not the commit that was checked"
@@ -262,8 +284,8 @@ flatpak build-update-repo --no-update-appstream --gpg-sign="$fpr" --gpg-homedir=
 }
 rm -rf "$repo/tmp"
 
-# The key lives in $gnupg, outside the repository; make sure nothing of it was copied in. Only the files that were allowed to
-# change are read for it (finish-flatpak-repo.sh refuses any other difference from the prepared repository, by content).
+# The key lives in $gnupg, outside the repository; make sure nothing of it was copied in: no new or resized file but the
+# allowed ones, no link, and not a trace of the key in any file (a write of the same size changes no name or size).
 repo_files > "$gnupg/files.after"
 allowed='^\./(summary|summary\.sig|summary\.idx|summary\.idx\.sig)$|^\./summaries/[^/]+$'
 while IFS=$tab read -r ref commit; do printf './objects/%s/%s.commitmeta\n' "$(printf '%s' "$commit" | cut -c1-2)" "${commit#??}"; done < "$work/sign-list.txt" > "$gnupg/files.signatures"
@@ -272,12 +294,9 @@ if bad=$(grep -Ev "$allowed" "$gnupg/files.changed" | grep -vxF -f "$gnupg/files
     printf '%s\n' "$bad" | sed 's/^/    /' >&2
     fail "the signing tools changed files other than the summary files and the signatures of the listed commits (see above)"
 fi
-while IFS= read -r changed; do
-    [ -f "$repo/$changed" ] || continue
-    if grep -qaF -f "$gnupg/leaks" "$repo/$changed"; then
-        fail "key material found in $changed"
-    fi
-done < "$gnupg/files.changed"
+if grep -rqaF -f "$gnupg/leaks" "$repo"; then
+    fail "key material found in the repository"
+fi
 tar --sort=name --owner=0 --group=0 --numeric-owner -C "$work" -cf "$out/signed-repo.tar" repo
 signed_sha=$(sha256sum "$out/signed-repo.tar" | cut -d' ' -f1)
 echo "$me: signed-repo.tar $signed_sha"

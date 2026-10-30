@@ -277,14 +277,15 @@ job_check() {
     export EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256 EXPECT_REFS_SHA256 EXPECT_BASE_SHA
     run env GITHUB_OUTPUT="$w/check.gho" "$rel/sign-flatpak-repo.sh" --check "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/commits/refs.txt" "$w/checked"
 }
-# What the sign job has of the check job: the two files of its artifact and the two hashes of its outputs, and not the
-# environment of the check (no hash of prepare, no refs.txt, no base).
-sign_side() { run env -u EXPECT_PREPARED_SHA256 -u EXPECT_REFS_SHA256 -u EXPECT_BASE_SHA "$@"; }
-unpack_pinned() { # <checked-repo.tar hash> <sign list hash>: the keyless step of the sign job, with the pins it was given
+# What the sign job has: the artifact of the check job with the hash of its output, the build's refs.txt, and the hashes that
+# prepare-flatpak and build-flatpak reported for the sign list and refs.txt; not the prepared site, not the environment of the check.
+sign_side() { run env -u EXPECT_PREPARED_SHA256 -u EXPECT_BASE_SHA "$@"; }
+unpack_pinned() { # <checked-repo.tar hash> <sign list hash> [<refs.txt hash>]: the keyless step of the sign job, with the pins it was given
     rm -rf "$w/signwork"
-    sign_side EXPECT_CHECKED_SHA256="$1" EXPECT_SIGNLIST_SHA256="$2" "$rel/sign-flatpak-repo.sh" --unpack "$w/checked/checked-repo.tar" "$w/checked/sign-list.txt" "$w/signwork"
+    sign_side EXPECT_CHECKED_SHA256="$1" EXPECT_SIGNLIST_SHA256="$2" EXPECT_REFS_SHA256="${3-$(sha256_of "$w/commits/refs.txt")}" \
+        "$rel/sign-flatpak-repo.sh" --unpack "$w/checked/checked-repo.tar" "$w/checked/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
 }
-job_unpack() { unpack_pinned "$(out_of "$w/check.gho" checked_sha256)" "$(out_of "$w/check.gho" signlist_sha256)"; }
+job_unpack() { unpack_pinned "$(out_of "$w/check.gho" checked_sha256)" "$(out_of "$w/prepare.gho" signlist_sha256)"; }
 job_sign_step() { # <key name>: the step with the secret
     use_secret "${1:-a}"
     sign_side GITHUB_OUTPUT="$w/sign.gho" "$rel/sign-flatpak-repo.sh" --sign "$w/signwork" "$w/signed-repo"
@@ -517,8 +518,23 @@ FAKE_FLATPAK_LEAK=stray
 export FAKE_FLATPAK_LEAK
 job_sign
 unset FAKE_FLATPAK_LEAK
-check "sign refuses to archive a repository with a file it did not have (the scan reads only the files that may change)" rc_is 1
+check "sign refuses to archive a repository with a file it did not have" rc_is 1
 check "(the message names the file)" out_has "leak.txt"
+check "(nothing was signed)" not test -e "$w/signed-repo/signed-repo.tar"
+check "(no keyring is left)" no_leftovers
+FAKE_FLATPAK_LEAK="link"
+export FAKE_FLATPAK_LEAK
+job_sign
+unset FAKE_FLATPAK_LEAK
+check "sign refuses to archive a repository with a link it did not have" rc_is 1
+check "(the message names the link)" out_has "leak-link"
+check "(nothing was signed)" not test -e "$w/signed-repo/signed-repo.tar"
+FAKE_FLATPAK_LEAK=inplace
+export FAKE_FLATPAK_LEAK
+job_sign
+unset FAKE_FLATPAK_LEAK
+check "sign refuses a file overwritten with key material, whose name and size did not change" rc_is 1
+check "(the message says so)" out_has "key material found"
 check "(nothing was signed)" not test -e "$w/signed-repo/signed-repo.tar"
 check "(no keyring is left)" no_leftovers
 job_check
@@ -1339,12 +1355,13 @@ make_world 38
 build_jobs
 job_check
 check "the check passes" rc_is 0
-check "(it reports the hash of the checked repository and of the sign list)" test -n "$(out_of "$w/check.gho" checked_sha256)" -a -n "$(out_of "$w/check.gho" signlist_sha256)"
-check "(the sign list is the one prepare made)" same "$(out_of "$w/check.gho" signlist_sha256)" "$(out_of "$w/prepare.gho" signlist_sha256)"
+check "(it reports the hash of the checked repository)" test -n "$(out_of "$w/check.gho" checked_sha256)"
+check "(its copy of the sign list is the one prepare made)" same "$(sha256_of "$w/checked/sign-list.txt")" "$(out_of "$w/prepare.gho" signlist_sha256)"
 cp -a "$w/checked" "$w/checked.orig"
 cp "$w/check.gho" "$w/check.gho.orig"
 orig_pin=$(out_of "$w/check.gho" checked_sha256)
-list_pin=$(out_of "$w/check.gho" signlist_sha256)
+list_pin=$(out_of "$w/prepare.gho" signlist_sha256)
+refs_pin=$(sha256_of "$w/commits/refs.txt")
 rt=$work/shim3
 mkdir -p "$rt/bin"
 for t in flatpak gpg ostree git curl tar; do
@@ -1353,16 +1370,15 @@ for t in flatpak gpg ostree git curl tar; do
     printf '#!/bin/sh\necho "%s $*" >> "%s/calls"\nexec %s "$@"\n' "$t" "$rt" "$real" > "$rt/bin/$t"
     chmod +x "$rt/bin/$t"
 done
-# The sign job has the files and hashes of the check and nothing else: no prepared site, no refs.txt, no gh-pages.
+# The sign job has the files and hashes named above and nothing else: no prepared site, no commits archive, no gh-pages.
 mv "$w/prepared" "$w/prepared.away"
-mv "$w/commits" "$w/commits.away"
-mv "$w/prepare.gho" "$w/prepare.gho.away"
+mv "$w/commits/flatpak-commits.tar" "$w/flatpak-commits.tar.away"
 saved_remote=$PAGES_REMOTE
 PAGES_REMOTE=file://$w/no-such-remote.git
 export PAGES_REMOTE
 : > "$rt/calls"
 with_shims job_unpack
-check "unpack works from the check's two files and two hashes, with no remote and no other file of the run" rc_is 0
+check "unpack works from the check's archive, refs.txt and the three hashes, with no remote and no prepared site" rc_is 0
 check "(the repository is unpacked)" test -d "$w/signwork/repo/objects"
 check "(and the sign list)" test -s "$w/signwork/sign-list.txt"
 check "(the shim of tar was called: the check proves something)" file_has "$rt/calls" "^tar "
@@ -1379,8 +1395,7 @@ check "(no keyring is left)" no_leftovers
 PAGES_REMOTE=$saved_remote
 export PAGES_REMOTE
 mv "$w/prepared.away" "$w/prepared"
-mv "$w/commits.away" "$w/commits"
-mv "$w/prepare.gho.away" "$w/prepare.gho"
+mv "$w/flatpak-commits.tar.away" "$w/commits/flatpak-commits.tar"
 job_finish
 check "finish, pinned to prepare and sign as before, accepts what the sign job made" rc_is 0
 
@@ -1406,11 +1421,11 @@ cp "$w/checked.orig/sign-list.txt" "$w/checked/sign-list.txt"
 
 # the artifact of prepare given to unpack
 : > "$rt/calls"
-with_shims sign_side EXPECT_CHECKED_SHA256="$orig_pin" EXPECT_SIGNLIST_SHA256="$list_pin" "$rel/sign-flatpak-repo.sh" --unpack "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/signwork"
+with_shims sign_side EXPECT_CHECKED_SHA256="$orig_pin" EXPECT_SIGNLIST_SHA256="$list_pin" EXPECT_REFS_SHA256="$refs_pin" "$rel/sign-flatpak-repo.sh" --unpack "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
 check "unpack refuses the prepared site in place of the checked repository" rc_is 1
 check "(the message says so)" out_has "not the one the earlier job produced"
 check "(nothing was extracted)" not test -e "$w/signwork"
-sign_side EXPECT_CHECKED_SHA256="$(sha256_of "$w/prepared/prepared.tar")" EXPECT_SIGNLIST_SHA256="$list_pin" "$rel/sign-flatpak-repo.sh" --unpack "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/signwork"
+sign_side EXPECT_CHECKED_SHA256="$(sha256_of "$w/prepared/prepared.tar")" EXPECT_SIGNLIST_SHA256="$list_pin" EXPECT_REFS_SHA256="$refs_pin" "$rel/sign-flatpak-repo.sh" --unpack "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
 check "unpack refuses the prepared site even under its own hash (it holds site/, not repo/)" rc_is 2
 check "(the message names the folder)" out_has "other than repo/"
 check "(nothing was extracted)" not test -e "$w/signwork"
@@ -1422,11 +1437,59 @@ check "(nothing was extracted)" not test -e "$w/signwork"
 unpack_pinned "$orig_pin" ""
 check "unpack refuses an empty pin of the sign list" rc_is 2
 check "(nothing was extracted)" not test -e "$w/signwork"
-sign_side -u EXPECT_CHECKED_SHA256 -u EXPECT_SIGNLIST_SHA256 "$rel/sign-flatpak-repo.sh" --unpack "$w/checked/checked-repo.tar" "$w/checked/sign-list.txt" "$w/signwork"
+sign_side -u EXPECT_CHECKED_SHA256 -u EXPECT_SIGNLIST_SHA256 -u EXPECT_REFS_SHA256 "$rel/sign-flatpak-repo.sh" --unpack "$w/checked/checked-repo.tar" "$w/checked/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
 check "unpack refuses pins that are not set" rc_is 2
+unpack_pinned "$orig_pin" "$list_pin" ""
+check "unpack refuses an empty pin of refs.txt" rc_is 2
+check "(nothing was extracted)" not test -e "$w/signwork"
 unpack_pinned "not-a-hash" "$list_pin"
 check "unpack refuses a pin that is not a hash" rc_is 2
 check "(nothing was extracted)" not test -e "$w/signwork"
+unpack_pinned "$orig_pin" "$list_pin" "$orig_pin"
+check "unpack refuses a refs.txt that is not the one the build reported" rc_is 1
+check "(the message says so)" out_has "not the one the earlier job produced"
+check "(nothing was extracted)" not test -e "$w/signwork"
+
+# a compromised check job: it writes what it likes and reports the hash of it, but the pins of the sign list and refs.txt are
+# those of prepare and build, and the key never signs a commit that is not the build's
+refused_unpack() { # <what> <exit code> <message>: the tree in $w/y goes back as the archive of the check, with its new hash
+    tar -C "$w/y" -cf "$w/checked/checked-repo.tar" repo
+    unpack_pinned "$(sha256_of "$w/checked/checked-repo.tar")" "$list_pin"
+    check "unpack refuses $1" rc_is "$2"
+    check "(the message says so)" out_has "$3"
+    check "(nothing was extracted)" not test -e "$w/signwork"
+}
+fresh_y() { rm -rf "$w/y"; mkdir "$w/y"; tar -xf "$w/checked.orig/checked-repo.tar" -C "$w/y"; }
+app_ref=app/$app_id/x86_64/stable
+app_c=$(awk -F'\t' -v r="$app_ref" '$1 == r { print $2 }' "$w/commits/refs.txt")
+loc_c=$(awk -F'\t' '$1 ~ /^runtime\// { print $2 }' "$w/commits/refs.txt")
+evil_c=$(printf evil | sha256sum | cut -d' ' -f1)
+fresh_y
+awk -F'\t' -v c="$app_c" -v e="$evil_c" 'BEGIN { OFS = "\t" } $2 == c { $2 = e } { print }' "$w/checked.orig/sign-list.txt" > "$w/checked/sign-list.txt"
+refused_unpack "a sign list of its own, with the hash of its archive (the pin of the list is prepare's)" 1 "not the one the earlier job produced"
+cp "$w/checked.orig/sign-list.txt" "$w/checked/sign-list.txt"
+fresh_y
+printf '%s\n' "$loc_c" > "$w/y/repo/refs/heads/$app_ref"
+refused_unpack "a ref that points to another commit than the listed one" 1 "does not point to the listed commit"
+fresh_y
+echo '# changed' >> "$w/y/repo/$(objfile "$app_c")"
+refused_unpack "a commit object that does not hash to its id" 1 "does not hash to its id"
+fresh_y
+rm "$w/y/repo/$(objfile "$app_c")"
+refused_unpack "an archive without a listed commit object" 1 "is not in the checked repository"
+fresh_y
+echo surprise > "$w/y/repo/summary"
+refused_unpack "a repository that already has a summary" 1 "summary is made again"
+fresh_y
+printf '[remote "evil"]\nurl=file:///x\n' >> "$w/y/repo/config"
+refused_unpack "a config with a remote" 2 "not the expected ones"
+fresh_y
+mkdir "$w/y/repo/deltas"
+refused_unpack "static deltas" 1 "static deltas"
+fresh_y
+echo "<script></script>" > "$w/y/repo/evil.html"
+refused_unpack "a stray file at the top of repo/" 1 "entries at its top"
+cp "$w/checked.orig/checked-repo.tar" "$w/checked/checked-repo.tar"
 
 # a symlink member under a matching pin
 rm -rf "$w/y"

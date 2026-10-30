@@ -81,11 +81,12 @@ def add_appstream(repo, key, home):
             with open(obj(repo, parent, ".commit")) as f:
                 if f.read().split("\n")[1] == body:
                     continue
-        commit = hashlib.sha256((ref + "\n" + parent + "\n" + body).encode()).hexdigest()
+        content = "parent=%s\n%s\nbinding=%s\ndate=%d\nsubject=Update\n" % (parent, body, ref, time.time())
+        commit = hashlib.sha256(content.encode()).hexdigest()  # as in ostree: the id is the checksum of the commit object
         os.makedirs(os.path.dirname(path), exist_ok=True)
         os.makedirs(os.path.dirname(obj(repo, commit, ".commit")), exist_ok=True)
         with open(obj(repo, commit, ".commit"), "w") as f:
-            f.write("parent=%s\n%s\nbinding=%s\ndate=%d\nsubject=Update\n" % (parent, body, ref, time.time()))
+            f.write(content)
         with open(path, "w") as f:
             f.write(commit + "\n")
         if key:
@@ -142,6 +143,13 @@ def main():
         if leak == "stray":  # into a file of its own
             with open(os.path.join(repo, "leak.txt"), "w") as f:
                 f.write("-----BEGIN PGP PRIVATE KEY BLOCK-----\n")
+        if leak == "link":  # a symbolic link
+            os.symlink("/etc/passwd", os.path.join(repo, "leak-link"))
+        if leak == "inplace":  # over the start of an existing file, which keeps its name and size
+            with open(os.path.join(repo, "config"), "r+") as f:
+                size = len(f.read())
+                f.seek(0)
+                f.write(("-----BEGIN PGP PRIVATE KEY BLOCK-----\n" + " " * size)[:size])
         summary = "".join("%s %s\n" % pair for pair in refs_of(repo, ("app/", "runtime/", "appstream")))
         if leak == "summary":  # into the summary
             summary += "-----BEGIN PGP PRIVATE KEY BLOCK-----\n"
