@@ -4,7 +4,7 @@
 # curl replaced by the fakes in build/release/testdata (put first in PATH). The signatures are real GnuPG signatures made
 # with ephemeral keys generated in temporary keyrings; no real key, no network, no container.
 # Needs only sh, git, gpg 2.2+, python3, tar, sha256sum, sha1sum. Everything happens in a mktemp directory that is removed
-# at the end. Output is TAP: "ok N - ..." lines and "# 15/15 passed"; the exit status is not 0 if a case fails.
+# at the end. Output is TAP: "ok N - ..." lines and "# 18/18 passed"; the exit status is not 0 if a case fails.
 #
 # What it does NOT show (see CONTRIBUTING.md, Releases): that real flatpak, ostree, gh and GitHub Pages behave like the
 # fakes. build/flatpak/test-repo-update.sh covers the real Flatpak client; the rest needs a release.
@@ -44,7 +44,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=15
+total=18
 n=0
 passed=0
 failed=0
@@ -638,18 +638,19 @@ check "still refused with a newer tag" rc_is 1
 check "(the message names the newest tag)" out_has "the newest release tag is v1.3.0"
 end_case "anti-downgrade: only the newest vMAJOR.MINOR.PATCH tag is released; other tags do not count"
 
-# ---- 14. the gh-pages push is atomic ----
+# ---- 14. a refused push moves nothing, and is not "another writer" ----
 make_world 15
 build_jobs
 job_verify
 job_sign
-# A server that refuses gh-pages (a ruleset, a lost lease) but would take gh-pages-previous.
+# A server that refuses gh-pages (a ruleset, an outage) but would take gh-pages-previous.
 # shellcheck disable=SC2016 # the hook expands $1 itself
 printf '#!/bin/sh\n[ "$1" != refs/heads/gh-pages ] || { echo "refused by the test" >&2; exit 1; }\n' > "$origin/hooks/update"
 chmod +x "$origin/hooks/update"
 job_publish
-check "publish exits 3 when gh-pages is refused" rc_is 3
-check "(the message says nothing was pushed)" out_has "Nothing was pushed"
+check "publish exits 1 when the push fails and neither branch moved" rc_is 1
+check "(the message says nothing moved)" out_has "neither branch has moved"
+check "(and does not blame another writer)" not out_has "another writer"
 check "gh-pages is untouched" same "$(pages_head)" "$base_sha"
 check "gh-pages-previous was not written either" not git -C "$origin" rev-parse --verify -q refs/heads/gh-pages-previous
 check "the release is still a draft" state_is "draft 5 -"
@@ -658,9 +659,67 @@ job_publish
 check "the rerun completes" rc_is 0
 check "gh-pages-previous holds the old repository" same "$(git -C "$origin" rev-parse refs/heads/gh-pages-previous)" "$base_sha"
 check "the release is published and the latest" state_is "published 5 latest"
-end_case "gh-pages and gh-pages-previous are pushed together: a refusal moves neither"
+end_case "push refused by the server: exit 1, neither branch moved, the rerun completes"
 
-# ---- 15. no secret anywhere ----
+# ---- 15. a writer gets in during the push ----
+make_world 16
+build_jobs
+job_verify
+job_sign
+# A server that moves gh-pages by itself, as another release would (the variables are unset because a hook may not update
+# refs inside the quarantine of a push), and then refuses the push.
+# shellcheck disable=SC2016 # the hook expands its own variables
+printf '#!/bin/sh\nunset GIT_QUARANTINE_PATH GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES\nt=$(git rev-parse "refs/heads/gh-pages^{tree}")\nc=$(git commit-tree "$t" -p refs/heads/gh-pages -m "Another release")\ngit update-ref refs/heads/gh-pages "$c"\necho "refused by the test" >&2\nexit 1\n' > "$origin/hooks/pre-receive"
+chmod +x "$origin/hooks/pre-receive"
+job_publish
+rm "$origin/hooks/pre-receive"
+check "publish exits 3 when gh-pages moved during the push" rc_is 3
+check "(the message says another writer changed it)" out_has "another writer"
+check "gh-pages is the other writer's commit, not ours" not same "$(pages_head)" "$base_sha"
+check "gh-pages-previous was not written" not git -C "$origin" rev-parse --verify -q refs/heads/gh-pages-previous
+check "the release is still a draft" state_is "draft 5 -"
+end_case "a writer moves gh-pages during the push: exit 3, nothing of ours pushed"
+
+# ---- 16. gh-pages-previous refused, gh-pages alone would pass ----
+make_world 17
+build_jobs
+job_verify
+job_sign
+# shellcheck disable=SC2016 # the hook expands $1 itself
+printf '#!/bin/sh\n[ "$1" != refs/heads/gh-pages-previous ] || { echo "refused by the test" >&2; exit 1; }\n' > "$origin/hooks/update"
+chmod +x "$origin/hooks/update"
+job_publish
+check "publish fails when gh-pages-previous is refused" rc_is 1
+check "gh-pages is untouched (the push is atomic)" same "$(pages_head)" "$base_sha"
+check "gh-pages-previous does not exist" not git -C "$origin" rev-parse --verify -q refs/heads/gh-pages-previous
+check "the release is still a draft" state_is "draft 5 -"
+end_case "gh-pages-previous refused: gh-pages does not move either"
+
+# ---- 17. the first release: there is no gh-pages yet ----
+make_world 18
+git -C "$origin" update-ref -d refs/heads/gh-pages
+base_sha=-
+# What the build job does without a gh-pages: an empty directory instead of the clone.
+rm -rf "$w/pages" "$w/commits" "$w/dist"
+mkdir "$w/pages"
+ostree --repo="$w/pages/repo" fake-commit "app/$app_id/x86_64/stable" "first 1.2.3" > /dev/null
+ostree --repo="$w/pages/repo" fake-commit "runtime/$app_id.Locale/x86_64/stable" "first locale 1.2.3" > /dev/null
+run "$rel/export-flatpak-commits.sh" "$w/pages" "$w/commits"
+check "the export records no base" file_has "$w/commits/refs.txt" "^base	-$"
+make_assets "$w/dist" 1.2.3
+job_verify
+job_sign
+check "sign accepts the first release" rc_is 0
+check "(and reports no base)" file_has "$w/sign.out" "built on gh-pages -"
+job_publish
+check "publish exits 0 with SITE_BASE_SHA=-" rc_is 0
+check "gh-pages exists now" test -n "$(pages_head)"
+check "there is no gh-pages-previous" not git -C "$origin" rev-parse --verify -q refs/heads/gh-pages-previous
+check "gh-pages is the new site" same "$(pages_file repo/summary)" "$(tar -xOf "$w/signed/site.tar" ./repo/summary)"
+check "the release is published and the latest" state_is "published 5 latest"
+end_case "first release: no gh-pages, SITE_BASE_SHA=-: pushed without gh-pages-previous"
+
+# ---- 18. no secret anywhere ----
 leaks=$keys/leaks
 : > "$leaks"
 for k in a b; do
