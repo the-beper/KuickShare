@@ -1,14 +1,16 @@
 #!/bin/sh
-# Proves, with throw-away keys and a local web server, that moving the signing out of the build (build/release/sign-flatpak-repo.sh)
-# does not stop installed Flatpak clients from updating. Nothing real is used: no published repository, no real key, no network.
+# Proves, with throw-away keys and a local web server, that the split signing of the release (build/release/prepare-,
+# sign- and finish-flatpak-repo.sh) does not stop installed Flatpak clients from updating. Nothing real is used: no published
+# repository, no real key, no network.
 #
-#   1. Site S1 is made the way releases were made until now: the commit is signed when it is created, then
+#   1. Site S1 is made the way releases were once made: the commit is signed when it is created, then
 #      build/flatpak/publish-repo.sh finishes the repository. A client adds it from its .flatpakrepo and installs.
 #   2. Site S2 is made the new way: an unsigned commit is exported on top of a clone of S1 (the build job), taken out with
-#      build/release/export-flatpak-commits.sh, and signed and finished by build/release/sign-flatpak-repo.sh with the same key.
-#   3. The same URL then serves S3: S2 whose new commit (and summary) is signed by another key, without static deltas; the
-#      client's update must fail and leave the installed commit alone. Then S2 itself: the update must succeed, reach the new
-#      commit, whose parent is the installed one, and fetch a static delta.
+#      build/release/export-flatpak-commits.sh, finished unsigned by prepare-flatpak-repo.sh, signed with the same key by
+#      sign-flatpak-repo.sh, and checked and archived by finish-flatpak-repo.sh.
+#   3. The same URL then serves S3: S2 whose new commit (and summary) is signed by another key; the client's update must fail
+#      and leave the installed commit alone. Then S2 itself: the update must succeed and reach the new commit, whose parent is
+#      the installed one. There are no static deltas: the client fetches objects.
 #      (A summary signed by another key alone is not refused by Flatpak 1.14 when the commits carry a trusted signature, so that
 #      case is not asserted: the commit signature is what protects an installed client.)
 # The application is the one the build made: pass its repository (default dist/flatpak-repo, as build-flatpak.sh leaves it).
@@ -82,18 +84,39 @@ ostree --repo="$built" checkout --user-mode "$ref" "$work/tree"
 chmod -R u+w "$work/tree"
 mkdir -p "$work/tree/files/share/kuickshare"
 echo "repository update test" > "$work/tree/files/share/kuickshare/update-test"
+# Every release changes the appstream data (a new <release>), so build-update-repo makes new, unsigned appstream commits that
+# the sign list must carry. Done when the built tree has appstream data.
+for xml in "$work"/tree/files/share/app-info/xmls/*.xml.gz; do
+    [ -f "$xml" ] || continue
+    gzip -dc "$xml" | sed 's|<summary>[^<]*</summary>|<summary>update test 2</summary>|' | gzip -n > "$xml.new"
+    mv "$xml.new" "$xml"
+done
 # No sandbox for the icon check: it needs user namespaces, which CI runners may restrict.
 flatpak build-export --disable-sandbox "$work/changed" "$work/tree" stable
 flatpak build-commit-from --src-repo="$work/changed" --src-ref="$ref" --no-update-summary --subject="update test 2" "$work/pages/repo" "$ref"
 "$root/build/release/export-flatpak-commits.sh" "$work/pages" "$work/commits"
-# The checks of the sign script look at HEAD of a checkout: a one-commit repository stands in for it.
+# The checks of the scripts look at HEAD of a checkout: a one-commit repository stands in for it.
 git init -q --initial-branch=main "$work/checkout"
 git -C "$work/checkout" commit -q --allow-empty -m "Release"
 sha=$(git -C "$work/checkout" rev-parse HEAD)
-GITHUB_SHA=$sha KUICKSHARE_ROOT=$work/checkout PAGES_REMOTE=file://$work/origin.git SITE_URL=$url RUNNER_TEMP=$work \
-    SIGNING_PUBKEY=$work/key-a/public.asc EXPECT_COMMITS_SHA256=$(sha256sum "$work/commits/flatpak-commits.tar" | cut -d' ' -f1) \
-    FLATPAK_GPG_PRIVATE_KEY=$(GNUPGHOME=$work/key-a gpg --batch --pinentry-mode loopback --passphrase '' --armor --export-secret-keys "$fpr_a") \
-    "$root/build/release/sign-flatpak-repo.sh" "$work/commits/flatpak-commits.tar" "$work/signed"
+export GITHUB_SHA=$sha KUICKSHARE_ROOT=$work/checkout PAGES_REMOTE=file://$work/origin.git SITE_URL=$url RUNNER_TEMP=$work SIGNING_PUBKEY=$work/key-a/public.asc
+base=$(git -C "$work/origin.git" rev-parse gh-pages)
+mkdir "$work/ci"
+# prepare-flatpak: no key
+EXPECT_COMMITS_SHA256=$(sha256sum "$work/commits/flatpak-commits.tar" | cut -d' ' -f1) EXPECT_REFS_SHA256=$(sha256sum "$work/commits/refs.txt" | cut -d' ' -f1) \
+    GITHUB_OUTPUT=$work/ci/prepare.out "$root/build/release/prepare-flatpak-repo.sh" "$work/commits/flatpak-commits.tar" "$work/prepared"
+EXPECT_PREPARED_SHA256=$(sed -n 's/^prepared_sha256=//p' "$work/ci/prepare.out")
+EXPECT_SIGNLIST_SHA256=$(sed -n 's/^signlist_sha256=//p' "$work/ci/prepare.out")
+# sign-flatpak: the check without the key, then the key in the step that signs
+EXPECT_PREPARED_SHA256=$EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256=$EXPECT_SIGNLIST_SHA256 EXPECT_BASE_SHA=$base \
+    EXPECT_REFS_SHA256=$(sha256sum "$work/commits/refs.txt" | cut -d' ' -f1) \
+    "$root/build/release/sign-flatpak-repo.sh" --check "$work/prepared/prepared.tar" "$work/prepared/sign-list.txt" "$work/commits/refs.txt" "$work/signwork"
+FLATPAK_GPG_PRIVATE_KEY=$(GNUPGHOME=$work/key-a gpg --batch --pinentry-mode loopback --passphrase '' --armor --export-secret-keys "$fpr_a") \
+    GITHUB_OUTPUT=$work/ci/sign.out "$root/build/release/sign-flatpak-repo.sh" --sign "$work/signwork" "$work/signed-repo"
+# finish-flatpak: no key
+EXPECT_PREPARED_SHA256=$EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256=$EXPECT_SIGNLIST_SHA256 EXPECT_BASE_SHA=$base \
+    EXPECT_SIGNED_SHA256=$(sed -n 's/^signed_sha256=//p' "$work/ci/sign.out") \
+    "$root/build/release/finish-flatpak-repo.sh" "$work/prepared/prepared.tar" "$work/prepared/sign-list.txt" "$work/signed-repo/signed-repo.tar" "$work/signed"
 mkdir "$work/s2"
 tar -xf "$work/signed/site.tar" -C "$work/s2"
 c2=$(ostree --repo="$work/s2/repo" rev-parse "$ref")
@@ -102,10 +125,8 @@ c2=$(ostree --repo="$work/s2/repo" rev-parse "$ref")
 echo "ok: S2 built the new way, commit $c2 on top of $c1"
 
 # ---- S3: S2 whose new commit is signed by somebody else (the published key's signature removed) ----
-# No static deltas: a delta would carry the commit's original signature with it.
 cp -a "$work/s2" "$work/s3"
 fpr_b=$(cat "$work/key-b/fpr")
-rm -rf "$work/s3/repo/deltas"
 ostree --repo="$work/s3/repo" gpg-sign --delete --gpg-homedir="$work/key-a" "$c2" "$fpr_a" > /dev/null
 ostree --repo="$work/s3/repo" gpg-sign --gpg-homedir="$work/key-b" "$c2" "$fpr_b"
 flatpak build-update-repo --gpg-sign="$fpr_b" --gpg-homedir="$work/key-b" "$work/s3/repo" > /dev/null
@@ -137,6 +158,6 @@ serve "$work/s2"
 before=$(wc -l < "$work/http.log")
 update || fail "the update to the repository signed the new way failed"
 [ "$(installed)" = "$c2" ] || fail "the installed commit is $(installed), not $c2"
-tail -n +"$((before + 1))" "$work/http.log" | grep -q '/repo/deltas/' || { tail -n +"$((before + 1))" "$work/http.log"; fail "the client did not ask for a static delta"; }
-echo "ok: the client updated from $c1 to $c2 (child of $c1) over a static delta"
+if tail -n +"$((before + 1))" "$work/http.log" | grep -q '/repo/deltas/'; then fail "the client asked for a static delta, and the site has none"; fi
+echo "ok: the client updated from $c1 to $c2 (child of $c1), without static deltas"
 echo "done"

@@ -8,8 +8,11 @@ name: Release
 #   build-*         build and test the AppImage, the tarball and the Flatpak. No secret, no write permission; the Flatpak
 #                   commits are exported unsigned
 #   verify          the exact set of files, their hashes, their version
-#   sign-flatpak    the only job with the signing key (environment release-signing): signs the Flatpak commits and finishes
-#                   the repository, pushes nothing
+#   prepare-flatpak the Flatpak repository on top of gh-pages, unsigned: everything that parses the build's output. No secret
+#   sign-flatpak    the only job with the signing key (environment release-signing): checks what prepare made, then signs
+#                   the listed commits and the summary and parses or generates nothing. Pushes nothing
+#   finish-flatpak  another machine, no secret: checks the signed repository against the prepared one and as a client with
+#                   only the public key, writes the site archive
 #   publish         the only job with write permission: draft release, assets, gh-pages, then publishes the release.
 #                   It rebuilds nothing and can be run again after a failure
 on:
@@ -183,7 +186,7 @@ jobs:
   # they keep their parent). This job has no secret and no write token. It runs on the plain runner, not in a job container
   # (which would be a rootful, --privileged Docker container): the scripts start the build image with rootless podman, and
   # bubblewrap inside it needs /proc unmasked and the SYS_ADMIN and NET_ADMIN capabilities, inside the container's user
-  # namespace only (build/flatpak/build-flatpak.sh). Pinned runner image, as sign-flatpak: the same podman, flatpak and ostree.
+  # namespace only (build/flatpak/build-flatpak.sh). Pinned runner image, as the jobs that prepare, sign and finish the repository: the same podman, flatpak and ostree.
   build-flatpak:
     needs: validate
     runs-on: ubuntu-24.04
@@ -193,6 +196,7 @@ jobs:
     outputs:
       flatpak_sha256: ${{ steps.hash.outputs.flatpak }}
       commits_sha256: ${{ steps.hash.outputs.commits }}
+      refs_sha256: ${{ steps.hash.outputs.refs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -224,7 +228,7 @@ jobs:
           KUICKSHARE_EXPECT_VERSION: ${{ needs.validate.outputs.version }}
         run: build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
 
-      # ostree of the runner image, as in sign-flatpak: the script only copies commits between repositories.
+      # ostree of the runner image, as in prepare-flatpak: the script only copies commits between repositories.
       - name: Export the new commits
         run: |
           sudo apt-get update
@@ -237,6 +241,7 @@ jobs:
           {
             echo "flatpak=$(sha256sum dist/KuickShare-x86_64.flatpak | cut -d' ' -f1)"
             echo "commits=$(sha256sum dist/flatpak-commits/flatpak-commits.tar | cut -d' ' -f1)"
+            echo "refs=$(sha256sum dist/flatpak-commits/refs.txt | cut -d' ' -f1)"
           } >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -251,6 +256,15 @@ jobs:
         with:
           name: flatpak-commits
           path: dist/flatpak-commits/flatpak-commits.tar
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      # What the build says it exported, on its own: the signing job checks the sign list against it.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flatpak-refs
+          path: dist/flatpak-commits/refs.txt
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -295,22 +309,69 @@ jobs:
           retention-days: 14
           compression-level: 0
 
-  # The only job that sees the signing key. The environment release-signing must exist with the secret
-  # FLATPAK_GPG_PRIVATE_KEY and a required reviewer (CONTRIBUTING.md, Releases, one-time setup): a job that names an environment
-  # that does not exist makes GitHub create it unprotected, and then the repository secret of the same name is readable here.
-  # The secret is given to one step only. No --privileged: signing and checking as a client need no sandbox.
-  sign-flatpak:
-    needs: [validate, ci-gate, verify, build-flatpak]
-    # Pinned, not -latest: the flatpak and ostree versions that regenerate the repository are those of this image, and CI's
-    # repo-update job proves client updates on the very same one.
+  # Everything that reads what the build made (the commits archive, ostree objects, appstream data) and everything that is
+  # generated: the unsigned repository on top of gh-pages, its summary and appstream data, the list of refs to sign. No
+  # environment, no secret (the script refuses to run with one), no write token. Pinned runner image, as the other Flatpak jobs:
+  # the same flatpak and ostree, and CI's repo-update job proves client updates on that very image.
+  prepare-flatpak:
+    needs: [validate, build-flatpak]
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      prepared_sha256: ${{ steps.prepare.outputs.prepared_sha256 }}
+      signlist_sha256: ${{ steps.prepare.outputs.signlist_sha256 }}
+      base_sha: ${{ steps.prepare.outputs.base_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install flatpak and ostree
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak ostree appstream
+          flatpak --version
+          ostree --version | head -n 2
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: flatpak-commits
+          path: flatpak-commits
+
+      - name: Prepare the Flatpak repository (unsigned)
+        id: prepare
+        env:
+          EXPECT_COMMITS_SHA256: ${{ needs.build-flatpak.outputs.commits_sha256 }}
+          EXPECT_REFS_SHA256: ${{ needs.build-flatpak.outputs.refs_sha256 }}
+        run: build/release/prepare-flatpak-repo.sh flatpak-commits/flatpak-commits.tar flatpak-prepared
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flatpak-prepared
+          path: |
+            flatpak-prepared/prepared.tar
+            flatpak-prepared/sign-list.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  # The only job that sees the signing key, and the only one with an environment. The environment release-signing must exist
+  # with the secret FLATPAK_GPG_PRIVATE_KEY and a required reviewer (CONTRIBUTING.md, Releases, one-time setup): a job that
+  # names an environment that does not exist makes GitHub create it unprotected, and then the repository secret of the same
+  # name is readable here. The secret is given to one step only, which signs what the step before it checked and parses and
+  # generates nothing. No --privileged: signing needs no sandbox.
+  sign-flatpak:
+    needs: [validate, ci-gate, verify, build-flatpak, prepare-flatpak]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     environment: release-signing
     permissions:
       contents: read
     outputs:
-      site_sha256: ${{ steps.sign.outputs.site_sha256 }}
-      base_sha: ${{ steps.sign.outputs.base_sha }}
+      signed_sha256: ${{ steps.sign.outputs.signed_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -328,30 +389,96 @@ jobs:
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: flatpak-commits
-          path: flatpak-commits
+          name: flatpak-refs
+          path: flatpak-refs
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: flatpak-prepared
+          path: flatpak-prepared
+
+      # No secret: the hashes, gh-pages still at the base of the build, the archive and the list against refs.txt.
+      - name: Check what prepare-flatpak made
+        env:
+          EXPECT_PREPARED_SHA256: ${{ needs.prepare-flatpak.outputs.prepared_sha256 }}
+          EXPECT_SIGNLIST_SHA256: ${{ needs.prepare-flatpak.outputs.signlist_sha256 }}
+          EXPECT_REFS_SHA256: ${{ needs.build-flatpak.outputs.refs_sha256 }}
+          EXPECT_BASE_SHA: ${{ needs.prepare-flatpak.outputs.base_sha }}
+        run: build/release/sign-flatpak-repo.sh --check flatpak-prepared/prepared.tar flatpak-prepared/sign-list.txt flatpak-refs/refs.txt "$RUNNER_TEMP/flatpak-sign-work"
 
       - name: Sign the Flatpak repository
         id: sign
         env:
           FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
-          EXPECT_COMMITS_SHA256: ${{ needs.build-flatpak.outputs.commits_sha256 }}
-        run: build/release/sign-flatpak-repo.sh flatpak-commits/flatpak-commits.tar flatpak-site
+        run: build/release/sign-flatpak-repo.sh --sign "$RUNNER_TEMP/flatpak-sign-work" flatpak-signed
+
+      - name: Remove the keyring and the work folder
+        if: always()
+        run: build/release/sign-flatpak-repo.sh --cleanup "$RUNNER_TEMP/flatpak-sign-work"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: flatpak-site
-          path: |
-            flatpak-site/site.tar
-            flatpak-site/refs.txt
+          name: flatpak-signed
+          path: flatpak-signed/signed-repo.tar
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
 
-  # The only job with write permission. It uploads what verify and sign-flatpak produced and rebuilds nothing. Re-run it
+  # No secret, another machine: trusts nothing the signing job returned. It checks that the signed repository is the prepared
+  # one plus signatures, that a client with only the public key accepts it, and writes the site archive for publish.
+  finish-flatpak:
+    needs: [validate, build-flatpak, prepare-flatpak, sign-flatpak]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      site_sha256: ${{ steps.finish.outputs.site_sha256 }}
+      base_sha: ${{ steps.finish.outputs.base_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install flatpak and ostree
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak ostree appstream
+          flatpak --version
+          ostree --version | head -n 2
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: flatpak-prepared
+          path: flatpak-prepared
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: flatpak-signed
+          path: flatpak-signed
+
+      - name: Check the signed repository and write the site
+        id: finish
+        env:
+          EXPECT_PREPARED_SHA256: ${{ needs.prepare-flatpak.outputs.prepared_sha256 }}
+          EXPECT_SIGNLIST_SHA256: ${{ needs.prepare-flatpak.outputs.signlist_sha256 }}
+          EXPECT_SIGNED_SHA256: ${{ needs.sign-flatpak.outputs.signed_sha256 }}
+          EXPECT_BASE_SHA: ${{ needs.prepare-flatpak.outputs.base_sha }}
+        run: build/release/finish-flatpak-repo.sh flatpak-prepared/prepared.tar flatpak-prepared/sign-list.txt flatpak-signed/signed-repo.tar flatpak-site
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flatpak-site
+          path: flatpak-site/site.tar
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  # The only job with write permission. It uploads what verify and finish-flatpak produced and rebuilds nothing. Re-run it
   # ("Re-run failed jobs") after any failure: it does only what is missing.
   publish:
-    needs: [validate, ci-gate, verify, sign-flatpak]
+    needs: [validate, ci-gate, verify, finish-flatpak]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -379,6 +506,6 @@ jobs:
           ASSETS_DIR: release-assets
           EXPECT_SUMS_SHA256: ${{ needs.verify.outputs.sums_sha256 }}
           SITE_TAR: flatpak-site/site.tar
-          EXPECT_SITE_SHA256: ${{ needs.sign-flatpak.outputs.site_sha256 }}
-          SITE_BASE_SHA: ${{ needs.sign-flatpak.outputs.base_sha }}
+          EXPECT_SITE_SHA256: ${{ needs.finish-flatpak.outputs.site_sha256 }}
+          SITE_BASE_SHA: ${{ needs.finish-flatpak.outputs.base_sha }}
         run: build/release/publish.sh

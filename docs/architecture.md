@@ -476,7 +476,7 @@ flowchart LR
     A["build/flatpak/build-flatpak.sh"] -->|"runs in"| B["podman image, Fedora 45 (build/flatpak/Containerfile)"]
     B --> C["flatpak-builder: KDE 6.11 SDK, rust-stable"]
     C --> D["OSTree repo + dist/KuickShare-x86_64.flatpak"]
-    D -->|"release.yml: sign, publish-repo.sh"| E["GitHub Pages: repo/, .flatpakrepo, .flatpakref"]
+    D -->|"release.yml: prepare, sign, finish; publish-repo.sh"| E["GitHub Pages: repo/, .flatpakrepo, .flatpakref"]
 ```
 
 - **Build environment.** The container runs in rootless podman (the scripts refuse a rootful one) with `--security-opt unmask=ALL --cap-add SYS_ADMIN --cap-add NET_ADMIN` instead of `--privileged`: bwrap needs `/proc` unmasked to mount its own and those two capabilities to create namespaces (they hold inside the container's user namespace only). Runtimes and the build cache live in the podman volume `kuickshare-flatpak`, not on the host.
@@ -486,7 +486,7 @@ flowchart LR
   - `Exec` becomes `flatpak run --file-forwarding <id> @@ %F @@`, which hands the files to the sandbox through the document portal.
   - With no installer, the shell writes the Dolphin entry on start when the setting is on and the file is missing.
   - A download folder is accepted only under a mount that is not one of the sandbox's private ones (`/tmp`, `/run`, `/usr`, ...), or under a portal document or `/run/media`; otherwise files written there would be lost with the sandbox. This check is covered by unit tests on sample mount tables, not yet in a real sandbox.
-- **Repository.** `release.yml` builds with `--gpg-sign` (secret `FLATPAK_GPG_PRIVATE_KEY`), adds the commit to the repository fetched from the `gh-pages` branch, and `build/flatpak/publish-repo.sh` prunes it and writes `kuickshare.flatpakrepo` and `kuickshare.flatpakref` with the public key. The branch is replaced by a single commit each release so OSTree objects do not pile up in the git history.
+- **Repository.** `release.yml` builds the commits unsigned and exports them on top of a clone of the `gh-pages` branch. Three jobs then make the signed site: `prepare-flatpak` (no key) adds them to the published repository, and `build/flatpak/publish-repo.sh` prunes it and writes the summary, `kuickshare.flatpakrepo` and `kuickshare.flatpakref` with the public key; `sign-flatpak` (the only job with the secret `FLATPAK_GPG_PRIVATE_KEY`) signs the new commits and the summary and parses or generates nothing; `finish-flatpak` (no key) checks the result as a client with only the public key. There are no static deltas. The branch is replaced by a single commit each release so OSTree objects do not pile up in the git history. Details and the checks of each step: [CONTRIBUTING.md](../CONTRIBUTING.md#releases).
 - **Test.** `build/flatpak/test-flatpak.sh` installs the bundle in a container with offscreen Qt, a private session bus, non-default `XDG_*` folders, a fake `StatusNotifierWatcher` and the document portal. It checks that:
   - the core answers on D-Bus;
   - the tray item registers;
