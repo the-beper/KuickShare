@@ -217,8 +217,8 @@ jobs:
       # By digest (bump: CONTRIBUTING.md, Pinned tools). A failed pull fails the job.
       - name: Pull the build image
         run: |
-          podman pull ghcr.io/the-beper/kuickshare-flatpak:fedora45@sha256:461647d49f428683cd06e506021001833731ec3bb9ee5b5cac1d20e310b710cd
-          podman tag ghcr.io/the-beper/kuickshare-flatpak:fedora45@sha256:461647d49f428683cd06e506021001833731ec3bb9ee5b5cac1d20e310b710cd localhost/kuickshare-flatpak:fedora45
+          podman pull ghcr.io/the-beper/kuickshare-flatpak:fedora45@sha256:7090540522dbb23e1451fa5cd9c3e56dcbd4ace9f1ecf7080682bc89501e1e2e
+          podman tag ghcr.io/the-beper/kuickshare-flatpak:fedora45@sha256:7090540522dbb23e1451fa5cd9c3e56dcbd4ace9f1ecf7080682bc89501e1e2e localhost/kuickshare-flatpak:fedora45
 
       - name: Build the Flatpak (unsigned)
         run: KUICKSHARE_FLATPAK_REPO="$PWD/pages/repo" build/flatpak/build-flatpak.sh
