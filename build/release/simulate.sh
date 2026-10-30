@@ -4,7 +4,7 @@
 # curl replaced by the fakes in build/release/testdata (put first in PATH). The signatures are real GnuPG signatures made
 # with ephemeral keys generated in temporary keyrings; no real key, no network, no container.
 # Needs only sh, git, gpg 2.2+, python3, tar, sha256sum, sha1sum. Everything happens in a mktemp directory that is removed
-# at the end. Output is TAP: "ok N - ..." lines and "# 13/13 passed"; the exit status is not 0 if a case fails.
+# at the end. Output is TAP: "ok N - ..." lines and "# 15/15 passed"; the exit status is not 0 if a case fails.
 #
 # What it does NOT show (see CONTRIBUTING.md, Releases): that real flatpak, ostree, gh and GitHub Pages behave like the
 # fakes. build/flatpak/test-repo-update.sh covers the real Flatpak client; the rest needs a release.
@@ -44,7 +44,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=13
+total=15
 n=0
 passed=0
 failed=0
@@ -619,7 +619,48 @@ check "(and it is complete)" state_is "published 5 latest"
 check "gh-pages has the new site again" same "$(pages_file repo/summary)" "$(tar -xOf "$w/signed/site.tar" ./repo/summary)"
 end_case "rollback: gh-pages-previous restores the old repository; the publish job can be run again"
 
-# ---- 13. no secret anywhere ----
+# ---- 13. no release below an existing one ----
+make_world 14
+tag_seed() { git -C "$seed" tag -a "$1" -m "$1" "v1.2.3^{commit}"; git -C "$seed" push -q "$origin" "$1"; git -C "$w/checkout" fetch -q --tags origin; }
+tag_seed v1.2.2
+tag_seed v1.2.3-rc.1
+tag_seed v9.9.9-rc.1
+tag_seed not-a-release
+job_validate
+check "an older tag, prerelease-looking tags and other tags do not block the newest release" rc_is 0
+tag_seed v1.2.10
+job_validate
+check "a release below an existing tag (v1.2.10 is above v1.2.3 in version order) is refused" rc_is 1
+check "(the message names the newest tag)" out_has "the newest release tag is v1.2.10, not v1.2.3"
+tag_seed v1.3.0
+job_validate
+check "still refused with a newer tag" rc_is 1
+check "(the message names the newest tag)" out_has "the newest release tag is v1.3.0"
+end_case "anti-downgrade: only the newest vMAJOR.MINOR.PATCH tag is released; other tags do not count"
+
+# ---- 14. the gh-pages push is atomic ----
+make_world 15
+build_jobs
+job_verify
+job_sign
+# A server that refuses gh-pages (a ruleset, a lost lease) but would take gh-pages-previous.
+# shellcheck disable=SC2016 # the hook expands $1 itself
+printf '#!/bin/sh\n[ "$1" != refs/heads/gh-pages ] || { echo "refused by the test" >&2; exit 1; }\n' > "$origin/hooks/update"
+chmod +x "$origin/hooks/update"
+job_publish
+check "publish exits 3 when gh-pages is refused" rc_is 3
+check "(the message says nothing was pushed)" out_has "Nothing was pushed"
+check "gh-pages is untouched" same "$(pages_head)" "$base_sha"
+check "gh-pages-previous was not written either" not git -C "$origin" rev-parse --verify -q refs/heads/gh-pages-previous
+check "the release is still a draft" state_is "draft 5 -"
+rm "$origin/hooks/update"
+job_publish
+check "the rerun completes" rc_is 0
+check "gh-pages-previous holds the old repository" same "$(git -C "$origin" rev-parse refs/heads/gh-pages-previous)" "$base_sha"
+check "the release is published and the latest" state_is "published 5 latest"
+end_case "gh-pages and gh-pages-previous are pushed together: a refusal moves neither"
+
+# ---- 15. no secret anywhere ----
 leaks=$keys/leaks
 : > "$leaks"
 for k in a b; do

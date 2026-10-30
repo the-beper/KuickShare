@@ -166,19 +166,20 @@ The tag triggers [`release.yml`](.github/workflows/release.yml), one run for one
 
 | Job | What it does | Rights |
 |---|---|---|
-| `validate` | the tag is `vX.Y.Z`, equals the version in `Cargo.toml`, `CMakeLists.txt` and the first metainfo `<release>`, points to the commit of the run, which is on `main` (`build/release/check-version.sh`) | read |
+| `validate` | the tag is `vX.Y.Z`, equals the version in `Cargo.toml`, `CMakeLists.txt` and the first metainfo `<release>`, points to the commit of the run, which is on `main`, and is the newest `vX.Y.Z` tag of the repository: a release below an existing one is refused (`build/release/check-version.sh`; other `v*` tags, such as a prerelease, do not count) | read |
 | `ci-gate` | waits up to 20 minutes for the CI run of the push of that commit to `main` to finish green (a pull request's run does not count) | read |
 | `build-appimage`, `build-tarball`, `build-flatpak` | build and smoke-test with the version of the tag; the Flatpak commits are exported unsigned onto an anonymous clone of `gh-pages` | read; no secret |
 | `verify` | exactly the four files, their hashes against the build jobs, the tarball layout and `VERSION`, the `.zsync` header against the AppImage; writes `SHA256SUMS` (those four files) | read |
 | `sign-flatpak` | after `ci-gate` and `verify`; the only job with the signing key (environment `release-signing`), on the plain runner with flatpak and ostree from Ubuntu's signed packages, not in a container image: signs the commits and finishes the repository in a temporary keyring, checks it as a client, requires the `GPGKey` to be unchanged | read; key |
 | `publish` | draft release, missing assets, `gh-pages`, wait for Pages, then publishes (`build/release/publish.sh`) | write |
 
-`build/release/simulate.sh` runs these scripts against fakes of `gh`, `flatpak`, `ostree` and `curl` with ephemeral GnuPG keys (CI runs it in `lint`). Order and states: assets are uploaded to the draft first, then `gh-pages` is pushed as one orphan commit (the old one stays as the branch `gh-pages-previous`), then Pages is polled until it serves the new `summary` and `summary.sig`, then the draft is published as latest. The Release and the Flatpak repository are not one transaction; the only visible gap is some minutes where Flatpak users have the new version before the Release is public.
+`build/release/simulate.sh` runs these scripts against fakes of `gh`, `flatpak`, `ostree` and `curl` with ephemeral GnuPG keys (CI runs it in `lint`). Order and states: assets are uploaded to the draft first, then `gh-pages` is pushed as one orphan commit (the old one stays as the branch `gh-pages-previous`; one `git push --atomic` with a lease on both branches, so a writer that got in meanwhile makes it fail with exit 3 and nothing moves), then Pages is polled until it serves the new `summary` and `summary.sig`, then the draft is published as latest. The Release and the Flatpak repository are not one transaction; the only visible gap is some minutes where Flatpak users have the new version before the Release is public.
 
 ### When a run fails
 
 - Fix a transient problem and use "Re-run failed jobs": `publish` is idempotent (same asset content is skipped, a different one stops the run, nothing is overwritten; `gh-pages` is pushed only if it is not already the new site). To rebuild, "Re-run all jobs".
-- `stale base` (exit 3 in `sign-flatpak` or `publish`): another release changed `gh-pages` after the build; re-run all jobs.
+- `stale base` (exit 3 in `sign-flatpak` or `publish`), or `the push to gh-pages was refused` (exit 3 in `publish`): another release changed `gh-pages` after the build; re-run all jobs.
+- `the newest release tag is vX.Y.Z` (`validate`): a newer release tag exists, so this tag cannot be released. Delete the tag only if it has no release, otherwise cut the next version.
 - `ci-gate` fails: CI is red or missing on the tagged commit. Fix on `main`, then tag the new commit. Do not move a tag that was pushed: delete it and push a new one only if no release exists for it.
 - An asset with different content on the release (`refusing to overwrite`): look at why; delete that asset by hand only if it is the wrong one, then re-run `publish`.
 - Rollback of a bad Flatpak repository: `git fetch origin gh-pages-previous && git push --force origin FETCH_HEAD:gh-pages`, then `gh release edit vX.Y.Z --draft=true`. Clients that already updated keep the new commit; fix forward with a new version.

@@ -8,7 +8,8 @@
 #      are missing. An asset that exists with the same SHA-256 is skipped; one that differs fails the run. Never --clobber.
 #   3. Pushes the Flatpak repository to gh-pages as one orphan commit, keeping the old head as gh-pages-previous. Skipped
 #      when gh-pages already has that tree; refused (exit 3) when gh-pages is neither the base the site was built on nor
-#      the new site; the push itself uses a lease on the base.
+#      the new site; the push itself is one `git push --atomic` with a lease on gh-pages and on gh-pages-previous
+#      (exit 3 when either moved meanwhile: nothing is pushed).
 #   4. Waits until Pages serves the new repo/summary and repo/summary.sig.
 #   5. Publishes the draft (--latest) and checks the release again: exactly the five assets, each with its SHA-256.
 # The release stays a draft until the Flatpak repository is live, so a release that people can see is never incomplete.
@@ -36,6 +37,7 @@ site_url=${SITE_URL%/}
 wait_secs=${PAGES_WAIT_SECS:-600}
 interval=${PAGES_POLL_INTERVAL:-15}
 fail() { echo "publish: $*" >&2; exit 1; }
+push_refused() { echo "publish: the push to gh-pages was refused (another writer changed gh-pages or gh-pages-previous, or the server refused it). Nothing was pushed; build again." >&2; exit 3; }
 printf '%s\n' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "publish: the tag is not vMAJOR.MINOR.PATCH" >&2; exit 2; }
 printf '%s\n' "$repo" | grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' || { echo "publish: bad repository name" >&2; exit 2; }
 printf '%s\n' "$SITE_BASE_SHA" | grep -Eq '^(-|[0-9a-f]{40})$' || { echo "publish: SITE_BASE_SHA is neither - nor a commit id" >&2; exit 2; }
@@ -179,6 +181,7 @@ git init --quiet --bare "$g"
 git -C "$g" --work-tree="$site" -c core.excludesFile=/dev/null add --force --all
 site_tree=$(git -C "$g" write-tree)
 remote_head=$(git ls-remote "$remote" refs/heads/gh-pages | cut -f1)
+remote_previous=$(git ls-remote "$remote" refs/heads/gh-pages-previous | cut -f1)
 remote_tree=
 if [ -n "$remote_head" ]; then
     git -C "$g" fetch --quiet "$remote" refs/heads/gh-pages
@@ -189,14 +192,19 @@ base=$SITE_BASE_SHA
 if [ "$remote_tree" = "$site_tree" ]; then
     echo "publish: gh-pages already has this site (tree $site_tree), no push"
 elif [ "$remote_head" = "$base" ]; then
-    if [ -n "$remote_head" ]; then
-        echo "publish: keeping the old gh-pages ($remote_head) as gh-pages-previous"
-        git -C "$g" push --quiet "$remote" "+$remote_head:refs/heads/gh-pages-previous"
-    fi
     commit=$(GIT_AUTHOR_NAME=github-actions GIT_AUTHOR_EMAIL=github-actions@users.noreply.github.com \
         GIT_COMMITTER_NAME=github-actions GIT_COMMITTER_EMAIL=github-actions@users.noreply.github.com \
         git -C "$g" commit-tree "$site_tree" -m "Flatpak repository for $tag")
-    git -C "$g" push --quiet --force-with-lease="refs/heads/gh-pages:$remote_head" "$remote" "$commit:refs/heads/gh-pages"
+    # One atomic push, both branches or neither, each with a lease on the value read above: a writer that got in
+    # since then makes the push fail and nothing moves.
+    if [ -n "$remote_head" ]; then
+        echo "publish: keeping the old gh-pages ($remote_head) as gh-pages-previous"
+        git -C "$g" push --quiet --atomic --force-with-lease="refs/heads/gh-pages:$remote_head" \
+            --force-with-lease="refs/heads/gh-pages-previous:$remote_previous" \
+            "$remote" "$commit:refs/heads/gh-pages" "$remote_head:refs/heads/gh-pages-previous" || push_refused
+    else
+        git -C "$g" push --quiet --atomic --force-with-lease=refs/heads/gh-pages: "$remote" "$commit:refs/heads/gh-pages" || push_refused
+    fi
     echo "publish: gh-pages is now $commit"
 else
     echo "publish: gh-pages is at '${remote_head:-nothing}', not at the base '${base:-nothing}' the site was built on, and it is not the new site: another release got there first. Nothing was pushed; build again." >&2
