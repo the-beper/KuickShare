@@ -17,32 +17,14 @@ Kirigami.Dialog {
     readonly property bool hasReport: wr.valid === true
     readonly property bool busy: core.wifiRequirementsBusy
 
-    function sectionTitle(key: string, fallback: string): string {
+    function capabilityTitle(key: string): string {
         switch (key) {
         case "sending":
             return KI18n.i18n("Sending");
         case "receiving":
             return KI18n.i18n("Receiving");
-        case "join_network":
-            return KI18n.i18n("Join network");
-        case "system":
-            return KI18n.i18n("System components");
         }
-        return fallback;
-    }
-
-    // The status is always written out; this icon only repeats it.
-    function capabilityIcon(status: string): string {
-        switch (status) {
-        case "available":
-            return "emblem-ok-symbolic";
-        case "degraded":
-        case "limited":
-            return "dialog-warning-symbolic";
-        case "unavailable":
-            return "dialog-error-symbolic";
-        }
-        return "dialog-question-symbolic";
+        return KI18n.i18n("Join network");
     }
 
     // Kirigami builds the footer buttons from the actions: look for Refresh to give it the focus.
@@ -101,116 +83,91 @@ Kirigami.Dialog {
         }
     ]
 
-    // One component of the system: status as text and icon, a short reason, details on demand.
-    component RequirementRow: ColumnLayout {
-        id: rowItem
+    // One part of the system: its status icon and name, then "Ready" or, right under it, what needs attention and how
+    // to fix it.
+    component ComponentRow: RowLayout {
+        id: componentItem
 
-        required property var row
+        required property var entry
 
-        spacing: Kirigami.Units.smallSpacing
+        spacing: Kirigami.Units.largeSpacing
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Kirigami.Units.largeSpacing
-
-            Kirigami.Icon {
-                source: rowItem.row.iconName
-                Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                Layout.alignment: Qt.AlignTop
-                Accessible.ignored: true
-            }
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 0
-
-                QQC2.Label {
-                    Layout.fillWidth: true
-                    text: rowItem.row.title
-                    textFormat: Text.PlainText
-                    font.bold: true
-                    wrapMode: Text.Wrap
-                }
-                QQC2.Label {
-                    Layout.fillWidth: true
-                    text: rowItem.row.statusText
-                    textFormat: Text.PlainText
-                    wrapMode: Text.Wrap
-                }
-                QQC2.Label {
-                    Layout.fillWidth: true
-                    visible: text.length > 0
-                    text: rowItem.row.reasonText
-                    textFormat: Text.PlainText
-                    wrapMode: Text.Wrap
-                    opacity: 0.8
-                }
-            }
-            QQC2.Button {
-                id: detailsButton
-                Layout.alignment: Qt.AlignTop
-                text: KI18n.i18n("Details")
-                checkable: true
-                Accessible.name: rowItem.row.title + ", " + text
-                Accessible.description: rowItem.row.statusText
-            }
+        Kirigami.Icon {
+            source: componentItem.entry.iconName
+            Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+            Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+            Layout.alignment: Qt.AlignTop
+            Accessible.ignored: true
         }
-
         ColumnLayout {
             Layout.fillWidth: true
-            Layout.leftMargin: Kirigami.Units.iconSizes.smallMedium + Kirigami.Units.largeSpacing
-            visible: detailsButton.checked
             spacing: Kirigami.Units.smallSpacing
 
             QQC2.Label {
                 Layout.fillWidth: true
-                visible: text.length > 0
-                text: rowItem.row.hint
+                text: componentItem.entry.title
                 textFormat: Text.PlainText
+                font.bold: true
                 wrapMode: Text.Wrap
+                // The icon only repeats the status: a screen reader gets it as text.
+                Accessible.description: componentItem.entry.statusText
             }
             QQC2.Label {
                 Layout.fillWidth: true
-                visible: text.length > 0
-                text: rowItem.row.details
+                visible: componentItem.entry.problems.length === 0
+                text: componentItem.entry.statusText
                 textFormat: Text.PlainText
                 wrapMode: Text.Wrap
+                opacity: 0.8
             }
-            QQC2.Label {
-                Layout.fillWidth: true
-                visible: rowItem.row.affectsText.length > 0
-                text: KI18n.i18n("Affects: %1", rowItem.row.affectsText)
-                textFormat: Text.PlainText
-                wrapMode: Text.Wrap
-            }
-            QQC2.Label {
-                Layout.fillWidth: true
-                visible: rowItem.row.verification.length > 0
-                text: KI18n.i18n("How it was checked: %1", rowItem.row.verification)
-                textFormat: Text.PlainText
-                wrapMode: Text.Wrap
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                visible: rowItem.row.command.length > 0
-                spacing: Kirigami.Units.smallSpacing
+            Repeater {
+                model: componentItem.entry.problems
+                delegate: ColumnLayout {
+                    id: problem
 
-                // Selectable, so it can be copied even without the button.
-                QQC2.TextArea {
+                    required property var modelData
+
                     Layout.fillWidth: true
-                    readOnly: true
-                    text: rowItem.row.command
-                    textFormat: TextEdit.PlainText
-                    wrapMode: TextEdit.WrapAnywhere
-                    font: Kirigami.Theme.fixedWidthFont
-                    background: null
-                    Accessible.name: rowItem.row.title
-                }
-                QQC2.Button {
-                    Layout.alignment: Qt.AlignTop
-                    text: KI18n.i18n("Copy command")
-                    icon.name: "edit-copy"
-                    onClicked: dialog.core.copyToClipboard(rowItem.row.command)
+                    spacing: 0
+
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        text: problem.modelData.text
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                    }
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        visible: text.length > 0
+                        text: problem.modelData.hint
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                        opacity: 0.8
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: problem.modelData.command.length > 0
+                        spacing: Kirigami.Units.smallSpacing
+
+                        // Selectable, so it can be copied even without the button.
+                        QQC2.TextArea {
+                            Layout.fillWidth: true
+                            readOnly: true
+                            text: problem.modelData.command
+                            textFormat: TextEdit.PlainText
+                            wrapMode: TextEdit.WrapAnywhere
+                            font: Kirigami.Theme.fixedWidthFont
+                            background: null
+                            Accessible.name: componentItem.entry.title
+                        }
+                        QQC2.ToolButton {
+                            Layout.alignment: Qt.AlignTop
+                            icon.name: "edit-copy"
+                            display: QQC2.AbstractButton.IconOnly
+                            text: KI18n.i18n("Copy command")
+                            onClicked: dialog.core.copyToClipboard(problem.modelData.command)
+                        }
+                    }
                 }
             }
         }
@@ -236,35 +193,8 @@ Kirigami.Dialog {
             }
         }
 
-        MessageBox {
-            visible: dialog.wr.error === "unavailable" || !dialog.core.connected
-            type: Kirigami.MessageType.Error
-            text: KI18n.i18n("KuickShare service unavailable")
-            Layout.fillWidth: true
-        }
-        MessageBox {
-            visible: dialog.wr.error === "schema"
-            type: Kirigami.MessageType.Warning
-            text: KI18n.i18n("The result could not be read. Refresh to try again")
-            Layout.fillWidth: true
-        }
-        MessageBox {
-            visible: dialog.hasReport && dialog.wr.stale === true
-            type: Kirigami.MessageType.Warning
-            text: KI18n.i18n("These results are out of date. Refresh to check again")
-            Layout.fillWidth: true
-        }
-
-        QQC2.Label {
-            Layout.fillWidth: true
-            visible: !dialog.hasReport && dialog.wr.error !== "unavailable" && dialog.wr.error !== "schema"
-            text: KI18n.i18n("Not checked yet")
-            wrapMode: Text.Wrap
-        }
-
         ColumnLayout {
             Layout.fillWidth: true
-            visible: dialog.hasReport
             spacing: Kirigami.Units.smallSpacing
 
             Repeater {
@@ -293,14 +223,14 @@ Kirigami.Dialog {
                     Accessible.name: capTitle.text + ": " + capLabel.text
 
                     Kirigami.Icon {
-                        source: dialog.capabilityIcon(capLine.modelData.cap.status)
+                        source: capLine.modelData.cap.iconName
                         Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
                         Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
                         Accessible.ignored: true
                     }
                     QQC2.Label {
                         id: capTitle
-                        text: dialog.sectionTitle(capLine.modelData.key, "")
+                        text: dialog.capabilityTitle(capLine.modelData.key)
                         font.bold: true
                         Accessible.ignored: true
                     }
@@ -314,10 +244,28 @@ Kirigami.Dialog {
                     }
                 }
             }
+            // Why there is no current result, in plain words: no box, the list below stays as it was.
+            QQC2.Label {
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: {
+                    if (dialog.wr.error === "unavailable" || !dialog.core.connected) {
+                        return KI18n.i18n("KuickShare service unavailable");
+                    }
+                    if (dialog.wr.error === "schema") {
+                        return KI18n.i18n("The result could not be read. Refresh to try again");
+                    }
+                    return dialog.hasReport ? "" : KI18n.i18n("Not checked yet");
+                }
+                wrapMode: Text.Wrap
+            }
             QQC2.Label {
                 Layout.fillWidth: true
                 visible: dialog.hasReport && dialog.wr.generatedAtMs > 0
-                text: KI18n.i18n("Last checked: %1", Qt.formatDateTime(new Date(dialog.wr.generatedAtMs), Qt.locale(), Locale.ShortFormat))
+                text: {
+                    const when = Qt.formatDateTime(new Date(dialog.wr.generatedAtMs), Qt.locale(), Locale.ShortFormat);
+                    return dialog.wr.stale === true ? KI18n.i18n("Last checked: %1 (out of date)", when) : KI18n.i18n("Last checked: %1", when);
+                }
                 wrapMode: Text.Wrap
                 opacity: 0.8
             }
@@ -343,38 +291,12 @@ Kirigami.Dialog {
                 spacing: Kirigami.Units.largeSpacing
 
                 Repeater {
-                    model: dialog.hasReport ? dialog.wr.sections : []
-                    delegate: ColumnLayout {
-                        id: sectionItem
-
+                    model: dialog.hasReport ? dialog.wr.components : []
+                    delegate: ComponentRow {
                         required property var modelData
 
                         Layout.fillWidth: true
-                        spacing: Kirigami.Units.smallSpacing
-
-                        Kirigami.Heading {
-                            Layout.fillWidth: true
-                            level: 3
-                            text: dialog.sectionTitle(sectionItem.modelData.key, sectionItem.modelData.title)
-                            textFormat: Text.PlainText
-                            wrapMode: Text.Wrap
-                            Accessible.role: Accessible.Heading
-                        }
-                        QQC2.Label {
-                            Layout.fillWidth: true
-                            visible: sectionItem.modelData.rows.length === 0
-                            text: KI18n.i18n("Nothing limits this")
-                            wrapMode: Text.Wrap
-                        }
-                        Repeater {
-                            model: sectionItem.modelData.rows
-                            delegate: RequirementRow {
-                                required property var modelData
-
-                                Layout.fillWidth: true
-                                row: modelData
-                            }
-                        }
+                        entry: modelData
                     }
                 }
             }

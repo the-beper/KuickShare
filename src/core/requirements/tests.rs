@@ -634,16 +634,13 @@ fn dnsmasq_unknown_in_flatpak() {
         status(&rows, "wifi.dhcp"),
         (Status::Unknown, "sandbox_unobservable".into())
     );
-    assert_eq!(caps(&rows), caps3(Available, Unknown, Available));
+    // An Info row: it does not lower receiving.
+    assert_eq!(row(&rows, "wifi.dhcp").category, Category::Info);
+    assert_eq!(caps(&rows), caps3(Available, Available, Available));
     assert!(rows.iter().all(|r| r.status != Status::Blocked));
     assert_eq!(row(&rows, "sandbox.permissions").status, Status::Ready);
-    // Against the native baseline: the dnsmasq row, the polkit check that cannot be asked from
-    // a sandbox, and the sandbox row itself.
-    assert_changed(
-        &base_rows(),
-        &rows,
-        &["wifi.dhcp", "firewall.integration", "sandbox.permissions"],
-    );
+    // Against the native baseline: the dnsmasq row and the sandbox row itself.
+    assert_changed(&base_rows(), &rows, &["wifi.dhcp", "sandbox.permissions"]);
 
     // A hotspot that started this session settles the row.
     let mut ev = SessionEvidence::default();
@@ -653,7 +650,19 @@ fn dnsmasq_unknown_in_flatpak() {
         status(&rows, "wifi.dhcp"),
         (Status::Ready, "worked_this_session".into())
     );
-    assert_ne!(caps(&rows).sending, Unavailable);
+    assert_eq!(row(&rows, "wifi.dhcp").category, Category::Critical);
+    assert_eq!(caps(&rows), caps3(Available, Available, Available));
+
+    // NetworkManager could not start sharing: still the critical warning, sandbox or not.
+    let mut f = Facts::healthy_flatpak();
+    wifi_mut(&mut f).state_reason = Obs::Got(18);
+    let rows = eval(&f);
+    assert_eq!(
+        status(&rows, "wifi.dhcp"),
+        (Status::Warning, "shared_start_failed".into())
+    );
+    assert_eq!(row(&rows, "wifi.dhcp").category, Category::Critical);
+    assert_eq!(caps(&rows), caps3(Available, Degraded, Available));
 
     // Native: the file is there or it is not, and a failed check is Unknown.
     let mut f = Facts::healthy();
@@ -663,6 +672,49 @@ fn dnsmasq_unknown_in_flatpak() {
         status(&rows, "wifi.dhcp"),
         (Status::Warning, "not_found".into())
     );
+}
+
+#[test]
+fn flatpak_with_every_permission_is_available() {
+    // polkit is asked from the sandbox too: only dnsmasq stays unobservable, as an Info row.
+    let rows = eval(&Facts::healthy_flatpak());
+    assert_eq!(caps(&rows), caps3(Available, Available, Available));
+    assert_eq!(
+        status(&rows, "firewall.integration"),
+        (Status::Ready, "ok".into())
+    );
+    let dhcp = row(&rows, "wifi.dhcp");
+    assert_eq!(
+        (dhcp.status, dhcp.category),
+        (Status::Unknown, Category::Info)
+    );
+}
+
+#[test]
+fn flatpak_without_polkit_names_it() {
+    // Without the talk permission the sandbox hides polkit: the probe sees no owner, so neither
+    // the zones nor the permission are read.
+    let mut f = Facts::healthy_flatpak();
+    match &mut f.sandbox.context {
+        Obs::Got(c) => c
+            .system_talk_names
+            .retain(|n| n != "org.freedesktop.PolicyKit1"),
+        other => panic!("{other:?}"),
+    }
+    f.firewall.zones = Obs::Missing;
+    f.firewall.polkit = Obs::Missing;
+    let rows = eval(&f);
+    let sandbox = row(&rows, "sandbox.permissions");
+    assert_eq!(
+        (sandbox.status, sandbox.reason_code.as_str()),
+        (Status::Warning, "missing")
+    );
+    assert!(sandbox.details.contains("polkit"), "{}", sandbox.details);
+    assert_eq!(
+        status(&rows, "firewall.integration"),
+        (Status::Unknown, "permission_unverifiable".into())
+    );
+    assert_eq!(caps(&rows), caps3(Available, Degraded, Available));
 }
 
 #[test]
@@ -1196,10 +1248,7 @@ fn enable_verdict_table() {
     let mut f = Facts::healthy();
     f.firewall.name = Obs::Missing;
     assert_eq!(verdict(&f), EnableVerdict::AllowLimited);
-    assert_eq!(
-        verdict(&Facts::healthy_flatpak()),
-        EnableVerdict::AllowUncertain
-    );
+    assert_eq!(verdict(&Facts::healthy_flatpak()), EnableVerdict::Allow);
     assert_eq!(
         verdict(&Facts::failed(
             Packaging::Native,
@@ -1281,7 +1330,7 @@ fn golden_json_v1() {
         ttl_ms: 30_000,
         packaging: Packaging::Flatpak,
         core_version: "1.4.1".into(),
-        capabilities: caps3(Degraded, Unknown, Degraded),
+        capabilities: caps3(Degraded, Degraded, Degraded),
         requirements: vec![
             Requirement {
                 id: "nm.permissions".into(),
@@ -1296,7 +1345,7 @@ fn golden_json_v1() {
             Requirement {
                 id: "wifi.dhcp".into(),
                 status: Status::Unknown,
-                category: Category::Critical,
+                category: Category::Info,
                 reason_code: "sandbox_unobservable".into(),
                 details: String::new(),
                 device: Some("wlan0".into()),
@@ -1308,12 +1357,12 @@ fn golden_json_v1() {
     let golden = concat!(
         r#"{"schema_version":1,"generated_at_ms":1793260800000,"ttl_ms":30000,"#,
         r#""packaging":"flatpak","core_version":"1.4.1","#,
-        r#""capabilities":{"sending":"degraded","receiving":"unknown","join_network":"degraded"},"#,
+        r#""capabilities":{"sending":"degraded","receiving":"degraded","join_network":"degraded"},"#,
         r#""requirements":["#,
         r#"{"id":"nm.permissions","status":"warning","category":"critical","reason_code":"auth_required","#,
         r#""details":"network-control=auth","device":null,"verification":"GetPermissions without interaction","#,
         r#""affects":["sending","receiving","join_network"]},"#,
-        r#"{"id":"wifi.dhcp","status":"unknown","category":"critical","reason_code":"sandbox_unobservable","#,
+        r#"{"id":"wifi.dhcp","status":"unknown","category":"info","reason_code":"sandbox_unobservable","#,
         r#""details":"","device":"wlan0","verification":"dnsmasq at the standard paths","#,
         r#""affects":["receiving"]}]}"#
     );

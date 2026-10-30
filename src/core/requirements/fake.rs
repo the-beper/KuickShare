@@ -99,7 +99,7 @@ impl Facts {
     }
 
     /// The same machine seen from a Flatpak sandbox with every permission the manifest asks for:
-    /// dnsmasq and polkit cannot be observed from there.
+    /// only dnsmasq cannot be observed from there.
     pub(crate) fn healthy_flatpak() -> Self {
         let mut f = Self::healthy();
         f.packaging = Packaging::Flatpak;
@@ -109,6 +109,7 @@ impl Facts {
                     "org.bluez".into(),
                     "org.freedesktop.NetworkManager".into(),
                     "org.fedoraproject.FirewallD1".into(),
+                    "org.freedesktop.PolicyKit1".into(),
                 ],
                 features: vec!["bluetooth".into()],
                 shared: vec!["network".into()],
@@ -117,7 +118,6 @@ impl Facts {
             }),
         };
         f.dhcp = DhcpFacts::default();
-        f.firewall.polkit = Obs::Missing;
         f
     }
 }

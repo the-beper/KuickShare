@@ -60,7 +60,8 @@ class CoreBridge : public QObject
     Q_PROPERTY(QVariantList allowedDevices READ allowedDevices NOTIFY allowedDevicesChanged)
     /// What the core last reported about what Wi-Fi Direct needs on this computer, ready to show: `valid`, `stale`,
     /// `error` ("", "unavailable" or "schema"), `generatedAtMs`, `ttlMs`, `packaging`, `coreVersion`, `capabilities`
-    /// (`sending`, `receiving`, `joinNetwork`, each `status` and `label`) and `sections` (`key`, `title`, `rows`).
+    /// (`sending`, `receiving`, `joinNetwork`, each `status`, `label` and `iconName`) and `components` (`key`, `title`,
+    /// `status`, `statusText`, `iconName`, and `problems`, each `text`, `hint` and `command`).
     /// A report from before a core restart is never shown as current: it is marked `stale`.
     Q_PROPERTY(QVariantMap wifiRequirements READ wifiRequirements NOTIFY wifiRequirementsChanged)
     /// A check of the requirements is waiting for the core.
@@ -127,8 +128,8 @@ public:
     Q_INVOKABLE void enableWifiUpgrade();
     /// The core's `RequestWifiUpgrade`: `enabled` is saved; `allowInsecure` allows the hotspot an open firewall zone for
     /// this session only (needs `enabled`). Any write without it takes a given consent back. The saved value is only
-    /// read back from the core; when it refuses, `wifiUpgradeChanged` is emitted (so a switch shows the real value) and
-    /// `wifiUpgradeRefused` says why.
+    /// read back from the core; when it refuses, `wifiUpgradeChanged` is emitted (so a switch shows the real value) and,
+    /// if the requirements blocked it, they are loaded again (the switch is then disabled).
     Q_INVOKABLE void requestWifiUpgrade(bool enabled, bool allowInsecure);
     void setDolphinIntegration(bool enabled);
     /// AppImage only: writes or removes the application menu entry (no first-start question is asked afterwards).
@@ -248,9 +249,6 @@ Q_SIGNALS:
     void wifiUpgradeChanged();
     void wifiRequirementsChanged();
     void wifiRequirementsBusyChanged();
-    /// The core did not change the Wi-Fi upgrade. `reason` is `requirements_blocked` (neither sending nor receiving
-    /// can work, see `wifiRequirements`), `service_unavailable` (no core to ask) or `failed` (`errorOccurred` explains).
-    void wifiUpgradeRefused(const QString &reason);
     void insecureHotspotAllowedChanged();
     void firewallWarning();
     /// The firewall did not allow the hotspot, so the transfer stays on Bluetooth. `reason` is a code of the core

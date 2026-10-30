@@ -21,6 +21,26 @@ namespace
     {
         return "{\"schema_version\":" + schema + ",\"generated_at_ms\":" + QByteArray::number(generatedAt) + ",\"ttl_ms\":30000,\"packaging\":\"native\",\"core_version\":\"1.4.1\",\"capabilities\":" + caps + ",\"requirements\":[" + rows.join(',') + "]}";
     }
+
+    Row parsedRow(const QString &id, Status status, const QString &reason = QStringLiteral("ok"), Category category = Category::Critical)
+    {
+        Row out;
+        out.id = id;
+        out.status = status;
+        out.reasonCode = reason;
+        out.category = category;
+        return out;
+    }
+
+    QStringList ids(const QList<Row> &rows)
+    {
+        QStringList out;
+        for (const Row &row : rows)
+        {
+            out << row.id;
+        }
+        return out;
+    }
 } // namespace
 
 class RequirementsReportTest : public QObject
@@ -290,6 +310,111 @@ private Q_SLOTS:
         QCOMPARE(staleInMs(1000, 30000, 99000), qint64(0));
         // A report dated in the future counts as just generated.
         QCOMPARE(staleInMs(50000, 30000, 1000), qint64(30000));
+    }
+
+    // ---- components
+
+    void rowsAreGroupedByComponentInReportOrder()
+    {
+        const QList<Component> list = components({
+            parsedRow(QStringLiteral("bluez.service"), Status::Ready),
+            parsedRow(QStringLiteral("nm.service"), Status::Ready),
+            parsedRow(QStringLiteral("nm.wifi_enabled"), Status::Blocked, QStringLiteral("disabled")),
+            parsedRow(QStringLiteral("nm.permissions"), Status::Ready),
+            parsedRow(QStringLiteral("wifi.client"), Status::Blocked, QStringLiteral("prerequisite_blocked")),
+            parsedRow(QStringLiteral("wifi.ap"), Status::Unknown, QStringLiteral("skipped")),
+            parsedRow(QStringLiteral("wifi.dhcp"), Status::Ready, QStringLiteral("binary_present")),
+            parsedRow(QStringLiteral("firewall.integration"), Status::Warning, QStringLiteral("permission_auth"), Category::Security),
+            parsedRow(QStringLiteral("sandbox.permissions"), Status::Ready),
+            parsedRow(QStringLiteral("future.thing"), Status::Ready),
+        });
+        QStringList keys;
+        for (const Component &c : list)
+        {
+            keys << c.key;
+        }
+        QCOMPARE(keys, (QStringList{QStringLiteral("bluetooth"), QStringLiteral("networkmanager"), QStringLiteral("wifi"), QStringLiteral("dnsmasq"), QStringLiteral("firewall"), QStringLiteral("flatpak"), QStringLiteral("future.thing")}));
+        QCOMPARE(list.at(0).status, Status::Ready);
+        QVERIFY(list.at(0).rows.isEmpty());
+        QCOMPARE(list.at(1).status, Status::Ready);
+        // The rows that only point at the switched-off Wi-Fi are left out.
+        QCOMPARE(list.at(2).status, Status::Blocked);
+        QCOMPARE(ids(list.at(2).rows), QStringList{QStringLiteral("nm.wifi_enabled")});
+        QCOMPARE(list.at(4).status, Status::Warning);
+        QVERIFY(!list.at(4).informational);
+    }
+
+    void aComponentWithOnlyDerivedRowsKeepsTheMostSevere()
+    {
+        const QList<Component> list = components({
+            parsedRow(QStringLiteral("nm.device"), Status::Unknown, QStringLiteral("skipped")),
+            parsedRow(QStringLiteral("wifi.client"), Status::Blocked, QStringLiteral("prerequisite_blocked")),
+            parsedRow(QStringLiteral("wifi.ap"), Status::Unknown, QStringLiteral("skipped")),
+        });
+        QCOMPARE(list.size(), 1);
+        QCOMPARE(list.at(0).status, Status::Blocked);
+        QCOMPARE(ids(list.at(0).rows), QStringList{QStringLiteral("wifi.client")});
+    }
+
+    void rowsAreOrderedBySeverityAndInfoRowsComeLast()
+    {
+        const QList<Component> list = components({
+            parsedRow(QStringLiteral("bluez.le"), Status::Unknown, QStringLiteral("timeout")),
+            parsedRow(QStringLiteral("bluez.future"), Status::Unknown, QStringLiteral("not_looked_at"), Category::Info),
+            parsedRow(QStringLiteral("bluez.advertising"), Status::Warning, QStringLiteral("no_free_slot")),
+            parsedRow(QStringLiteral("bluez.adapter"), Status::Blocked, QStringLiteral("no_adapter")),
+            parsedRow(QStringLiteral("bluez.scanning"), Status::Checking, QStringLiteral("checking")),
+        });
+        QCOMPARE(list.size(), 1);
+        QCOMPARE(ids(list.at(0).rows), (QStringList{QStringLiteral("bluez.adapter"), QStringLiteral("bluez.advertising"), QStringLiteral("bluez.le"), QStringLiteral("bluez.scanning"), QStringLiteral("bluez.future")}));
+        QCOMPARE(list.at(0).status, Status::Blocked);
+        QVERIFY(!list.at(0).informational);
+    }
+
+    void readyRowsWithAReasonOfTheirOwnStayAsNotes()
+    {
+        const QList<Component> list = components({
+            parsedRow(QStringLiteral("nm.device"), Status::Ready, QStringLiteral("ok_first_of_many")),
+            parsedRow(QStringLiteral("nm.managed"), Status::Ready),
+            parsedRow(QStringLiteral("wifi.dhcp"), Status::Ready, QStringLiteral("binary_present")),
+        });
+        QCOMPARE(list.size(), 2);
+        QCOMPARE(list.at(0).status, Status::Ready);
+        QVERIFY(!list.at(0).informational);
+        QCOMPARE(ids(list.at(0).rows), QStringList{QStringLiteral("nm.device")});
+        QCOMPARE(ids(list.at(1).rows), QStringList{QStringLiteral("wifi.dhcp")});
+    }
+
+    void aReadyNoteDoesNotHideAProblemThatOnlyPointsElsewhere()
+    {
+        const QList<Component> list = components({
+            parsedRow(QStringLiteral("nm.device"), Status::Ready, QStringLiteral("ok_first_of_many")),
+            parsedRow(QStringLiteral("wifi.client"), Status::Blocked, QStringLiteral("prerequisite_blocked")),
+            parsedRow(QStringLiteral("wifi.ap"), Status::Unknown, QStringLiteral("skipped")),
+        });
+        QCOMPARE(list.size(), 1);
+        QCOMPARE(list.at(0).status, Status::Blocked);
+        QCOMPARE(ids(list.at(0).rows), (QStringList{QStringLiteral("wifi.client"), QStringLiteral("nm.device")}));
+    }
+
+    void anInfoRowAloneMakesAnInformationalComponent()
+    {
+        const QList<Component> list = components({parsedRow(QStringLiteral("wifi.dhcp"), Status::Unknown, QStringLiteral("sandbox_unobservable"), Category::Info)});
+        QCOMPARE(list.size(), 1);
+        QCOMPARE(list.at(0).key, QStringLiteral("dnsmasq"));
+        QCOMPARE(list.at(0).status, Status::Unknown);
+        QVERIFY(list.at(0).informational);
+    }
+
+    void missingFlatpakPermissionsBecomeOverrideOptions()
+    {
+        QCOMPARE(overrideOptions(QStringLiteral("missing: network polkit future bluetooth network")),
+                 (QStringList{QStringLiteral("--share=network"), QStringLiteral("--system-talk-name=org.freedesktop.PolicyKit1"), QStringLiteral("--allow=bluetooth")}));
+        QCOMPARE(overrideOptions(QStringLiteral("missing: bluez networkmanager firewalld")),
+                 (QStringList{QStringLiteral("--system-talk-name=org.bluez"), QStringLiteral("--system-talk-name=org.freedesktop.NetworkManager"), QStringLiteral("--system-talk-name=org.fedoraproject.FirewallD1")}));
+        // Nothing a newer core may name is turned into an option this version does not know.
+        QVERIFY(overrideOptions(QStringLiteral("missing: --filesystem=host")).isEmpty());
+        QVERIFY(overrideOptions(QString()).isEmpty());
     }
 
     // ---- the copied diagnostic report

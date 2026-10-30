@@ -41,6 +41,7 @@ The sandbox is deliberately open where the integration needs it:
 | Network | Quick Share and the pairing port |
 | `org.bluez` (system bus) and Bluetooth sockets | Finding devices over Bluetooth, and the Bluetooth channel of a send |
 | `org.freedesktop.NetworkManager`, `org.fedoraproject.FirewallD1` (system bus) | The [Wi-Fi upgrade](wifi-direct.md) (off unless enabled) |
+| `org.freedesktop.PolicyKit1` (system bus) | The [requirements check](#checking-the-requirements) asks, without a prompt, whether firewalld will let you open the hotspot port. polkit answers more than that call, so it is a deliberate widening |
 | `org.kde.kuickshare` (own name) | Single-instance service of the window |
 | `org.kde.JobViewServer`, `org.freedesktop.Notifications`, `org.kde.StatusNotifierWatcher` | Job progress, Do Not Disturb, tray icon |
 | Downloads folder | Received files. Another download folder is refused with a message until you grant it: `flatpak override --user --filesystem=/path io.github.the_beper.KuickShare` |
@@ -226,12 +227,12 @@ With **Settings → Wi-Fi Direct → Receive and send without a shared network**
 
 ### Checking the requirements
 
-Under **Settings → Wi-Fi Direct**, a line "System requirements" summarises what this computer can do: sending, receiving and joining networks, each Available, Limited, Unavailable or Unknown. **Check system requirements…** opens the dialog "System requirements"; it works also when the switch is disabled. Checking only reads: it never changes Bluetooth, Wi-Fi or the firewall. How each requirement is judged, and what is never verified, is in [wifi-direct.md](wifi-direct.md#checking-the-requirements).
+Under **Settings → Wi-Fi Direct**, **Check system requirements…** opens the dialog "System requirements"; it works also when the switch is disabled. Its description sums up the last check: everything is available, only sending or only receiving works, neither works, or some items could not be checked or need attention. Checking only reads: it never changes Bluetooth, Wi-Fi or the firewall. How each requirement is judged, and what is never verified, is in [wifi-direct.md](wifi-direct.md#checking-the-requirements).
 
 The dialog shows:
 
-- The three capabilities and when they were last checked. A box says when the result is out of date, or could not be read, or the service is unavailable.
-- Sections for Sending, Receiving and Join network, each listing only what limits it (or "Nothing limits this"), then "System components" with every item. Each item has a status (Ready, Warning, Blocked, Unknown), a short reason and a **Details** button with a hint, what it affects, how it was checked and, where useful, a command to copy (it is never run).
+- The three capabilities (Sending, Receiving, Join network), each Available, Limited, Unavailable or Unknown, and when they were last checked ("out of date" when they are). A plain line says when the service is unavailable or the result could not be read.
+- One entry per component: Bluetooth (BlueZ), NetworkManager, Wi-Fi adapter, Hotspot addresses (dnsmasq), Firewall (firewalld) and, in a Flatpak, Flatpak permissions. Each has a status icon and reads "Ready" or a short note (such as "dnsmasq is installed"), or says right under its name what needs attention, what to do and, where useful, a command to copy (it is never run). In a Flatpak dnsmasq cannot be looked for: it reads "Checked when the first hotspot starts" and does not lower Receiving.
 - **Refresh** asks the core to check again (it may return a check made a moment ago); opening the dialog checks only when the last result is missing or out of date.
 - **Copy diagnostic report** puts plain text on the clipboard for a bug report: shell, core and schema versions, packaging, the check time (UTC), the three capabilities, and one line per item with its id, status, reason code, category and how it was checked. It leaves out the details and device fields and holds no network names (SSIDs), MAC or IP addresses, or device names.
 
@@ -239,9 +240,9 @@ An "Available" result is not a promise: the check cannot tell whether a hotspot 
 
 When you turn the switch on:
 
-- If neither sending nor receiving can work, the switch stays off and a prompt "Wi-Fi Direct is not fully available" offers **View requirements**.
-- If only one direction can work, the switch turns on and a warning says "Only sending works on this computer" or "Only receiving works on this computer".
-- If something could not be checked, the switch turns on and the summary shows Unknown.
+- If neither sending nor receiving can work, the switch is off and cannot be turned on, and **Check system requirements…** says so. If it was already on, it can still be turned off.
+- If only one direction can work, the switch turns on and **Check system requirements…** says "Only sending works on this computer" or "Only receiving works on this computer".
+- If something could not be checked, the switch turns on and **Check system requirements…** says "Some items could not be checked".
 
 **Visibility**
 

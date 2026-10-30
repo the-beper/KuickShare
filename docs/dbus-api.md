@@ -305,7 +305,7 @@ An incoming transfer is accepted without asking only if `TrustedDevicesEnabled` 
 `WifiRequirements()` and `WifiRequirementsChanged` carry one JSON object, schema version 1 (the field names are snake case). The meaning of each requirement and how its status is judged is in [wifi-direct.md](wifi-direct.md#checking-the-requirements); this is the shape. Shortened example, a real report lists every row:
 
 ```json
-{"schema_version":1,"generated_at_ms":1760795000123,"ttl_ms":30000,"packaging":"native","core_version":"1.0.0","capabilities":{"sending":"available","receiving":"degraded","join_network":"available"},"requirements":[{"id":"wifi.dhcp","status":"warning","category":"critical","reason_code":"not_found","details":"dnsmasq","device":null,"verification":"dnsmasq at the standard paths, or a hotspot that started this session","affects":["receiving"]}]}
+{"schema_version":1,"generated_at_ms":1760795000123,"ttl_ms":30000,"packaging":"native","core_version":"1.0.0","capabilities":{"sending":"available","receiving":"degraded","join_network":"available"},"requirements":[{"id":"wifi.dhcp","status":"warning","category":"critical","reason_code":"not_found","details":"dnsmasq","device":null,"verification":"dnsmasq at the standard paths (not looked for in a Flatpak), or a hotspot that started this session","affects":["receiving"]}]}
 ```
 
 | Field | Type | Meaning |

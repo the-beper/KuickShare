@@ -28,6 +28,23 @@
 //   qint64 staleInMs(qint64 generatedAtMs, qint64 ttlMs, qint64 nowMs)
 //                  milliseconds until the report is out of date, in [0, ttlMs] (a generation time in the future counts
 //                  as now)
+//   Component      key, status, informational, rows
+//   QString componentOf(const QString &id)
+//                  the part of the system a row belongs to: "bluetooth" (bluez.*), "networkmanager" (nm.service,
+//                  nm.networking, nm.permissions), "wifi" (the other nm.* rows, wifi.client, wifi.ap), "dnsmasq"
+//                  (wifi.dhcp), "firewall" (firewall.*), "flatpak" (sandbox.*); an id this version does not know is its
+//                  own key
+//   QList<Component> components(const QList<Row> &rows)
+//                  one entry per component, in the order the rows first name them. `rows` keeps those that are not
+//                  Ready and the Ready ones with a reason other than "ok" (a note such as "binary_present"), most
+//                  severe first (Blocked, Warning, Unknown, Checking, any Info row, then the Ready notes): a row that
+//                  only points at another one ("skipped", "prerequisite_blocked", "prerequisite_uncertain") is dropped
+//                  when a row that is not Ready has a reason of its own, and only the first is kept otherwise.
+//                  `status` is the first row's (Ready when none is left); `informational` is true when that row is an
+//                  Info row that is not Ready, which no capability depends on
+//   QStringList overrideOptions(const QString &details)
+//                  the `flatpak override` options for the words of a sandbox.permissions "missing" row ("missing:
+//                  network bluetooth bluez networkmanager firewalld polkit"); unknown words are left out
 //   QString formatReport(const Parsed &report, const QString &shellVersion, bool stale)
 //                  the text of "Copy diagnostic report": versions, packaging, UTC time, the three capabilities and one
 //                  line per row (id, status, reason code, category, verification). `details` and `device` are left out.
@@ -60,6 +77,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace RequirementsReport
 {
@@ -406,6 +424,131 @@ namespace RequirementsReport
     {
         const qint64 age = qMax<qint64>(0, nowMs - generatedAtMs);
         return qBound<qint64>(0, ttlMs - age, qMax<qint64>(0, ttlMs));
+    }
+
+    struct Component
+    {
+        QString key;
+        Status status = Status::Ready;
+        bool informational = false;
+        QList<Row> rows;
+    };
+
+    inline QString componentOf(const QString &id)
+    {
+        if (id.startsWith(QLatin1String("bluez.")))
+            return QStringLiteral("bluetooth");
+        if (id == QLatin1String("nm.service") || id == QLatin1String("nm.networking") || id == QLatin1String("nm.permissions"))
+            return QStringLiteral("networkmanager");
+        if (id.startsWith(QLatin1String("nm.")) || id == QLatin1String("wifi.client") || id == QLatin1String("wifi.ap"))
+            return QStringLiteral("wifi");
+        if (id == QLatin1String("wifi.dhcp"))
+            return QStringLiteral("dnsmasq");
+        if (id.startsWith(QLatin1String("firewall.")))
+            return QStringLiteral("firewall");
+        if (id.startsWith(QLatin1String("sandbox.")))
+            return QStringLiteral("flatpak");
+        return id;
+    }
+
+    namespace detail
+    {
+        /// How much a row needs attention. An Info row that is not Ready only says what was not looked at.
+        inline int severity(const Row &row)
+        {
+            if (row.status == Status::Ready)
+                return 0;
+            if (row.category == Category::Info)
+                return 1;
+            switch (row.status)
+            {
+            case Status::Checking:
+                return 2;
+            case Status::Warning:
+                return 4;
+            case Status::Blocked:
+                return 5;
+            case Status::Unknown:
+            case Status::Ready:
+                break;
+            }
+            return 3;
+        }
+
+        /// A reason that only points at another row, which says what is wrong.
+        inline bool derived(const Row &row)
+        {
+            return row.reasonCode == QLatin1String("skipped") || row.reasonCode == QLatin1String("prerequisite_blocked") || row.reasonCode == QLatin1String("prerequisite_uncertain");
+        }
+    } // namespace detail
+
+    inline QList<Component> components(const QList<Row> &rows)
+    {
+        QList<Component> out;
+        for (const Row &row : rows)
+        {
+            const QString key = componentOf(row.id);
+            auto it = std::find_if(out.begin(), out.end(), [&key](const Component &c) { return c.key == key; });
+            if (it == out.end())
+            {
+                Component component;
+                component.key = key;
+                out.append(component);
+                it = out.end() - 1;
+            }
+            // A Ready row with a reason of its own carries a note ("dnsmasq is installed").
+            if (row.status != Status::Ready || (!row.reasonCode.isEmpty() && row.reasonCode != QLatin1String("ok")))
+            {
+                it->rows.append(row);
+            }
+        }
+        for (Component &c : out)
+        {
+            std::stable_sort(c.rows.begin(), c.rows.end(), [](const Row &a, const Row &b) { return detail::severity(a) > detail::severity(b); });
+            const bool explained = std::any_of(c.rows.cbegin(), c.rows.cend(), [](const Row &r) { return r.status != Status::Ready && !detail::derived(r); });
+            bool keptOne = false;
+            c.rows.removeIf([&](const Row &r) {
+                if (!detail::derived(r))
+                    return false;
+                if (explained || keptOne)
+                    return true;
+                keptOne = true; // the most severe, since the rows are sorted
+                return false;
+            });
+            if (!c.rows.isEmpty())
+            {
+                c.status = c.rows.first().status;
+                c.informational = c.status != Status::Ready && c.rows.first().category == Category::Info;
+            }
+        }
+        return out;
+    }
+
+    inline QStringList overrideOptions(const QString &details)
+    {
+        static const std::pair<const char *, const char *> options[] = {
+            {"network", "--share=network"},
+            {"bluetooth", "--allow=bluetooth"},
+            {"bluez", "--system-talk-name=org.bluez"},
+            {"networkmanager", "--system-talk-name=org.freedesktop.NetworkManager"},
+            {"firewalld", "--system-talk-name=org.fedoraproject.FirewallD1"},
+            {"polkit", "--system-talk-name=org.freedesktop.PolicyKit1"},
+        };
+        const QLatin1String prefix("missing:");
+        const QString words = details.startsWith(prefix) ? details.mid(prefix.size()) : details;
+        QStringList out;
+        for (const QString &word : words.split(QLatin1Char(' '), Qt::SkipEmptyParts))
+        {
+            for (const auto &[name, option] : options)
+            {
+                const QString text = QLatin1String(option);
+                if (word == QLatin1String(name) && !out.contains(text))
+                {
+                    out << text;
+                }
+            }
+        }
+        return out;
     }
 
     inline QString formatReport(const Parsed &report, const QString &shellVersion, bool stale)

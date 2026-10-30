@@ -3,10 +3,11 @@
 //! It makes only these calls: `NameHasOwner` and `ListActivatableNames` (the bus), `Get`/`GetAll`
 //! (properties), `GetManagedObjects` (BlueZ), `GetDevices` and each device's `DeviceType`,
 //! `GetPermissions` (NetworkManager), `Adapter1.GetDiscoveryFilters`, firewalld's `getZones`, and
-//! polkit's `CheckAuthorization` with flags 0 (no interaction; native installs only, with our own
-//! bus name as the subject). It also reads `/.flatpak-info`, `/proc/net/protocols` and looks for
-//! `dnsmasq` at the standard paths. Nothing here creates a connection, starts a scan, changes the
-//! state of a radio, or prompts for credentials. Every call is bounded by the run's `Budget`.
+//! polkit's `CheckAuthorization` with flags 0 (no interaction), with our own bus name as the
+//! subject: the one firewalld checks for our calls. It also reads `/.flatpak-info`,
+//! `/proc/net/protocols` and, outside a Flatpak, looks for `dnsmasq` at the standard paths.
+//! Nothing here creates a connection, starts a scan, changes the state of a radio, or prompts for
+//! credentials. Every call is bounded by the run's `Budget`.
 //!
 //! Proxies are built with `CacheProperties::No`: no property cache is started, so they neither
 //! subscribe to signals nor read more than they are asked. Every call to a service other than the
@@ -46,12 +47,11 @@ const NM_PATH: &str = "/org/freedesktop/NetworkManager";
 const FIREWALLD: &str = "org.fedoraproject.FirewallD1";
 const FIREWALLD_PATH: &str = "/org/fedoraproject/FirewallD1";
 const POLKIT: &str = "org.freedesktop.PolicyKit1";
-/// The action firewalld asks polkit about for runtime changes *(inferred from firewalld's policy
-/// file, not checked on a running system)*.
-const FIREWALL_ACTION: &str = "org.fedoraproject.FirewallD1.all";
-/// The action firewalld's own polkit rule requires for `getZones` (read-only, but guarded, so
-/// it may prompt): checked first, with flags 0, and the call is made only when it is allowed
-/// *(inferred, as above)*.
+/// The action firewalld requires for `addPort`, the call the runtime opens the hotspot port with
+/// (from firewalld 2.5.2's D-Bus server source; no test checks it against a running firewalld).
+const FIREWALL_ACTION: &str = "org.fedoraproject.FirewallD1.config";
+/// The action firewalld requires for `getZones` (read-only, but guarded, so it may prompt):
+/// checked first, with flags 0, and the call is made only when it is allowed (same source).
 const FIREWALL_INFO_ACTION: &str = "org.fedoraproject.FirewallD1.info";
 const FLATPAK_INFO: &str = "/.flatpak-info";
 /// Where NetworkManager looks for the `dnsmasq` it runs for connection sharing.
@@ -249,22 +249,19 @@ impl RequirementsProbe for SystemRequirementsProbe {
         }
         // polkit is asked first and only when it runs: `getZones` is guarded by firewalld's
         // `info` action and could prompt, so it is called only when that is allowed. Where polkit
-        // cannot be asked (a Flatpak sandbox, no polkit) the zones stay unread.
-        let (mut zones, polkit) = if self.packaging == Packaging::Flatpak {
-            (Obs::Missing, Obs::Missing)
-        } else {
-            match name_state(&conn, POLKIT, &b).await {
-                Obs::Got(NameState::Owned) => {
-                    let info = check_authorization(&conn, &b, FIREWALL_INFO_ACTION).await;
-                    let zones = if matches!(info, Obs::Got(PolkitVerdict::Authorized)) {
-                        read_zones(&conn, &b).await
-                    } else {
-                        Obs::Missing
-                    };
-                    (zones, check_authorization(&conn, &b, FIREWALL_ACTION).await)
-                }
-                other => (Obs::Missing, carry(&other)),
+        // cannot be asked (not running, or hidden by a sandbox without its talk permission) the
+        // zones stay unread.
+        let (mut zones, polkit) = match name_state(&conn, POLKIT, &b).await {
+            Obs::Got(NameState::Owned) => {
+                let info = check_authorization(&conn, &b, FIREWALL_INFO_ACTION).await;
+                let zones = if matches!(info, Obs::Got(PolkitVerdict::Authorized)) {
+                    read_zones(&conn, &b).await
+                } else {
+                    Obs::Missing
+                };
+                (zones, check_authorization(&conn, &b, FIREWALL_ACTION).await)
             }
+            other => (Obs::Missing, carry(&other)),
         };
         let mut name = name;
         if gone(&zones) {

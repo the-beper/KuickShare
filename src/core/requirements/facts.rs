@@ -224,8 +224,8 @@ pub struct FirewallFacts {
     pub name: Obs<NameState>,
     /// `org.fedoraproject.FirewallD1.zone.getZones`.
     pub zones: Obs<Vec<String>>,
-    /// The check of firewalld's action for runtime changes. `Missing` in a Flatpak sandbox (no
-    /// way to ask polkit from there).
+    /// The check of the action firewalld requires for `addPort`. `Missing` when polkit is not
+    /// running, or is hidden by a Flatpak sandbox without its talk permission.
     pub polkit: Obs<PolkitVerdict>,
 }
 

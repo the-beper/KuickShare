@@ -52,7 +52,8 @@ FormCard.FormCardPage {
         core: page.core
     }
 
-    // The summary shows the last report; the core answers from its cache while it is fresh.
+    // The switch and the description of "Check system requirements…" follow the last report; the core answers from
+    // its cache while it is fresh.
     Component.onCompleted: {
         if (page.core.connected) {
             page.core.loadWifiRequirements();
@@ -64,11 +65,6 @@ FormCard.FormCardPage {
         function onConnectedChanged() {
             if (page.core.connected) {
                 page.core.loadWifiRequirements();
-            }
-        }
-        function onWifiUpgradeRefused(reason) {
-            if (reason === "requirements_blocked") {
-                blockedDialog.open();
             }
         }
     }
@@ -164,6 +160,16 @@ FormCard.FormCardPage {
         text: KI18n.i18n("Wi-Fi Direct")
     }
     FormCard.FormCard {
+        id: wifiCard
+
+        readonly property var wr: page.core.wifiRequirements
+        readonly property bool hasReport: wr.valid === true
+        readonly property string sending: hasReport ? wr.capabilities.sending.status : ""
+        readonly property string receiving: hasReport ? wr.capabilities.receiving.status : ""
+        // The rule the core refuses the setting by: neither direction can work. A report that is only old still
+        // counts (the core pushes changes), one followed by an error does not.
+        readonly property bool blocked: !wr.error && sending === "unavailable" && receiving === "unavailable"
+
         maximumWidth: width - 1
         FormCard.FormSwitchDelegate {
             id: wifiSwitch
@@ -171,7 +177,8 @@ FormCard.FormCardPage {
             text: KI18n.i18n("Receive and send without a shared network")
             description: KI18n.i18n("Be found over Bluetooth and move the transfer to a temporary Wi-Fi link")
             checked: page.core.wifiUpgrade
-            enabled: page.core.connected
+            // Off and greyed out while nothing can work; a setting that is already on can still be turned off.
+            enabled: page.core.connected && (!wifiCard.blocked || page.core.wifiUpgrade)
             onToggled: {
                 if (checked) {
                     page.core.enableWifiUpgrade();
@@ -183,40 +190,43 @@ FormCard.FormCardPage {
                 wifiSwitch.checked = Qt.binding(() => page.core.wifiUpgrade);
             }
         }
-        FormCard.FormTextDelegate {
-            readonly property var wr: page.core.wifiRequirements
-
-            icon.name: "dialog-information-symbolic"
-            text: KI18n.i18n("System requirements")
-            description: {
-                if (!page.core.connected || wr.error === "unavailable") {
-                    return KI18n.i18n("KuickShare service unavailable");
-                }
-                if (wr.valid !== true) {
-                    return KI18n.i18n("Not checked yet");
-                }
-                return KI18n.i18n("Sending: %1, receiving: %2, joining networks: %3", wr.capabilities.sending.label, wr.capabilities.receiving.label, wr.capabilities.joinNetwork.label);
-            }
-        }
-        // Always reachable, also when the switch is disabled.
+        // Always reachable, also when the switch is disabled; the description sums up the last check.
         FormCard.FormButtonDelegate {
             icon.name: "view-list-details"
             text: KI18n.i18n("Check system requirements…")
-            description: KI18n.i18n("See what this computer needs for Wi-Fi Direct")
+            description: {
+                const wr = wifiCard.wr;
+                if (!page.core.connected || wr.error === "unavailable") {
+                    return KI18n.i18n("KuickShare service unavailable");
+                }
+                if (wr.error === "schema") {
+                    return KI18n.i18n("The result could not be read. Refresh to try again");
+                }
+                if (!wifiCard.hasReport) {
+                    return KI18n.i18n("See what this computer needs for Wi-Fi Direct");
+                }
+                if (wifiCard.blocked) {
+                    return KI18n.i18n("Neither sending nor receiving can work on this computer");
+                }
+                // "Works" only when the other direction was checked and can work.
+                const works = s => s === "available" || s === "degraded";
+                if (wifiCard.receiving === "unavailable" && works(wifiCard.sending)) {
+                    return KI18n.i18n("Only sending works on this computer");
+                }
+                if (wifiCard.sending === "unavailable" && works(wifiCard.receiving)) {
+                    return KI18n.i18n("Only receiving works on this computer");
+                }
+                const statuses = [wifiCard.sending, wifiCard.receiving, wr.capabilities.joinNetwork.status];
+                if (statuses.every(s => s === "available")) {
+                    return KI18n.i18n("Everything Wi-Fi Direct needs is available");
+                }
+                if (statuses.includes("unknown")) {
+                    return KI18n.i18n("Some items could not be checked");
+                }
+                return KI18n.i18n("Some items need attention");
+            }
             onClicked: requirementsDialog.open()
         }
-    }
-    // One direction works: the switch stays usable, with this warning.
-    MessageBox {
-        readonly property var wr: page.core.wifiRequirements
-        readonly property bool canSend: wr.valid === true && wr.capabilities.sending.status !== "unavailable"
-        readonly property bool canReceive: wr.valid === true && wr.capabilities.receiving.status !== "unavailable"
-
-        visible: wr.valid === true && canSend !== canReceive
-        type: Kirigami.MessageType.Warning
-        text: canSend ? KI18n.i18n("Only sending works on this computer. See the system requirements") : KI18n.i18n("Only receiving works on this computer. See the system requirements")
-        Layout.fillWidth: true
-        Layout.topMargin: Kirigami.Units.largeSpacing
     }
     // Experimental and with side effects, so a warning box like the one under Trusted devices.
     MessageBox {
@@ -430,28 +440,6 @@ FormCard.FormCardPage {
         onAccepted: page.core.requestWifiUpgrade(true, true)
         // The switch was toggled by hand: show the real setting again.
         onClosed: wifiSwitch.checked = Qt.binding(() => page.core.wifiUpgrade)
-    }
-    // The core refused to turn the upgrade on: neither direction can work now.
-    Kirigami.PromptDialog {
-        id: blockedDialog
-        title: KI18n.i18n("Wi-Fi Direct is not fully available")
-        subtitle: KI18n.i18n("Neither sending nor receiving can work on this computer now. The system requirements show what is missing")
-        standardButtons: Kirigami.Dialog.NoButton
-        customFooterActions: [
-            Kirigami.Action {
-                text: KI18n.i18n("View requirements")
-                icon.name: "view-list-details"
-                onTriggered: {
-                    blockedDialog.close();
-                    requirementsDialog.open();
-                }
-            },
-            Kirigami.Action {
-                text: KI18n.i18n("Close")
-                icon.name: "window-close"
-                onTriggered: blockedDialog.close()
-            }
-        ]
     }
     Kirigami.PromptDialog {
         id: resetDialog

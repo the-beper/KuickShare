@@ -21,6 +21,8 @@ finish-args:
   # Wi-Fi upgrade: hotspot and join through NetworkManager (off unless enabled in the settings).
   - --system-talk-name=org.freedesktop.NetworkManager
   - --system-talk-name=org.fedoraproject.FirewallD1
+  # Requirements check only: asks, without interaction, if firewalld lets this user open the hotspot port.
+  - --system-talk-name=org.freedesktop.PolicyKit1
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.kde.JobViewServer

@@ -97,7 +97,7 @@ static META: &[Meta] = &[
     Meta { id: "nm.permissions", category: Category::Critical, affects: SRJ, verification: "GetPermissions without interaction" },
     Meta { id: "wifi.client", category: Category::Critical, affects: SJ, verification: "The NetworkManager rows above and the sandbox network permission" },
     Meta { id: "wifi.ap", category: Category::Critical, affects: R, verification: "Device WirelessCapabilities and the wifi.share.protected permission" },
-    Meta { id: "wifi.dhcp", category: Category::Critical, affects: R, verification: "dnsmasq at the standard paths, or a hotspot that started this session" },
+    Meta { id: "wifi.dhcp", category: Category::Critical, affects: R, verification: "dnsmasq at the standard paths (not looked for in a Flatpak), or a hotspot that started this session" },
     Meta { id: "firewall.integration", category: Category::Security, affects: R, verification: "firewalld name, zone list and polkit CheckAuthorization without interaction" },
     Meta { id: "sandbox.permissions", category: Category::Security, affects: NONE, verification: "/.flatpak-info" },
 ];
@@ -751,8 +751,14 @@ fn wifi_dhcp_row(f: &Facts, ev: &SessionEvidence) -> Requirement {
             wifi_interface(&f.nm),
         );
     }
+    // The host's /usr cannot be seen from a sandbox: an Info row, so what cannot be looked for
+    // does not lower receiving. The first hotspot settles it, and a failed start still gives the
+    // critical `shared_start_failed` above.
     if f.packaging == Packaging::Flatpak {
-        return unknown_row(id, "sandbox_unobservable");
+        return Requirement {
+            category: Category::Info,
+            ..unknown_row(id, "sandbox_unobservable")
+        };
     }
     match &f.dhcp.dnsmasq {
         Obs::Got(true) => ready_with(id, "binary_present"),
@@ -792,12 +798,7 @@ fn firewall_from_facts(f: &Facts) -> Requirement {
                 Obs::Got(z) => !z.iter().any(|n| n == "nm-shared"),
                 _ => false,
             };
-            let polkit = if f.packaging == Packaging::Flatpak {
-                &Obs::Missing
-            } else {
-                &fw.polkit
-            };
-            match polkit {
+            match &fw.polkit {
                 Obs::Got(PolkitVerdict::Denied) => {
                     req(id, Status::Blocked, "permission_denied", "", None)
                 }
@@ -867,6 +868,7 @@ fn sandbox_row(f: &Facts) -> Option<Requirement> {
         ("org.bluez", "bluez"),
         ("org.freedesktop.NetworkManager", "networkmanager"),
         ("org.fedoraproject.FirewallD1", "firewalld"),
+        ("org.freedesktop.PolicyKit1", "polkit"),
     ] {
         if !c.can_talk(name) {
             missing.push(word);
@@ -1097,6 +1099,7 @@ mod tests {
                 "org.bluez".into(),
                 "org.freedesktop.NetworkManager".into(),
                 "org.fedoraproject.FirewallD1".into(),
+                "org.freedesktop.PolicyKit1".into(),
             ],
             features: vec!["bluetooth".into()],
             shared: vec!["network".into()],
@@ -1104,8 +1107,14 @@ mod tests {
             sockets: vec![],
         });
         let rows = evaluate(&f, &SessionEvidence::default());
-        assert_eq!(find(&rows, "wifi.dhcp").reason_code, "sandbox_unobservable");
-        assert_eq!(derive(&rows).receiving, CapabilityStatus::Unknown);
+        let dhcp = find(&rows, "wifi.dhcp");
+        assert_eq!(
+            (dhcp.status, dhcp.reason_code.as_str()),
+            (Status::Unknown, "sandbox_unobservable")
+        );
+        // Info: what cannot be looked for from a sandbox does not lower receiving.
+        assert_eq!(dhcp.category, Category::Info);
+        assert_eq!(derive(&rows).receiving, CapabilityStatus::Available);
         assert_eq!(derive(&rows).sending, CapabilityStatus::Available);
     }
 

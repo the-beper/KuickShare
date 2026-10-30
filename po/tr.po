@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-29 14:38+0000\n"
+"POT-Creation-Date: 2026-10-29 15:55+0000\n"
 "PO-Revision-Date: 2026-10-25 22:10+0300\n"
 "Last-Translator: dosulu <eray.ulu@tutamail.com>\n"
 "Language-Team: Turkish\n"
@@ -58,667 +58,621 @@ msgstr "Teklif geçersiz"
 msgid "The offer was refused"
 msgstr "Teklif reddedildi"
 
-#: src/shell/corebridge.cpp:648
-msgid "Bluetooth service (BlueZ)"
-msgstr "Bluetooth servisi (BlueZ)"
+#: src/shell/corebridge.cpp:649
+msgid "Bluetooth (BlueZ)"
+msgstr "Bluetooth (BlueZ)"
 
-#: src/shell/corebridge.cpp:651
-msgid "Bluetooth adapter"
-msgstr "Bluetooth adaptörü"
-
-#: src/shell/corebridge.cpp:654
-msgid "Bluetooth power"
-msgstr "Bluetooth gücü"
-
-#: src/shell/corebridge.cpp:657
-msgid "Bluetooth Low Energy"
-msgstr "Bluetooth Low Energy"
-
-#: src/shell/corebridge.cpp:660
-msgid "Bluetooth advertising"
-msgstr "Bluetooth duyurusu"
-
-#: src/shell/corebridge.cpp:663
-msgid "Bluetooth scanning"
-msgstr "Bluetooth taraması"
-
-#: src/shell/corebridge.cpp:666
-msgid "Bluetooth GATT services"
-msgstr "Bluetooth GATT servisleri"
-
-#: src/shell/corebridge.cpp:669
-msgid "Bluetooth fast channel (L2CAP)"
-msgstr "Bluetooth hızlı kanal (L2CAP)"
-
-#: src/shell/corebridge.cpp:672
+#: src/shell/corebridge.cpp:652
 msgid "NetworkManager"
 msgstr "NetworkManager"
 
-#: src/shell/corebridge.cpp:675
-msgid "Networking switch"
-msgstr "Ağ anahtarı"
-
-#: src/shell/corebridge.cpp:678
-msgid "Wi-Fi switch"
-msgstr "Wi-Fi anahtarı"
-
-#: src/shell/corebridge.cpp:681
-msgid "Wi-Fi radio switch"
-msgstr "Wi-Fi radyo anahtarı"
-
-#: src/shell/corebridge.cpp:684
+#: src/shell/corebridge.cpp:655
 msgid "Wi-Fi adapter"
 msgstr "Wi-Fi adaptörü"
 
-#: src/shell/corebridge.cpp:687
-msgid "Wi-Fi adapter management"
-msgstr "Wi-Fi adaptörü yönetimi"
-
-#: src/shell/corebridge.cpp:690
-msgid "Wi-Fi adapter firmware"
-msgstr "Wi-Fi adaptörü donanım yazılımı"
-
-#: src/shell/corebridge.cpp:693
-msgid "Wi-Fi adapter driver"
-msgstr "Wi-Fi adaptörü sürücüsü"
-
-#: src/shell/corebridge.cpp:696
-msgid "NetworkManager permissions"
-msgstr "NetworkManager izinleri"
-
-#: src/shell/corebridge.cpp:699
-msgid "Wi-Fi client mode"
-msgstr "Wi-Fi istemci modu"
-
-#: src/shell/corebridge.cpp:702
-msgid "Wi-Fi hotspot mode"
-msgstr "Wi-Fi hotspot modu"
-
-#: src/shell/corebridge.cpp:705
+#: src/shell/corebridge.cpp:658
 msgid "Hotspot addresses (dnsmasq)"
 msgstr "Hotspot adresleri (dnsmasq)"
 
-#: src/shell/corebridge.cpp:708
+#: src/shell/corebridge.cpp:661
 msgid "Firewall (firewalld)"
 msgstr "Güvenlik duvarı (firewalld)"
 
-#: src/shell/corebridge.cpp:711
+#: src/shell/corebridge.cpp:664
 msgid "Flatpak permissions"
 msgstr "Flatpak izinleri"
 
-#: src/shell/corebridge.cpp:726
-msgid "Nothing is missing"
-msgstr "Eksik bir şey yok"
-
-#: src/shell/corebridge.cpp:729
+#: src/shell/corebridge.cpp:679
 msgid "The check took too long"
 msgstr "Kontrol çok uzun sürdü"
 
-#: src/shell/corebridge.cpp:729
+#: src/shell/corebridge.cpp:679
 msgid ""
 "Refresh to check again; if it keeps happening, the service it asks may be "
 "busy or stuck"
-msgstr "Yeniden kontrol etmek için yenileyin; bu durum sürerse, sorgulanan servis meşgul ya da takılmış olabilir"
+msgstr ""
+"Yeniden kontrol etmek için yenileyin; bu durum sürerse, sorgulanan servis "
+"meşgul ya da takılmış olabilir"
 
-#: src/shell/corebridge.cpp:732
+#: src/shell/corebridge.cpp:682
 msgid "The system message bus could not be reached"
 msgstr "Sistem mesaj veriyoluna ulaşılamadı"
 
-#: src/shell/corebridge.cpp:732
+#: src/shell/corebridge.cpp:682
 msgid "The check needs the system D-Bus; refresh to try again"
 msgstr "Kontrol sistem D-Bus’ını gerektiriyor; yeniden denemek için yenileyin"
 
-#: src/shell/corebridge.cpp:735
+#: src/shell/corebridge.cpp:685
 msgid "The service gave an answer that could not be understood"
 msgstr "Servis anlaşılamayan bir yanıt verdi"
 
-#: src/shell/corebridge.cpp:735
+#: src/shell/corebridge.cpp:685
 msgid "Refresh to try again; if it persists, update the service"
 msgstr "Yeniden denemek için yenileyin; sorun sürerse servisi güncelleyin"
 
-#: src/shell/corebridge.cpp:738
+#: src/shell/corebridge.cpp:688
 msgid "The check failed"
 msgstr "Kontrol başarısız oldu"
 
-#: src/shell/corebridge.cpp:738
+#: src/shell/corebridge.cpp:688
 msgid "Refresh to try again"
 msgstr "Yeniden denemek için yenileyin"
 
-#: src/shell/corebridge.cpp:741
+#: src/shell/corebridge.cpp:691
 msgid "Not checked, because something it depends on is not ready"
 msgstr "Bağlı olduğu bir şey hazır olmadığı için kontrol edilmedi"
 
-#: src/shell/corebridge.cpp:741
+#: src/shell/corebridge.cpp:691
 msgid "Fix the items that are blocked or unknown first"
 msgstr "Önce engellenen veya bilinmeyen öğeleri düzeltin"
 
-#: src/shell/corebridge.cpp:746
+#: src/shell/corebridge.cpp:696
 msgid "The Bluetooth service is not running"
 msgstr "Bluetooth servisi çalışmıyor"
 
-#: src/shell/corebridge.cpp:746
+#: src/shell/corebridge.cpp:696
 msgid ""
 "Start the Bluetooth service; if BlueZ is not installed, install it first"
 msgstr "Bluetooth servisini başlatın; BlueZ kurulu değilse önce onu kurun"
 
-#: src/shell/corebridge.cpp:749
+#: src/shell/corebridge.cpp:699
 msgid "The Bluetooth service is installed but not running"
 msgstr "Bluetooth servisi kurulu ama çalışmıyor"
 
-#: src/shell/corebridge.cpp:749 src/shell/corebridge.cpp:802
+#: src/shell/corebridge.cpp:699 src/shell/corebridge.cpp:752
 msgid "It starts when something needs it; to start it now, use the command"
-msgstr "Gerektiğinde kendiliğinden başlar; şimdi başlatmak için komutu kullanın"
+msgstr ""
+"Gerektiğinde kendiliğinden başlar; şimdi başlatmak için komutu kullanın"
 
-#: src/shell/corebridge.cpp:752
+#: src/shell/corebridge.cpp:702
 msgid "The sandbox hides the Bluetooth service"
 msgstr "Sandbox Bluetooth servisini gizliyor"
 
-#: src/shell/corebridge.cpp:752
+#: src/shell/corebridge.cpp:702
 msgid "Allow the sandbox to talk to BlueZ, then restart KuickShare"
-msgstr "Sandbox’un BlueZ ile iletişim kurmasına izin verin, sonra KuickShare’i yeniden başlatın"
+msgstr ""
+"Sandbox’un BlueZ ile iletişim kurmasına izin verin, sonra KuickShare’i "
+"yeniden başlatın"
 
-#: src/shell/corebridge.cpp:756
+#: src/shell/corebridge.cpp:706
 msgid "No Bluetooth adapter was found"
 msgstr "Bluetooth adaptörü bulunamadı"
 
-#: src/shell/corebridge.cpp:756
+#: src/shell/corebridge.cpp:706
 msgid ""
 "Plug in or enable a Bluetooth adapter; if one is installed, check that its "
 "driver is loaded"
-msgstr "Bir Bluetooth adaptörü takın veya etkinleştirin; zaten takılıysa sürücüsünün yüklendiğini kontrol edin"
+msgstr ""
+"Bir Bluetooth adaptörü takın veya etkinleştirin; zaten takılıysa sürücüsünün "
+"yüklendiğini kontrol edin"
 
-#: src/shell/corebridge.cpp:760
+#: src/shell/corebridge.cpp:710
 msgid "The Bluetooth adapter is turned off"
 msgstr "Bluetooth adaptörü kapalı"
 
-#: src/shell/corebridge.cpp:760
+#: src/shell/corebridge.cpp:710
 msgid ""
 "KuickShare turns it on when it needs it; you can also turn Bluetooth on in "
 "the system settings"
-msgstr "KuickShare gerektiğinde onu açar; Bluetooth’u sistem ayarlarından da açabilirsiniz"
+msgstr ""
+"KuickShare gerektiğinde onu açar; Bluetooth’u sistem ayarlarından da "
+"açabilirsiniz"
 
-#: src/shell/corebridge.cpp:763
+#: src/shell/corebridge.cpp:713
 msgid "Blocked by a radio switch"
 msgstr "Bir radyo anahtarı tarafından engellendi"
 
-#: src/shell/corebridge.cpp:763
+#: src/shell/corebridge.cpp:713
 msgid "Turn Bluetooth on in the system settings"
 msgstr "Bluetooth’u sistem ayarlarından açın"
 
-#: src/shell/corebridge.cpp:767
+#: src/shell/corebridge.cpp:717
 msgid "The Bluetooth adapter does not support Bluetooth Low Energy"
 msgstr "Bluetooth adaptörü Bluetooth Low Energy desteklemiyor"
 
-#: src/shell/corebridge.cpp:767
+#: src/shell/corebridge.cpp:717
 msgid "Use an adapter that supports Bluetooth 4.0 or newer"
 msgstr "Bluetooth 4.0 veya daha yenisini destekleyen bir adaptör kullanın"
 
-#: src/shell/corebridge.cpp:770
+#: src/shell/corebridge.cpp:720
 msgid "BlueZ does not report what the adapter can do"
 msgstr "BlueZ, adaptörün neler yapabildiğini bildirmiyor"
 
-#: src/shell/corebridge.cpp:770 src/shell/corebridge.cpp:784
+#: src/shell/corebridge.cpp:720 src/shell/corebridge.cpp:734
 msgid "This may still work; a newer BlueZ reports it"
 msgstr "Yine de çalışabilir; daha yeni bir BlueZ bunu bildirir"
 
-#: src/shell/corebridge.cpp:774
+#: src/shell/corebridge.cpp:724
 msgid "The Bluetooth adapter cannot advertise"
 msgstr "Bluetooth adaptörü duyuru yapamıyor"
 
-#: src/shell/corebridge.cpp:774
+#: src/shell/corebridge.cpp:724
 msgid ""
 "Receiving by Bluetooth needs an adapter that can advertise; sending is not "
 "affected"
-msgstr "Bluetooth ile almak duyuru yapabilen bir adaptör gerektirir; göndermeye etkisi yoktur"
+msgstr ""
+"Bluetooth ile almak duyuru yapabilen bir adaptör gerektirir; göndermeye "
+"etkisi yoktur"
 
-#: src/shell/corebridge.cpp:777
+#: src/shell/corebridge.cpp:727
 msgid "The adapter has no free advertising slot now"
 msgstr "Adaptörde şu an boş duyuru yuvası yok"
 
-#: src/shell/corebridge.cpp:777
+#: src/shell/corebridge.cpp:727
 msgid "Another program uses them; close it and refresh"
 msgstr "Başka bir program bunları kullanıyor; onu kapatıp yenileyin"
 
-#: src/shell/corebridge.cpp:781
+#: src/shell/corebridge.cpp:731
 msgid "The Bluetooth adapter cannot scan for devices"
 msgstr "Bluetooth adaptörü cihazları tarayamıyor"
 
-#: src/shell/corebridge.cpp:781
+#: src/shell/corebridge.cpp:731
 msgid "Sending needs an adapter that can scan; use another one"
 msgstr "Göndermek, tarayabilen bir adaptör gerektirir; başka birini kullanın"
 
-#: src/shell/corebridge.cpp:784
+#: src/shell/corebridge.cpp:734
 msgid "BlueZ does not report how the adapter can scan"
 msgstr "BlueZ, adaptörün nasıl tarama yapabildiğini bildirmiyor"
 
-#: src/shell/corebridge.cpp:788
+#: src/shell/corebridge.cpp:738
 msgid "BlueZ offers no GATT services"
 msgstr "BlueZ GATT servisi sunmuyor"
 
-#: src/shell/corebridge.cpp:788
+#: src/shell/corebridge.cpp:738
 msgid "Update BlueZ to a version with GATT support"
 msgstr "BlueZ’u GATT desteği olan bir sürüme güncelleyin"
 
-#: src/shell/corebridge.cpp:792
+#: src/shell/corebridge.cpp:742
 msgid "The sandbox does not allow Bluetooth sockets"
 msgstr "Sandbox Bluetooth soketlerine izin vermiyor"
 
-#: src/shell/corebridge.cpp:792
+#: src/shell/corebridge.cpp:742
 msgid ""
 "Transfers still work over a slower path; allow Bluetooth for the Flatpak to "
 "use the faster one"
-msgstr "Paylaşımlar hâlâ daha yavaş bir yoldan çalışır; daha hızlı olanı kullanmak için Flatpak’ın Bluetooth’a erişmesine izin verin"
+msgstr ""
+"Paylaşımlar hâlâ daha yavaş bir yoldan çalışır; daha hızlı olanı kullanmak "
+"için Flatpak’ın Bluetooth’a erişmesine izin verin"
 
-#: src/shell/corebridge.cpp:795
+#: src/shell/corebridge.cpp:745
 msgid "The kernel does not report Bluetooth socket support"
 msgstr "Çekirdek Bluetooth soket desteğini bildirmiyor"
 
-#: src/shell/corebridge.cpp:795
+#: src/shell/corebridge.cpp:745
 msgid "Transfers still work over a slower path if it is missing"
 msgstr "Eksikse paylaşımlar yine de daha yavaş bir yoldan çalışır"
 
-#: src/shell/corebridge.cpp:799
+#: src/shell/corebridge.cpp:749
 msgid "NetworkManager is not running"
 msgstr "NetworkManager çalışmıyor"
 
-#: src/shell/corebridge.cpp:799
+#: src/shell/corebridge.cpp:749
 msgid ""
 "Wi-Fi Direct needs NetworkManager; start it, or install it if this computer "
 "uses another network tool"
-msgstr "Wi-Fi Direct, NetworkManager gerektirir; onu başlatın ya da bu bilgisayar başka bir ağ aracı kullanıyorsa kurun"
+msgstr ""
+"Wi-Fi Direct, NetworkManager gerektirir; onu başlatın ya da bu bilgisayar "
+"başka bir ağ aracı kullanıyorsa kurun"
 
-#: src/shell/corebridge.cpp:802
+#: src/shell/corebridge.cpp:752
 msgid "NetworkManager is installed but not running"
 msgstr "NetworkManager kurulu ama çalışmıyor"
 
-#: src/shell/corebridge.cpp:805
+#: src/shell/corebridge.cpp:755
 msgid "The sandbox hides NetworkManager"
 msgstr "Sandbox NetworkManager’ı gizliyor"
 
-#: src/shell/corebridge.cpp:805
+#: src/shell/corebridge.cpp:755
 msgid "Allow the sandbox to talk to NetworkManager, then restart KuickShare"
-msgstr "Sandbox’un NetworkManager ile iletişim kurmasına izin verin, sonra KuickShare’i yeniden başlatın"
+msgstr ""
+"Sandbox’un NetworkManager ile iletişim kurmasına izin verin, sonra "
+"KuickShare’i yeniden başlatın"
 
-#: src/shell/corebridge.cpp:809
+#: src/shell/corebridge.cpp:759
 msgid "Networking is turned off in NetworkManager"
 msgstr "NetworkManager’da ağ kapalı"
 
-#: src/shell/corebridge.cpp:809
+#: src/shell/corebridge.cpp:759
 msgid "Turn networking on in the network settings"
 msgstr "Ağı ağ ayarlarından açın"
 
-#: src/shell/corebridge.cpp:813
+#: src/shell/corebridge.cpp:763
 msgid "Wi-Fi is turned off"
 msgstr "Wi-Fi kapalı"
 
-#: src/shell/corebridge.cpp:813
+#: src/shell/corebridge.cpp:763
 msgid "Turn Wi-Fi on in the system settings"
 msgstr "Wi-Fi’yi sistem ayarlarından açın"
 
-#: src/shell/corebridge.cpp:817
+#: src/shell/corebridge.cpp:767
 msgid "A hardware switch has turned the Wi-Fi radio off"
 msgstr "Bir donanım anahtarı Wi-Fi radyosunu kapattı"
 
-#: src/shell/corebridge.cpp:817
+#: src/shell/corebridge.cpp:767
 msgid "Use the Wi-Fi switch or key of this computer"
 msgstr "Bu bilgisayardaki Wi-Fi anahtarını veya tuşunu kullanın"
 
-#: src/shell/corebridge.cpp:821
+#: src/shell/corebridge.cpp:771
 msgid "There are several Wi-Fi adapters; the first one is used"
 msgstr "Birden çok Wi-Fi adaptörü var; ilki kullanılıyor"
 
-#: src/shell/corebridge.cpp:821
+#: src/shell/corebridge.cpp:771
 msgid "If transfers fail, turn off the adapters you do not need"
 msgstr "Paylaşımlar başarısız olursa, ihtiyacınız olmayan adaptörleri kapatın"
 
-#: src/shell/corebridge.cpp:824
+#: src/shell/corebridge.cpp:774
 msgid "No Wi-Fi adapter was found"
 msgstr "Wi-Fi adaptörü bulunamadı"
 
-#: src/shell/corebridge.cpp:824
+#: src/shell/corebridge.cpp:774
 msgid ""
 "Plug in a Wi-Fi adapter, or check that the driver of the built-in one is "
 "loaded"
-msgstr "Bir Wi-Fi adaptörü takın ya da yerleşik olanın sürücüsünün yüklendiğini kontrol edin"
+msgstr ""
+"Bir Wi-Fi adaptörü takın ya da yerleşik olanın sürücüsünün yüklendiğini "
+"kontrol edin"
 
-#: src/shell/corebridge.cpp:828
+#: src/shell/corebridge.cpp:778
 msgid "NetworkManager does not manage the Wi-Fi adapter"
 msgstr "NetworkManager Wi-Fi adaptörünü yönetmiyor"
 
-#: src/shell/corebridge.cpp:828
+#: src/shell/corebridge.cpp:778
 msgid ""
 "Let NetworkManager manage it: another network tool or an unmanaged-devices "
 "setting may be holding it"
-msgstr "NetworkManager’ın onu yönetmesine izin verin: başka bir ağ aracı ya da yönetilmeyen cihazlar ayarı onu tutuyor olabilir"
+msgstr ""
+"NetworkManager’ın onu yönetmesine izin verin: başka bir ağ aracı ya da "
+"yönetilmeyen cihazlar ayarı onu tutuyor olabilir"
 
-#: src/shell/corebridge.cpp:832
+#: src/shell/corebridge.cpp:782
 msgid "The Wi-Fi adapter needs firmware that is not installed"
 msgstr "Wi-Fi adaptörü, kurulu olmayan bir donanım yazılımına ihtiyaç duyuyor"
 
-#: src/shell/corebridge.cpp:832
+#: src/shell/corebridge.cpp:782
 msgid ""
 "Install the firmware package for the adapter (often linux-firmware), then "
 "restart the computer"
-msgstr "Adaptör için donanım yazılımı paketini (çoğunlukla linux-firmware) kurun, sonra bilgisayarı yeniden başlatın"
+msgstr ""
+"Adaptör için donanım yazılımı paketini (çoğunlukla linux-firmware) kurun, "
+"sonra bilgisayarı yeniden başlatın"
 
-#: src/shell/corebridge.cpp:836
+#: src/shell/corebridge.cpp:786
 msgid "The NetworkManager plugin for the Wi-Fi adapter is missing"
 msgstr "Wi-Fi adaptörü için NetworkManager eklentisi eksik"
 
-#: src/shell/corebridge.cpp:836
+#: src/shell/corebridge.cpp:786
 msgid ""
 "Install the NetworkManager Wi-Fi plugin package of your distribution, then "
 "restart NetworkManager"
-msgstr "Dağıtımınızın NetworkManager Wi-Fi eklenti paketini kurun, sonra NetworkManager’ı yeniden başlatın"
+msgstr ""
+"Dağıtımınızın NetworkManager Wi-Fi eklenti paketini kurun, sonra "
+"NetworkManager’ı yeniden başlatın"
 
-#: src/shell/corebridge.cpp:839
+#: src/shell/corebridge.cpp:789
 msgid "NetworkManager reports the Wi-Fi adapter as unavailable"
 msgstr "NetworkManager, Wi-Fi adaptörünü kullanılamaz olarak bildiriyor"
 
-#: src/shell/corebridge.cpp:839
+#: src/shell/corebridge.cpp:789
 msgid "Check that its driver loaded and its radio is on"
 msgstr "Sürücüsünün yüklendiğini ve radyosunun açık olduğunu kontrol edin"
 
-#: src/shell/corebridge.cpp:843
+#: src/shell/corebridge.cpp:793
 msgid "NetworkManager asks for authentication to control the network"
 msgstr "NetworkManager, ağı denetlemek için kimlik doğrulaması istiyor"
 
-#: src/shell/corebridge.cpp:843
+#: src/shell/corebridge.cpp:793
 msgid ""
 "The hotspot may prompt for a password or be refused; allow network control "
 "for your user in the PolicyKit settings"
-msgstr "Hotspot parola isteyebilir ya da reddedilebilir; PolicyKit ayarlarında kullanıcınız için ağ denetimine izin verin"
+msgstr ""
+"Hotspot parola isteyebilir ya da reddedilebilir; PolicyKit ayarlarında "
+"kullanıcınız için ağ denetimine izin verin"
 
-#: src/shell/corebridge.cpp:846
+#: src/shell/corebridge.cpp:796
 msgid "NetworkManager does not allow this user to control the network"
 msgstr "NetworkManager bu kullanıcının ağı denetlemesine izin vermiyor"
 
-#: src/shell/corebridge.cpp:846
+#: src/shell/corebridge.cpp:796
 msgid ""
 "Ask the administrator to allow network control and changes to system "
 "connections for your user"
-msgstr "Yöneticiye, kullanıcınız için ağ denetimine ve sistem bağlantılarında değişikliğe izin vermesini isteyin"
+msgstr ""
+"Yöneticiye, kullanıcınız için ağ denetimine ve sistem bağlantılarında "
+"değişikliğe izin vermesini isteyin"
 
-#: src/shell/corebridge.cpp:850
+#: src/shell/corebridge.cpp:800
 msgid "Joining Wi-Fi cannot work: something it needs is blocked"
 msgstr "Wi-Fi ağına katılma çalışamaz: ihtiyaç duyduğu bir şey engellenmiş"
 
-#: src/shell/corebridge.cpp:850
+#: src/shell/corebridge.cpp:800
 msgid "Fix the blocked items of NetworkManager and the Wi-Fi adapter"
 msgstr "Engellenen NetworkManager ve Wi-Fi adaptörü öğelerini düzeltin"
 
-#: src/shell/corebridge.cpp:853
+#: src/shell/corebridge.cpp:803
 msgid ""
 "It is not known whether joining Wi-Fi works: something it needs could not be "
 "checked"
-msgstr "Wi-Fi ağına katılmanın çalışıp çalışmadığı bilinmiyor: ihtiyaç duyduğu bir şey kontrol edilemedi"
+msgstr ""
+"Wi-Fi ağına katılmanın çalışıp çalışmadığı bilinmiyor: ihtiyaç duyduğu bir "
+"şey kontrol edilemedi"
 
-#: src/shell/corebridge.cpp:853
+#: src/shell/corebridge.cpp:803
 msgid "Refresh when the items above are sorted out"
 msgstr "Yukarıdaki öğeler düzeltildiğinde yenileyin"
 
-#: src/shell/corebridge.cpp:856 src/shell/corebridge.cpp:878
+#: src/shell/corebridge.cpp:806 src/shell/corebridge.cpp:828
 msgid "The sandbox has no network access"
 msgstr "Sandbox’un ağ erişimi yok"
 
-#: src/shell/corebridge.cpp:856 src/shell/corebridge.cpp:878
+#: src/shell/corebridge.cpp:806 src/shell/corebridge.cpp:828
 msgid "Allow the network for the Flatpak"
 msgstr "Flatpak için ağa erişime izin verin"
 
-#: src/shell/corebridge.cpp:860
+#: src/shell/corebridge.cpp:810
 msgid "The Wi-Fi adapter cannot create a hotspot"
 msgstr "Wi-Fi adaptörü bir hotspot oluşturamıyor"
 
-#: src/shell/corebridge.cpp:860
+#: src/shell/corebridge.cpp:810
 msgid ""
 "Receiving by Wi-Fi needs an adapter with access point mode; Bluetooth still "
 "works"
-msgstr "Wi-Fi ile almak erişim noktası modunu destekleyen bir adaptör gerektirir; Bluetooth yine de çalışır"
+msgstr ""
+"Wi-Fi ile almak erişim noktası modunu destekleyen bir adaptör gerektirir; "
+"Bluetooth yine de çalışır"
 
-#: src/shell/corebridge.cpp:863
+#: src/shell/corebridge.cpp:813
 msgid "The Wi-Fi adapter cannot protect a hotspot with WPA2"
 msgstr "Wi-Fi adaptörü hotspot’u WPA2 ile koruyamıyor"
 
-#: src/shell/corebridge.cpp:863
+#: src/shell/corebridge.cpp:813
 msgid "Receiving by Wi-Fi needs WPA2 on the adapter; Bluetooth still works"
 msgstr "Wi-Fi ile almak adaptörde WPA2 gerektirir; Bluetooth yine de çalışır"
 
-#: src/shell/corebridge.cpp:866
+#: src/shell/corebridge.cpp:816
 msgid "The Wi-Fi adapter reports no 2.4 GHz or 5 GHz band for a hotspot"
 msgstr "Wi-Fi adaptörü hotspot için 2,4 GHz veya 5 GHz bandı bildirmiyor"
 
-#: src/shell/corebridge.cpp:866
+#: src/shell/corebridge.cpp:816
 msgid "Receiving by Wi-Fi needs one of them; Bluetooth still works"
 msgstr "Wi-Fi ile almak bunlardan birini gerektirir; Bluetooth yine de çalışır"
 
-#: src/shell/corebridge.cpp:869
+#: src/shell/corebridge.cpp:819
 msgid "The Wi-Fi driver does not report what the adapter can do"
 msgstr "Wi-Fi sürücüsü, adaptörün neler yapabildiğini bildirmiyor"
 
-#: src/shell/corebridge.cpp:869
+#: src/shell/corebridge.cpp:819
 msgid "The hotspot may still work; it could not be checked"
 msgstr "Hotspot yine de çalışabilir; kontrol edilemedi"
 
-#: src/shell/corebridge.cpp:872
+#: src/shell/corebridge.cpp:822
 msgid "NetworkManager asks for authentication to share a connection"
-msgstr "NetworkManager, bir bağlantıyı paylaşmak için kimlik doğrulaması istiyor"
+msgstr ""
+"NetworkManager, bir bağlantıyı paylaşmak için kimlik doğrulaması istiyor"
 
-#: src/shell/corebridge.cpp:872
+#: src/shell/corebridge.cpp:822
 msgid ""
 "The hotspot may prompt for a password or be refused; allow it in the "
 "PolicyKit settings"
-msgstr "Hotspot parola isteyebilir ya da reddedilebilir; PolicyKit ayarlarında buna izin verin"
+msgstr ""
+"Hotspot parola isteyebilir ya da reddedilebilir; PolicyKit ayarlarında buna "
+"izin verin"
 
-#: src/shell/corebridge.cpp:875
+#: src/shell/corebridge.cpp:825
 msgid "This user may not share a connection"
 msgstr "Bu kullanıcı bir bağlantıyı paylaşamaz"
 
-#: src/shell/corebridge.cpp:875
+#: src/shell/corebridge.cpp:825
 msgid "Ask the administrator to allow sharing connections in NetworkManager"
-msgstr "Yöneticiye NetworkManager’da bağlantı paylaşımına izin vermesini isteyin"
+msgstr ""
+"Yöneticiye NetworkManager’da bağlantı paylaşımına izin vermesini isteyin"
 
-#: src/shell/corebridge.cpp:882
+#: src/shell/corebridge.cpp:832
 msgid "dnsmasq is installed"
 msgstr "dnsmasq kurulu"
 
-#: src/shell/corebridge.cpp:885
+#: src/shell/corebridge.cpp:835
 msgid "The hotspot already handed out addresses in this session"
 msgstr "Hotspot bu oturumda zaten adres dağıttı"
 
-#: src/shell/corebridge.cpp:888
+#: src/shell/corebridge.cpp:838
 msgid "dnsmasq was not found"
 msgstr "dnsmasq bulunamadı"
 
-#: src/shell/corebridge.cpp:888
+#: src/shell/corebridge.cpp:838
 msgid ""
 "The hotspot hands out addresses with dnsmasq; install the dnsmasq or dnsmasq-"
 "base package"
-msgstr "Hotspot adreslerini dnsmasq ile dağıtır; dnsmasq veya dnsmasq-base paketini kurun"
+msgstr ""
+"Hotspot adreslerini dnsmasq ile dağıtır; dnsmasq veya dnsmasq-base paketini "
+"kurun"
 
-#: src/shell/corebridge.cpp:891
-msgid "dnsmasq cannot be looked for from inside the sandbox"
-msgstr "dnsmasq, sandbox’un içinden aranamaz"
+#: src/shell/corebridge.cpp:841
+msgid "Checked when the first hotspot starts"
+msgstr "İlk hotspot başladığında kontrol edilir"
 
-#: src/shell/corebridge.cpp:891
-msgid ""
-"If the hotspot gets no addresses, install dnsmasq or dnsmasq-base on this "
-"computer"
-msgstr "Hotspot adres alamıyorsa, bu bilgisayara dnsmasq veya dnsmasq-base kurun"
+#: src/shell/corebridge.cpp:841
+msgid "The sandbox cannot look for dnsmasq on this computer"
+msgstr "Sandbox bu bilgisayarda dnsmasq’ı arayamıyor"
 
-#: src/shell/corebridge.cpp:894
+#: src/shell/corebridge.cpp:844
 msgid "The hotspot could not start its address service"
 msgstr "Hotspot adres servisini başlatamadı"
 
-#: src/shell/corebridge.cpp:894
+#: src/shell/corebridge.cpp:844
 msgid "Install the dnsmasq or dnsmasq-base package"
 msgstr "dnsmasq veya dnsmasq-base paketini kurun"
 
-#: src/shell/corebridge.cpp:898
+#: src/shell/corebridge.cpp:848
 msgid "The firewall service (firewalld) is not running"
 msgstr "Güvenlik duvarı servisi (firewalld) çalışmıyor"
 
-#: src/shell/corebridge.cpp:898
+#: src/shell/corebridge.cpp:848
 msgid ""
 "KuickShare cannot open the hotspot port by itself; it asks you before the "
 "hotspot uses an open zone"
-msgstr "KuickShare hotspot bağlantı noktasını kendi başına açamaz; hotspot açık bir bölge kullanmadan önce size sorar"
+msgstr ""
+"KuickShare hotspot bağlantı noktasını kendi başına açamaz; hotspot açık bir "
+"bölge kullanmadan önce size sorar"
 
-#: src/shell/corebridge.cpp:901
+#: src/shell/corebridge.cpp:851
 msgid "The sandbox hides the firewall service"
 msgstr "Sandbox güvenlik duvarı servisini gizliyor"
 
-#: src/shell/corebridge.cpp:901
+#: src/shell/corebridge.cpp:851
 msgid "Allow the sandbox to talk to firewalld, then restart KuickShare"
-msgstr "Sandbox’un firewalld ile iletişim kurmasına izin verin, sonra KuickShare’i yeniden başlatın"
+msgstr ""
+"Sandbox’un firewalld ile iletişim kurmasına izin verin, sonra KuickShare’i "
+"yeniden başlatın"
 
-#: src/shell/corebridge.cpp:904
+#: src/shell/corebridge.cpp:854
 msgid "The firewall has no zone for the hotspot (nm-shared)"
 msgstr "Güvenlik duvarında hotspot için bir bölge yok (nm-shared)"
 
-#: src/shell/corebridge.cpp:904
+#: src/shell/corebridge.cpp:854
 msgid "The hotspot may be blocked or open; add the zone or check its rules"
-msgstr "Hotspot engellenmiş ya da açık olabilir; bölgeyi ekleyin veya kurallarını kontrol edin"
+msgstr ""
+"Hotspot engellenmiş ya da açık olabilir; bölgeyi ekleyin veya kurallarını "
+"kontrol edin"
 
-#: src/shell/corebridge.cpp:907
+#: src/shell/corebridge.cpp:857
 msgid "Changing the firewall asks for authentication"
 msgstr "Güvenlik duvarını değiştirmek kimlik doğrulaması istiyor"
 
-#: src/shell/corebridge.cpp:907
+#: src/shell/corebridge.cpp:857
 msgid "Opening the hotspot port may prompt for a password or be refused"
-msgstr "Hotspot bağlantı noktasını açmak parola isteyebilir ya da reddedilebilir"
+msgstr ""
+"Hotspot bağlantı noktasını açmak parola isteyebilir ya da reddedilebilir"
 
-#: src/shell/corebridge.cpp:910
+#: src/shell/corebridge.cpp:860
 msgid "This user may not change the firewall"
 msgstr "Bu kullanıcı güvenlik duvarını değiştiremez"
 
-#: src/shell/corebridge.cpp:910
+#: src/shell/corebridge.cpp:860
 msgid "The hotspot port cannot be opened; ask the administrator to allow it"
-msgstr "Hotspot bağlantı noktası açılamıyor; yöneticiye buna izin vermesini isteyin"
+msgstr ""
+"Hotspot bağlantı noktası açılamıyor; yöneticiye buna izin vermesini isteyin"
 
-#: src/shell/corebridge.cpp:913
+#: src/shell/corebridge.cpp:863
 msgid "It cannot be checked whether this user may change the firewall"
-msgstr "Bu kullanıcının güvenlik duvarını değiştirip değiştiremeyeceği kontrol edilemiyor"
+msgstr ""
+"Bu kullanıcının güvenlik duvarını değiştirip değiştiremeyeceği kontrol "
+"edilemiyor"
 
-#: src/shell/corebridge.cpp:913
-msgid "A sandbox cannot ask for this; the hotspot is tried anyway"
-msgstr "Sandbox bunu soramaz; hotspot yine de denenir"
+#: src/shell/corebridge.cpp:863
+msgid "polkit could not be asked without a prompt; the hotspot is tried anyway"
+msgstr ""
+"polkit, kimlik doğrulaması istemeden sorulamadı; hotspot yine de denenir"
 
-#: src/shell/corebridge.cpp:916
+#: src/shell/corebridge.cpp:866
 msgid "The firewall refused the hotspot in this session"
 msgstr "Güvenlik duvarı bu oturumda hotspot’u reddetti"
 
-#: src/shell/corebridge.cpp:916
+#: src/shell/corebridge.cpp:866
 msgid ""
 "Allow the hotspot in the firewall, or let it use an open zone when asked"
-msgstr "Hotspot’a güvenlik duvarında izin verin ya da sorulduğunda açık bir bölge kullanmasına izin verin"
+msgstr ""
+"Hotspot’a güvenlik duvarında izin verin ya da sorulduğunda açık bir bölge "
+"kullanmasına izin verin"
 
-#: src/shell/corebridge.cpp:919
+#: src/shell/corebridge.cpp:869
 msgid "You allowed the hotspot to use an open firewall zone in this session"
-msgstr "Bu oturumda hotspot’un açık bir güvenlik duvarı bölgesi kullanmasına izin verdiniz"
+msgstr ""
+"Bu oturumda hotspot’un açık bir güvenlik duvarı bölgesi kullanmasına izin "
+"verdiniz"
 
-#: src/shell/corebridge.cpp:919
+#: src/shell/corebridge.cpp:869
 msgid "Turning the setting off takes this back"
 msgstr "Ayarı kapatmak bunu geri alır"
 
-#: src/shell/corebridge.cpp:923
+#: src/shell/corebridge.cpp:874
 msgid "The Flatpak lacks permissions it needs"
 msgstr "Flatpak’ın ihtiyaç duyduğu izinler eksik"
 
-#: src/shell/corebridge.cpp:923
-msgid "Allow the permissions named in the details with flatpak override"
-msgstr "Detaylarda adı geçen izinlere flatpak override ile izin verin"
+#: src/shell/corebridge.cpp:874
+msgid "Allow them, then restart KuickShare"
+msgstr "Bunlara izin verin, sonra KuickShare’i yeniden başlatın"
 
-#: src/shell/corebridge.cpp:926
+#: src/shell/corebridge.cpp:877
 msgid "The Flatpak can see the whole file system"
 msgstr "Flatpak tüm dosya sistemini görebiliyor"
 
-#: src/shell/corebridge.cpp:926
+#: src/shell/corebridge.cpp:877
 msgid "It does not need to; take that permission away"
 msgstr "Buna gerek yok; bu izni kaldırın"
 
-#: src/shell/corebridge.cpp:930
+#: src/shell/corebridge.cpp:881
 msgid "No more information is available"
 msgstr "Başka bilgi yok"
 
-#: src/shell/corebridge.cpp:937 src/shell/qml/SendPage.qml:224
+#: src/shell/corebridge.cpp:888 src/shell/qml/SendPage.qml:224
 msgid "Ready"
 msgstr "Hazır"
 
-#: src/shell/corebridge.cpp:939
+#: src/shell/corebridge.cpp:890
 msgid "Warning"
 msgstr "Uyarı"
 
-#: src/shell/corebridge.cpp:941
+#: src/shell/corebridge.cpp:892
 msgid "Blocked"
 msgstr "Engellendi"
 
-#: src/shell/corebridge.cpp:943
+#: src/shell/corebridge.cpp:894
 msgid "Checking"
 msgstr "Kontrol ediliyor"
 
-#: src/shell/corebridge.cpp:947 src/shell/corebridge.cpp:979
+#: src/shell/corebridge.cpp:898 src/shell/corebridge.cpp:930
 msgid "Unknown"
 msgstr "Bilinmiyor"
 
-#: src/shell/corebridge.cpp:971
+#: src/shell/corebridge.cpp:922
 msgid "Available"
 msgstr "Kullanılabilir"
 
-#: src/shell/corebridge.cpp:973
+#: src/shell/corebridge.cpp:924
 msgid "Limited"
 msgstr "Sınırlı"
 
-#: src/shell/corebridge.cpp:975
+#: src/shell/corebridge.cpp:926
 msgid "Unavailable"
 msgstr "Kullanılamıyor"
 
-#: src/shell/corebridge.cpp:1008
-msgid "sending"
-msgstr "gönderme"
-
-#: src/shell/corebridge.cpp:1011
-msgid "receiving"
-msgstr "alma"
-
-#: src/shell/corebridge.cpp:1014
-msgid "joining networks"
-msgstr "ağlara bağlanma"
-
-#: src/shell/corebridge.cpp:1160 src/shell/qml/WifiRequirementsDialog.qml:23
-msgid "Sending"
-msgstr "Gönderme"
-
-#: src/shell/corebridge.cpp:1161 src/shell/qml/SettingsPage.qml:109
-#: src/shell/qml/WifiRequirementsDialog.qml:25
-msgid "Receiving"
-msgstr "Alma"
-
-#: src/shell/corebridge.cpp:1162 src/shell/qml/TransfersPage.qml:783
-#: src/shell/qml/WifiRequirementsDialog.qml:27
-msgid "Join network"
-msgstr "Ağa bağlan"
-
-#: src/shell/corebridge.cpp:1163 src/shell/qml/WifiRequirementsDialog.qml:29
-msgid "System components"
-msgstr "Sistem bileşenleri"
-
-#: src/shell/corebridge.cpp:1298
+#: src/shell/corebridge.cpp:1223
 msgid "Could not update Dolphin's context menu"
 msgstr "Dolphin’in bağlam menüsü güncellenemedi"
 
-#: src/shell/corebridge.cpp:1322
+#: src/shell/corebridge.cpp:1247
 msgid "Could not update the application menu"
 msgstr "Uygulama menüsü güncellenemedi"
 
-#: src/shell/corebridge.cpp:1333
+#: src/shell/corebridge.cpp:1258
 msgid "Could not add KuickShare to the menus"
 msgstr "KuickShare menülere eklenemedi"
 
-#: src/shell/corebridge.cpp:1390 src/shell/corebridge.cpp:1397
+#: src/shell/corebridge.cpp:1315 src/shell/corebridge.cpp:1322
 msgid "The sharing service did not accept the request"
 msgstr "Paylaşım hizmeti isteği kabul etmedi"
 
-#: src/shell/corebridge.cpp:1494
+#: src/shell/corebridge.cpp:1419
 msgid ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
@@ -726,19 +680,19 @@ msgstr ""
 "Flatpak ın %1 konumuna erişimi yok. Erişim vermek için: flatpak override --"
 "user --filesystem=\"%1\" %2"
 
-#: src/shell/corebridge.cpp:1541
+#: src/shell/corebridge.cpp:1466
 msgid "Could not update the autostart entry"
 msgstr "Otomatik başlatma girdisi güncellenemedi"
 
-#: src/shell/corebridge.cpp:1655
+#: src/shell/corebridge.cpp:1580
 msgid "The folder %1 has more than %2 files"
 msgstr "%1 klasörü %2 dosyadan fazla içeriyor"
 
-#: src/shell/corebridge.cpp:1659
+#: src/shell/corebridge.cpp:1584
 msgid "The folder %1 has no files to send"
 msgstr "%1 klasöründe gönderilecek dosya yok"
 
-#: src/shell/corebridge.cpp:1694
+#: src/shell/corebridge.cpp:1619
 msgid "Only local files and folders can be shared"
 msgstr "Yalnızca yerel dosyalar ve klasörler paylaşılabilir"
 
@@ -794,7 +748,7 @@ msgstr "Dosya gönder…"
 msgid "Send clipboard"
 msgstr "Panoyu gönder"
 
-#: src/shell/main.cpp:423 src/shell/qml/SettingsPage.qml:92
+#: src/shell/main.cpp:423 src/shell/qml/SettingsPage.qml:88
 msgid "Visible to nearby devices"
 msgstr "Yakındaki cihazlara görünür"
 
@@ -821,8 +775,8 @@ msgid "About"
 msgstr "Hakkında"
 
 #: src/shell/qml/AboutDialog.qml:110 src/shell/qml/PairDialog.qml:72
-#: src/shell/qml/SettingsPage.qml:450 src/shell/qml/ShortcutsDialog.qml:79
-#: src/shell/qml/WifiRequirementsDialog.qml:98
+#: src/shell/qml/ShortcutsDialog.qml:79
+#: src/shell/qml/WifiRequirementsDialog.qml:80
 msgid "Close"
 msgstr "Kapat"
 
@@ -952,7 +906,7 @@ msgstr ""
 "sonrasında birbirlerine onay gerekmeksizin paylaşım yapabilirler. 47891 "
 "Portunun erişilebilir olması gerekir."
 
-#: src/shell/qml/HelpPage.qml:57 src/shell/qml/SettingsPage.qml:272
+#: src/shell/qml/HelpPage.qml:57 src/shell/qml/SettingsPage.qml:282
 msgid "Trusted devices"
 msgstr "Güvenilen cihazlar"
 
@@ -1241,8 +1195,8 @@ msgstr "Bu bilgisayarlar arasındaki paylaşımlar onaysız kabul ediliyor."
 msgid "Pairing did not complete"
 msgstr "Eşleştirme tamamlanmadı"
 
-#: src/shell/qml/SendPage.qml:142 src/shell/qml/SettingsPage.qml:247
-#: src/shell/qml/SettingsPage.qml:297
+#: src/shell/qml/SendPage.qml:142 src/shell/qml/SettingsPage.qml:257
+#: src/shell/qml/SettingsPage.qml:307
 msgid "Remove"
 msgstr "Kaldır"
 
@@ -1371,51 +1325,56 @@ msgstr "Eşleştirilmiş"
 msgid "Choose the download folder"
 msgstr "İndirilenler klasörünü seç"
 
-#: src/shell/qml/SettingsPage.qml:78
+#: src/shell/qml/SettingsPage.qml:74
 msgid "Visibility"
 msgstr "Görünürlük"
 
-#: src/shell/qml/SettingsPage.qml:85
+#: src/shell/qml/SettingsPage.qml:81
 msgid "Device name"
 msgstr "Cihaz ismi"
 
-#: src/shell/qml/SettingsPage.qml:93
+#: src/shell/qml/SettingsPage.qml:89
 msgid "Others can find this computer and send to it"
 msgstr "Başkaları bu bilgisayarı görebilir ve birşeyler gönderebilir"
 
-#: src/shell/qml/SettingsPage.qml:100
+#: src/shell/qml/SettingsPage.qml:96
 msgid "Hide during Do Not Disturb"
 msgstr "Rahatsız etme açıken gizle"
 
-#: src/shell/qml/SettingsPage.qml:101
+#: src/shell/qml/SettingsPage.qml:97
 msgid "Not visible while Do Not Disturb is on"
 msgstr "Rahatsız etme açıkken görünmez"
 
-#: src/shell/qml/SettingsPage.qml:115
+#: src/shell/qml/SettingsPage.qml:105
+#: src/shell/qml/WifiRequirementsDialog.qml:25
+msgid "Receiving"
+msgstr "Alma"
+
+#: src/shell/qml/SettingsPage.qml:111
 msgid "Download folder"
 msgstr "İndirme klasörü"
 
-#: src/shell/qml/SettingsPage.qml:116
+#: src/shell/qml/SettingsPage.qml:112
 msgid "Default (Downloads)"
 msgstr "Varsayılan (İndirilenler)"
 
-#: src/shell/qml/SettingsPage.qml:123
+#: src/shell/qml/SettingsPage.qml:119
 msgid "Use the default folder"
 msgstr "Varsayılan klasörü kullan"
 
-#: src/shell/qml/SettingsPage.qml:129
+#: src/shell/qml/SettingsPage.qml:125
 msgid "Random port"
 msgstr "Rastgele port"
 
-#: src/shell/qml/SettingsPage.qml:130
+#: src/shell/qml/SettingsPage.qml:126
 msgid "A different port at every start"
 msgstr "Her başlatışta farklı bir port"
 
-#: src/shell/qml/SettingsPage.qml:143
+#: src/shell/qml/SettingsPage.qml:139
 msgid "Fixed port"
 msgstr "Sabit port"
 
-#: src/shell/qml/SettingsPage.qml:160
+#: src/shell/qml/SettingsPage.qml:156
 msgid ""
 "A fixed port (1024–65535) can be opened in the firewall. Changing the name "
 "or the port restarts sharing."
@@ -1423,55 +1382,62 @@ msgstr ""
 "Sabit bir port (1024–65535) güvenlik duvarında açılabilir. İsmi yada portu "
 "değiştirmek paylaşımı sıfırlar."
 
-#: src/shell/qml/SettingsPage.qml:164
+#: src/shell/qml/SettingsPage.qml:160
 msgid "Wi-Fi Direct"
 msgstr "Wi-Fi Direct"
 
-#: src/shell/qml/SettingsPage.qml:171
+#: src/shell/qml/SettingsPage.qml:177
 msgid "Receive and send without a shared network"
 msgstr "Ortak ağ olmadan al ve gönder"
 
-#: src/shell/qml/SettingsPage.qml:172
+#: src/shell/qml/SettingsPage.qml:178
 msgid "Be found over Bluetooth and move the transfer to a temporary Wi-Fi link"
 msgstr ""
 "Bluetooth üzerinden bulunun ve aktarımı geçici bir Wi-Fi bağlantısına taşıyın"
 
-#: src/shell/qml/SettingsPage.qml:190
-#: src/shell/qml/WifiRequirementsDialog.qml:65
-msgid "System requirements"
-msgstr "Sistem gereksinimleri"
-
-#: src/shell/qml/SettingsPage.qml:193
-#: src/shell/qml/WifiRequirementsDialog.qml:242
-msgid "KuickShare service unavailable"
-msgstr "KuickShare servisi kullanılamıyor"
-
 #: src/shell/qml/SettingsPage.qml:196
-#: src/shell/qml/WifiRequirementsDialog.qml:261
-msgid "Not checked yet"
-msgstr "Henüz kontrol edilmedi"
-
-#: src/shell/qml/SettingsPage.qml:198
-msgid "Sending: %1, receiving: %2, joining networks: %3"
-msgstr "Gönderme: %1, alma: %2, ağlara bağlanma: %3"
-
-#: src/shell/qml/SettingsPage.qml:204
 msgid "Check system requirements…"
 msgstr "Sistem gereksinimlerini kontrol et…"
 
-#: src/shell/qml/SettingsPage.qml:205
+#: src/shell/qml/SettingsPage.qml:200
+#: src/shell/qml/WifiRequirementsDialog.qml:253
+msgid "KuickShare service unavailable"
+msgstr "KuickShare servisi kullanılamıyor"
+
+#: src/shell/qml/SettingsPage.qml:203
+#: src/shell/qml/WifiRequirementsDialog.qml:256
+msgid "The result could not be read. Refresh to try again"
+msgstr "Sonuç okunamadı. Yeniden denemek için yenileyin"
+
+#: src/shell/qml/SettingsPage.qml:206
 msgid "See what this computer needs for Wi-Fi Direct"
 msgstr "Bu bilgisayarın Wi-Fi Direct için neye ihtiyacı olduğunu görün"
 
-#: src/shell/qml/SettingsPage.qml:217
-msgid "Only sending works on this computer. See the system requirements"
-msgstr "Bu bilgisayarda yalnızca gönderme çalışıyor. Sistem gereksinimlerine bakın"
+#: src/shell/qml/SettingsPage.qml:209
+msgid "Neither sending nor receiving can work on this computer"
+msgstr "Bu bilgisayarda ne gönderme ne de alma çalışamaz"
+
+#: src/shell/qml/SettingsPage.qml:214
+msgid "Only sending works on this computer"
+msgstr "Bu bilgisayarda yalnızca gönderme çalışıyor"
 
 #: src/shell/qml/SettingsPage.qml:217
-msgid "Only receiving works on this computer. See the system requirements"
-msgstr "Bu bilgisayarda yalnızca alma çalışıyor. Sistem gereksinimlerine bakın"
+msgid "Only receiving works on this computer"
+msgstr "Bu bilgisayarda yalnızca alma çalışıyor"
+
+#: src/shell/qml/SettingsPage.qml:221
+msgid "Everything Wi-Fi Direct needs is available"
+msgstr "Wi-Fi Direct için gereken her şey kullanılabilir"
 
 #: src/shell/qml/SettingsPage.qml:224
+msgid "Some items could not be checked"
+msgstr "Bazı öğeler kontrol edilemedi"
+
+#: src/shell/qml/SettingsPage.qml:226
+msgid "Some items need attention"
+msgstr "Bazı öğeler dikkat gerektiriyor"
+
+#: src/shell/qml/SettingsPage.qml:234
 msgid ""
 "Experimental. Needs NetworkManager, its dnsmasq package and Bluetooth. While "
 "on, this computer is visible over Bluetooth to devices in range, and its Wi-"
@@ -1482,53 +1448,53 @@ msgstr ""
 "bilgisayar menzildeki cihazlara Bluetooth üzerinden görünür olur ve geçici "
 "Wi-Fi bağlantısı etkinken Wi-Fi bağlantısı kopabilir. Belgelere bakın"
 
-#: src/shell/qml/SettingsPage.qml:230
+#: src/shell/qml/SettingsPage.qml:240
 msgid "Paired devices"
 msgstr "Eşleştirilmiş cihazlar"
 
-#: src/shell/qml/SettingsPage.qml:243
+#: src/shell/qml/SettingsPage.qml:253
 msgid "Fingerprint %1"
 msgstr "Parmak izi %1"
 
-#: src/shell/qml/SettingsPage.qml:254
+#: src/shell/qml/SettingsPage.qml:264
 msgid "No paired computers yet"
 msgstr "Henüz eşleştirilmiş bilgisayar yok"
 
-#: src/shell/qml/SettingsPage.qml:255
+#: src/shell/qml/SettingsPage.qml:265
 msgid "Paired computers can send to each other without asking"
 msgstr ""
 "Eşleştirilmiş bilgisayarlar onay gerekmeksizin dosya alışverişi yapabilir"
 
-#: src/shell/qml/SettingsPage.qml:259
+#: src/shell/qml/SettingsPage.qml:269
 msgid "Pair a device…"
 msgstr "Cihaz eşleştir…"
 
-#: src/shell/qml/SettingsPage.qml:266
+#: src/shell/qml/SettingsPage.qml:276
 msgid "Pairing works only between computers on the same local network"
 msgstr "Eşleştirme yalnızca aynı yerel ağdaki bilgisayarlar arasında çalışır"
 
-#: src/shell/qml/SettingsPage.qml:278
+#: src/shell/qml/SettingsPage.qml:288
 msgid "Trust devices"
 msgstr "Cihazlara güven"
 
-#: src/shell/qml/SettingsPage.qml:279
+#: src/shell/qml/SettingsPage.qml:289
 msgid "Accept transfers from trusted devices without asking"
 msgstr "Güvenilen cihazlardan onay sormadan paylaşım kabul et"
 
-#: src/shell/qml/SettingsPage.qml:293
+#: src/shell/qml/SettingsPage.qml:303
 msgid "MAC address %1"
 msgstr "MAC adresi %1"
 
-#: src/shell/qml/SettingsPage.qml:304
+#: src/shell/qml/SettingsPage.qml:314
 msgid "No devices yet"
 msgstr "Henüz cihaz yok"
 
-#: src/shell/qml/SettingsPage.qml:305
+#: src/shell/qml/SettingsPage.qml:315
 msgid "Use “Accept and trust” on an incoming transfer notification to add one"
 msgstr ""
 "Eklemek için gelen bir paylaşım bildiriminde “Kabul et ve güven”e tıklayın"
 
-#: src/shell/qml/SettingsPage.qml:312
+#: src/shell/qml/SettingsPage.qml:322
 msgid ""
 "Devices are recognised by name and network address, which another device on "
 "the same network can copy: it would be accepted without asking too. Use only "
@@ -1538,43 +1504,43 @@ msgstr ""
 "kopyalayabilir ve o da sormadan kabul edilirdi. Yalnızca her cihaza "
 "güvendiğiniz bir ağda kullanın"
 
-#: src/shell/qml/SettingsPage.qml:318
+#: src/shell/qml/SettingsPage.qml:328
 msgid "History"
 msgstr "Geçmiş"
 
-#: src/shell/qml/SettingsPage.qml:324
+#: src/shell/qml/SettingsPage.qml:334
 msgid "Save transfer history"
 msgstr "Paylaşım geçmişini kaydet"
 
-#: src/shell/qml/SettingsPage.qml:325
+#: src/shell/qml/SettingsPage.qml:335
 msgid "Keep a list of sent and received transfers"
 msgstr "Alınan ve gönderilen paylaşımların listesini tut"
 
-#: src/shell/qml/SettingsPage.qml:347
+#: src/shell/qml/SettingsPage.qml:357
 msgid "Delete entries after"
 msgstr "Sonrasında girdileri sil"
 
-#: src/shell/qml/SettingsPage.qml:355
+#: src/shell/qml/SettingsPage.qml:365
 msgid "Never"
 msgstr "Asla"
 
-#: src/shell/qml/SettingsPage.qml:355
+#: src/shell/qml/SettingsPage.qml:365
 msgid "1 day"
 msgstr "1 gün"
 
-#: src/shell/qml/SettingsPage.qml:355
+#: src/shell/qml/SettingsPage.qml:365
 msgid "7 days"
 msgstr "7 gün"
 
-#: src/shell/qml/SettingsPage.qml:355
+#: src/shell/qml/SettingsPage.qml:365
 msgid "30 days"
 msgstr "30 gün"
 
-#: src/shell/qml/SettingsPage.qml:355
+#: src/shell/qml/SettingsPage.qml:365
 msgid "90 days"
 msgstr "90 gün"
 
-#: src/shell/qml/SettingsPage.qml:364
+#: src/shell/qml/SettingsPage.qml:374
 msgid ""
 "With the history turned off nothing is saved. Entries already saved stay "
 "until they expire or you clear them."
@@ -1582,47 +1548,47 @@ msgstr ""
 "Geçmiş kapalıyken hiçbirşey kaydedilmez. Önceden kaydedilmiş girdiler siz "
 "onları silene yada Süreleri dolana kadar kalır."
 
-#: src/shell/qml/SettingsPage.qml:368
+#: src/shell/qml/SettingsPage.qml:378
 msgid "Startup"
 msgstr "Başlangıç"
 
-#: src/shell/qml/SettingsPage.qml:374
+#: src/shell/qml/SettingsPage.qml:384
 msgid "Start at login"
 msgstr "Oturum açıldığında başlat"
 
-#: src/shell/qml/SettingsPage.qml:375
+#: src/shell/qml/SettingsPage.qml:385
 msgid "Starts hidden, in the system tray if it is shown"
 msgstr "Gösteriliyorsa sistem tepsisinde gizli olarak başlar"
 
-#: src/shell/qml/SettingsPage.qml:381
+#: src/shell/qml/SettingsPage.qml:391
 msgid "Integration"
 msgstr "Entegrasyon"
 
-#: src/shell/qml/SettingsPage.qml:387
+#: src/shell/qml/SettingsPage.qml:397
 msgid "Show tray icon"
 msgstr "Tepsi simgesini göster"
 
-#: src/shell/qml/SettingsPage.qml:388
+#: src/shell/qml/SettingsPage.qml:398
 msgid "Keep KuickShare in the system tray"
 msgstr "KuickShare’i sistem tepsisinde tut"
 
-#: src/shell/qml/SettingsPage.qml:395
+#: src/shell/qml/SettingsPage.qml:405
 msgid "Dolphin context menu"
 msgstr "Dolphin bağlam menüsü"
 
-#: src/shell/qml/SettingsPage.qml:396
+#: src/shell/qml/SettingsPage.qml:406
 msgid "Add “Send with KuickShare” to the menu of files"
 msgstr "Dosyaların menüsüne “KuickShare ile gönder” seçeneğini ekle"
 
-#: src/shell/qml/SettingsPage.qml:404
+#: src/shell/qml/SettingsPage.qml:414
 msgid "Application menu entry"
 msgstr "Uygulama menüsü girdisi"
 
-#: src/shell/qml/SettingsPage.qml:405
+#: src/shell/qml/SettingsPage.qml:415
 msgid "Add KuickShare to the application menu"
 msgstr "KuickShare'i uygulama menüsüne ekle"
 
-#: src/shell/qml/SettingsPage.qml:413
+#: src/shell/qml/SettingsPage.qml:423
 msgid ""
 "Without the tray icon, closing the window quits KuickShare, and nothing can "
 "be received until you open it again. At login it starts hidden: open "
@@ -1632,11 +1598,11 @@ msgstr ""
 "uygulamayı tekrar açana kadar hiçbir şey alınamaz. Oturum açıldığında gizli "
 "olarak başlar: Pencereyi göstermek için KuickShare'i tekrar açın"
 
-#: src/shell/qml/SettingsPage.qml:426
+#: src/shell/qml/SettingsPage.qml:436
 msgid "Turn on without a firewall?"
 msgstr "Güvenlik duvarı olmadan açılsın mı?"
 
-#: src/shell/qml/SettingsPage.qml:427
+#: src/shell/qml/SettingsPage.qml:437
 msgid ""
 "firewalld is not running, so the firewall cannot be opened for a single "
 "port. If you agree, then until KuickShare is closed, the phone that joins "
@@ -1646,25 +1612,11 @@ msgstr ""
 "için açılamıyor. Kabul ederseniz, KuickShare kapatılana kadar hotspot’a "
 "katılan telefon bu bilgisayardaki tüm hizmetlere erişebilir"
 
-#: src/shell/qml/SettingsPage.qml:437
-msgid "Wi-Fi Direct is not fully available"
-msgstr "Wi-Fi Direct tam olarak kullanılamıyor"
-
-#: src/shell/qml/SettingsPage.qml:438
-msgid ""
-"Neither sending nor receiving can work on this computer now. The system "
-"requirements show what is missing"
-msgstr "Bu bilgisayarda şu an ne gönderme ne de alma çalışabilir. Sistem gereksinimleri neyin eksik olduğunu gösterir"
-
-#: src/shell/qml/SettingsPage.qml:442
-msgid "View requirements"
-msgstr "Gereksinimleri görüntüle"
-
-#: src/shell/qml/SettingsPage.qml:458
+#: src/shell/qml/SettingsPage.qml:446
 msgid "Reset preferences?"
 msgstr "Tercihler sıfırlansın mı?"
 
-#: src/shell/qml/SettingsPage.qml:459
+#: src/shell/qml/SettingsPage.qml:447
 msgid ""
 "Every setting goes back to its default. The history and the paired and "
 "trusted devices are kept"
@@ -1672,15 +1624,15 @@ msgstr ""
 "Her ayar varsayılan değerine döner. Geçmiş ile eşleştirilmiş ve güvenilir "
 "cihazlar korunur"
 
-#: src/shell/qml/SettingsPage.qml:465
+#: src/shell/qml/SettingsPage.qml:453
 msgid "Reset"
 msgstr "Sıfırla"
 
-#: src/shell/qml/SettingsPage.qml:471
+#: src/shell/qml/SettingsPage.qml:459
 msgid "Reset preferences…"
 msgstr "Tercihleri sıfırla…"
 
-#: src/shell/qml/SettingsPage.qml:472
+#: src/shell/qml/SettingsPage.qml:460
 msgid "Go back to the default preferences"
 msgstr "Varsayılan tercihlere dön"
 
@@ -1961,52 +1913,51 @@ msgstr "Reddet"
 msgid "Open folder"
 msgstr "Klasörü aç"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:86
-#: src/shell/qml/WifiRequirementsDialog.qml:235
+#: src/shell/qml/TransfersPage.qml:783
+#: src/shell/qml/WifiRequirementsDialog.qml:27
+msgid "Join network"
+msgstr "Ağa bağlan"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:23
+msgid "Sending"
+msgstr "Gönderme"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:47
+msgid "System requirements"
+msgstr "Sistem gereksinimleri"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:68
+#: src/shell/qml/WifiRequirementsDialog.qml:192
 msgid "Refresh"
 msgstr "Yenile"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:92
+#: src/shell/qml/WifiRequirementsDialog.qml:74
 msgid "Copy diagnostic report"
 msgstr "Tanılama raporunu kopyala"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:152
-msgid "Details"
-msgstr "Detaylar"
-
-#: src/shell/qml/WifiRequirementsDialog.qml:182
-msgid "Affects: %1"
-msgstr "Etkilenenler: %1"
-
-#: src/shell/qml/WifiRequirementsDialog.qml:189
-msgid "How it was checked: %1"
-msgstr "Kontrol yöntemi: %1"
-
-#: src/shell/qml/WifiRequirementsDialog.qml:211
+#: src/shell/qml/WifiRequirementsDialog.qml:167
 msgid "Copy command"
 msgstr "Komutu kopyala"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:229
+#: src/shell/qml/WifiRequirementsDialog.qml:186
 msgid ""
 "What Wi-Fi Direct needs on this computer. Checking never changes Bluetooth, "
 "Wi-Fi or the firewall"
-msgstr "Wi-Fi Direct’in bu bilgisayarda neye ihtiyacı olduğu. Kontrol etmek Bluetooth’u, Wi-Fi’yi ya da güvenlik duvarını asla değiştirmez"
+msgstr ""
+"Wi-Fi Direct’in bu bilgisayarda neye ihtiyacı olduğu. Kontrol etmek "
+"Bluetooth’u, Wi-Fi’yi ya da güvenlik duvarını asla değiştirmez"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:248
-msgid "The result could not be read. Refresh to try again"
-msgstr "Sonuç okunamadı. Yeniden denemek için yenileyin"
+#: src/shell/qml/WifiRequirementsDialog.qml:258
+msgid "Not checked yet"
+msgstr "Henüz kontrol edilmedi"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:254
-msgid "These results are out of date. Refresh to check again"
-msgstr "Bu sonuçlar güncel değil. Yeniden kontrol etmek için yenileyin"
+#: src/shell/qml/WifiRequirementsDialog.qml:267
+msgid "Last checked: %1 (out of date)"
+msgstr "Son kontrol: %1 (güncel değil)"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:320
+#: src/shell/qml/WifiRequirementsDialog.qml:267
 msgid "Last checked: %1"
 msgstr "Son kontrol: %1"
-
-#: src/shell/qml/WifiRequirementsDialog.qml:366
-msgid "Nothing limits this"
-msgstr "Bunu sınırlayan bir şey yok"
 
 #: src/shell/transferjob.cpp:33
 msgid "Sending files"

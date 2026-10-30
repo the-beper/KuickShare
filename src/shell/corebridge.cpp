@@ -642,89 +642,39 @@ namespace
         return pattern.match(name).hasMatch();
     }
 
-    QString requirementTitle(const QString &id)
+    /// The name of a component (`RequirementsReport::componentOf`).
+    QString componentTitle(const QString &key)
     {
-        if (id == QLatin1String("bluez.service")) {
-            return i18n("Bluetooth service (BlueZ)");
+        if (key == QLatin1String("bluetooth")) {
+            return i18n("Bluetooth (BlueZ)");
         }
-        if (id == QLatin1String("bluez.adapter")) {
-            return i18n("Bluetooth adapter");
-        }
-        if (id == QLatin1String("bluez.powered")) {
-            return i18n("Bluetooth power");
-        }
-        if (id == QLatin1String("bluez.le")) {
-            return i18n("Bluetooth Low Energy");
-        }
-        if (id == QLatin1String("bluez.advertising")) {
-            return i18n("Bluetooth advertising");
-        }
-        if (id == QLatin1String("bluez.scanning")) {
-            return i18n("Bluetooth scanning");
-        }
-        if (id == QLatin1String("bluez.transport")) {
-            return i18n("Bluetooth GATT services");
-        }
-        if (id == QLatin1String("bluez.l2cap")) {
-            return i18n("Bluetooth fast channel (L2CAP)");
-        }
-        if (id == QLatin1String("nm.service")) {
+        if (key == QLatin1String("networkmanager")) {
             return i18n("NetworkManager");
         }
-        if (id == QLatin1String("nm.networking")) {
-            return i18n("Networking switch");
-        }
-        if (id == QLatin1String("nm.wifi_enabled")) {
-            return i18n("Wi-Fi switch");
-        }
-        if (id == QLatin1String("nm.hardware_enabled")) {
-            return i18n("Wi-Fi radio switch");
-        }
-        if (id == QLatin1String("nm.device")) {
+        if (key == QLatin1String("wifi")) {
             return i18n("Wi-Fi adapter");
         }
-        if (id == QLatin1String("nm.managed")) {
-            return i18n("Wi-Fi adapter management");
-        }
-        if (id == QLatin1String("nm.firmware")) {
-            return i18n("Wi-Fi adapter firmware");
-        }
-        if (id == QLatin1String("nm.driver")) {
-            return i18n("Wi-Fi adapter driver");
-        }
-        if (id == QLatin1String("nm.permissions")) {
-            return i18n("NetworkManager permissions");
-        }
-        if (id == QLatin1String("wifi.client")) {
-            return i18n("Wi-Fi client mode");
-        }
-        if (id == QLatin1String("wifi.ap")) {
-            return i18n("Wi-Fi hotspot mode");
-        }
-        if (id == QLatin1String("wifi.dhcp")) {
+        if (key == QLatin1String("dnsmasq")) {
             return i18n("Hotspot addresses (dnsmasq)");
         }
-        if (id == QLatin1String("firewall.integration")) {
+        if (key == QLatin1String("firewall")) {
             return i18n("Firewall (firewalld)");
         }
-        if (id == QLatin1String("sandbox.permissions")) {
+        if (key == QLatin1String("flatpak")) {
             return i18n("Flatpak permissions");
         }
         // A requirement this version does not know: its id is all there is to show.
-        return id;
+        return key;
     }
 
     /// What a reason code means and what to do about it. Hints name the one thing to fix (a switched-off adapter is
     /// not a missing package); commands are only shown to be copied, never run.
-    RequirementText requirementText(const QString &id, const QString &reason, const QString &device)
+    RequirementText requirementText(const QString &id, const QString &reason, const QString &device, const QString &details)
     {
         const auto isId = [&id](const char *want) { return id == QLatin1String(want); };
         const auto isReason = [&reason](const char *want) { return reason == QLatin1String(want); };
 
         // Reasons any requirement can have.
-        if (isReason("ok")) {
-            return {i18n("Nothing is missing"), {}, {}};
-        }
         if (isReason("timeout")) {
             return {i18n("The check took too long"), i18n("Refresh to check again; if it keeps happening, the service it asks may be busy or stuck"), {}};
         }
@@ -888,7 +838,7 @@ namespace
                 return {i18n("dnsmasq was not found"), i18n("The hotspot hands out addresses with dnsmasq; install the dnsmasq or dnsmasq-base package"), {}};
             }
             if (isReason("sandbox_unobservable")) {
-                return {i18n("dnsmasq cannot be looked for from inside the sandbox"), i18n("If the hotspot gets no addresses, install dnsmasq or dnsmasq-base on this computer"), {}};
+                return {i18n("Checked when the first hotspot starts"), i18n("The sandbox cannot look for dnsmasq on this computer"), {}};
             }
             if (isReason("shared_start_failed")) {
                 return {i18n("The hotspot could not start its address service"), i18n("Install the dnsmasq or dnsmasq-base package"), {}};
@@ -910,7 +860,7 @@ namespace
                 return {i18n("This user may not change the firewall"), i18n("The hotspot port cannot be opened; ask the administrator to allow it"), {}};
             }
             if (isReason("permission_unverifiable")) {
-                return {i18n("It cannot be checked whether this user may change the firewall"), i18n("A sandbox cannot ask for this; the hotspot is tried anyway"), {}};
+                return {i18n("It cannot be checked whether this user may change the firewall"), i18n("polkit could not be asked without a prompt; the hotspot is tried anyway"), {}};
             }
             if (isReason("denied_this_session")) {
                 return {i18n("The firewall refused the hotspot in this session"), i18n("Allow the hotspot in the firewall, or let it use an open zone when asked"), {}};
@@ -920,7 +870,8 @@ namespace
             }
         } else if (isId("sandbox.permissions")) {
             if (isReason("missing")) {
-                return {i18n("The Flatpak lacks permissions it needs"), i18n("Allow the permissions named in the details with flatpak override"), {}};
+                const QStringList options = RR::overrideOptions(details);
+                return {i18n("The Flatpak lacks permissions it needs"), i18n("Allow them, then restart KuickShare"), options.isEmpty() ? QString() : overrideCommand(options.join(QLatin1Char(' ')))};
             }
             if (isReason("filesystem_host")) {
                 return {i18n("The Flatpak can see the whole file system"), i18n("It does not need to; take that permission away"), overrideCommand(QStringLiteral("--nofilesystem=host"))};
@@ -1001,50 +952,26 @@ namespace
                 {QStringLiteral("iconName"), capabilityIcon(capability)}};
     }
 
-    QString affectsText(const QStringList &affects)
+    /// One component with what needs attention in it, each text once: rows that fail the same way say it once.
+    QVariantMap componentMap(const RR::Component &component)
     {
-        QStringList words;
-        if (affects.contains(QLatin1String("sending"))) {
-            words << i18n("sending");
-        }
-        if (affects.contains(QLatin1String("receiving"))) {
-            words << i18n("receiving");
-        }
-        if (affects.contains(QLatin1String("join_network"))) {
-            words << i18n("joining networks");
-        }
-        return QLocale().createSeparatedList(words);
-    }
-
-    QVariantMap rowMap(const RR::Row &row)
-    {
-        const RequirementText text = requirementText(row.id, row.reasonCode, row.device);
-        return {{QStringLiteral("id"), row.id},
-                {QStringLiteral("title"), requirementTitle(row.id)},
-                {QStringLiteral("status"), RR::statusCode(row.status)},
-                {QStringLiteral("statusText"), statusText(row.status)},
-                {QStringLiteral("iconName"), statusIcon(row.status)},
-                {QStringLiteral("category"), RR::categoryCode(row.category)},
-                {QStringLiteral("reasonCode"), row.reasonCode},
-                {QStringLiteral("reasonText"), text.text},
-                {QStringLiteral("hint"), text.hint},
-                {QStringLiteral("command"), text.command},
-                {QStringLiteral("details"), row.details},
-                {QStringLiteral("device"), row.device},
-                {QStringLiteral("verification"), row.verification},
-                {QStringLiteral("affectsText"), affectsText(row.affects)}};
-    }
-
-    /// `rows` that feed `capability` and are not ready, or every row when `capability` is empty.
-    QVariantMap sectionMap(const QString &key, const QString &title, const QList<RR::Row> &rows, const QString &capability)
-    {
-        QVariantList list;
-        for (const RR::Row &row : rows) {
-            if (capability.isEmpty() || (row.status != RR::Status::Ready && row.affects.contains(capability))) {
-                list << rowMap(row);
+        QVariantList problems;
+        QStringList seen;
+        for (const RR::Row &row : component.rows) {
+            const RequirementText text = requirementText(row.id, row.reasonCode, row.device, row.details);
+            if (seen.contains(text.text)) {
+                continue;
             }
+            seen << text.text;
+            problems << QVariantMap{{QStringLiteral("text"), text.text}, {QStringLiteral("hint"), text.hint}, {QStringLiteral("command"), text.command}};
         }
-        return {{QStringLiteral("key"), key}, {QStringLiteral("title"), title}, {QStringLiteral("rows"), list}};
+        return {{QStringLiteral("key"), component.key},
+                {QStringLiteral("title"), componentTitle(component.key)},
+                {QStringLiteral("status"), RR::statusCode(component.status)},
+                // Only what was not looked at, which no capability depends on: not shown as a doubt, its note says it.
+                {QStringLiteral("statusText"), component.informational ? QString() : statusText(component.status)},
+                {QStringLiteral("iconName"), component.informational ? QStringLiteral("dialog-information") : statusIcon(component.status)},
+                {QStringLiteral("problems"), problems}};
     }
 }
 
@@ -1155,14 +1082,13 @@ void CoreBridge::rebuildRequirementsMap()
     capabilities.insert(QStringLiteral("receiving"), capabilityMap(valid ? report.receiving : RR::Capability::Unknown));
     capabilities.insert(QStringLiteral("joinNetwork"), capabilityMap(valid ? report.joinNetwork : RR::Capability::Unknown));
     map.insert(QStringLiteral("capabilities"), capabilities);
-    QVariantList sections;
+    QVariantList components;
     if (valid) {
-        sections << sectionMap(QStringLiteral("sending"), i18n("Sending"), report.rows, QStringLiteral("sending"))
-                 << sectionMap(QStringLiteral("receiving"), i18n("Receiving"), report.rows, QStringLiteral("receiving"))
-                 << sectionMap(QStringLiteral("join_network"), i18n("Join network"), report.rows, QStringLiteral("join_network"))
-                 << sectionMap(QStringLiteral("system"), i18n("System components"), report.rows, QString());
+        for (const RR::Component &component : RR::components(report.rows)) {
+            components << componentMap(component);
+        }
     }
-    map.insert(QStringLiteral("sections"), sections);
+    map.insert(QStringLiteral("components"), components);
     if (map != m_wifiRequirements) {
         m_wifiRequirements = map;
         emit wifiRequirementsChanged();
@@ -1265,12 +1191,11 @@ void CoreBridge::requestWifiUpgrade(bool enabled, bool allowInsecure)
         }
         // The switch shows the value of the core again, whatever the user did to it.
         emit wifiUpgradeChanged();
-        emit wifiUpgradeRefused(reason);
         if (reason != QLatin1String("service_unavailable")) {
             refreshProperties();
         }
         if (reason == QLatin1String("requirements_blocked")) {
-            loadWifiRequirements(); // the dialog the user opens next shows what blocked it
+            loadWifiRequirements(); // the switch is disabled and the requirements show what blocked it
         } });
 }
 
