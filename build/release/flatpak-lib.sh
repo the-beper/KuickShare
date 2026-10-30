@@ -197,11 +197,12 @@ check_pages_base() {
 
 # check_appstream_commit REPO REF COMMIT: the appstream commits (flatpak build-update-repo makes them in prepare, so they are not
 # pinned by id like the build's) have the metadata keys, subject and empty body of an honest run (flatpak 1.14.6, tried): the
-# two bindings (sorted, a duplicate counts), "Update", no body. Their ref-binding is checked by check_binding. Other refs pass.
+# two bindings (sorted, a duplicate counts) and an empty collection binding (''), "Update", no body. Their ref-binding is checked by check_binding. Other refs pass.
 check_appstream_commit() {
     case $2 in appstream/* | appstream2/*) ;; *) return 0 ;; esac
     ostree --repo="$1" show --list-metadata-keys "$3" > "$tmp/as.keys" 2> /dev/null || fail "cannot read the metadata keys of $2 $3"
     [ "$(LC_ALL=C sort "$tmp/as.keys")" = "$(printf 'ostree.collection-binding\nostree.ref-binding')" ] || fail "$2 $3 has other metadata keys than ostree.collection-binding and ostree.ref-binding"
+    [ "$(ostree --repo="$1" show --print-metadata-key=ostree.collection-binding "$3" 2> /dev/null)" = "''" ] || fail "$2 $3 is bound to a collection (ostree.collection-binding is not empty)"
     ostree --repo="$1" show "$3" > "$tmp/as.show" 2> /dev/null || fail "cannot read $2 $3"
     # What follows the header: the subject and the body, indented, each followed by an empty line, and for a signed commit
     # the lines of ostree about its signatures ("Found 1 signature:", not indented), which are not part of the message.
@@ -216,6 +217,18 @@ check_repo_entries() {
     if bad=$(grep -Evx '\.lock|config|extensions|objects|refs|state|summaries|summary|summary\.idx|summary\.idx\.sig|summary\.sig|tmp' "$tmp/repo.entries"); then
         printf '%s\n' "$bad" | sed 's/^/    /' >&2
         fail "$1 has entries at its top that an ostree repository of this release does not have (see above)"
+    fi
+}
+
+# check_repo_paths REPO: every file of an ostree repository is one that ostree writes: the config, .lock, an object (archive-z2 and
+# the signatures of commits: commit, commitmeta, commitmeta2 which the real gh-pages has, dirmeta, dirtree, filez), the head of
+# a ref of a build or an appstream ref, the summary files and the summaries folder. Anything else (under state/, extensions/ or
+# objects/, a stray file, a link) is ignored by ostree and the site would publish it as it is.
+check_repo_paths() {
+    (cd "$1" && find . ! -type d | LC_ALL=C sort) > "$tmp/repo.paths"
+    if bad=$(grep -Evx '\./config|\./\.lock|\./objects/[0-9a-f]{2}/[0-9a-f]{62}\.(commit|commitmeta|commitmeta2|dirmeta|dirtree|filez)|\./refs/heads/((app|runtime)/[A-Za-z0-9._-]+/[A-Za-z0-9_-]+/[A-Za-z0-9._-]+|appstream2?/x86_64)|\./summary|\./summary\.sig|\./summary\.idx|\./summary\.idx\.sig|\./summaries/[0-9a-f]{64}(\.gz|\.idx\.sig|-[0-9a-f]{64}\.delta)' "$tmp/repo.paths"); then
+        printf '%s\n' "$bad" | head -n 20 | sed 's/^/    /' >&2
+        fail "$1 has files that are not the files of an ostree repository (see above)"
     fi
 }
 

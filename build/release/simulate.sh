@@ -5,7 +5,7 @@
 # curl replaced by the fakes in build/release/testdata (put first in PATH). The signatures are real GnuPG signatures made
 # with ephemeral keys generated in temporary keyrings; no real key, no network, no container.
 # Needs only sh, git, gpg 2.2+, python3, tar, sha256sum, sha1sum. Everything happens in a mktemp directory that is removed
-# at the end. Output is TAP: "ok N - ..." lines and "# 34/34 passed"; the exit status is not 0 if a case fails.
+# at the end. Output is TAP: "ok N - ..." lines and "# 35/35 passed"; the exit status is not 0 if a case fails.
 #
 # What it does NOT show (see CONTRIBUTING.md, Releases): that real flatpak, ostree, gh and GitHub Pages behave like the
 # fakes. build/flatpak/test-repo-update.sh covers the real Flatpak client; the rest needs a release.
@@ -45,7 +45,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=34
+total=35
 n=0
 passed=0
 failed=0
@@ -972,6 +972,27 @@ job_sign
 check "a release goes through on a gh-pages that has static deltas and delta indexes" rc_is 0
 check "(the site has neither)" test -z "$(tar -tf "$w/signed/site.tar" | grep -i delta)"
 end_case "a base with static deltas and delta indexes (names with a plus sign): both are removed before anything checks the repository"
+
+# ---- 6q. every file of the repository is an ostree file; the collection binding is empty ----
+make_world 37
+build_jobs
+snapshot_prepared
+as1=$(list_commit appstream/x86_64)
+for stray in "mkdir -p state && echo x > state/stray" "mkdir -p extensions && echo x > extensions/stray" "mkdir -p objects/ab && echo x > objects/ab/stray.txt" "mkdir -p summaries && echo x > summaries/stray"; do
+    tamper_prepared "$stray"
+    job_sign_check
+    check "sign --check refuses a file that is no ostree file: $stray" rc_is 1
+    check "(the message says so)" out_has "not the files of an ostree repository"
+    restore_prepared
+done
+tamper_prepared "echo 'collection=org.example.Collection' >> $(objfile "$as1")"
+job_sign_check
+check "sign --check refuses an appstream commit bound to a collection" rc_is 1
+check "(the message says so)" out_has "bound to a collection"
+restore_prepared
+job_sign
+check "the honest run goes through the same checks, in sign --check and in finish" rc_is 0
+end_case "files of the repository: only ostree objects, refs, summary files and the config; the collection binding of an appstream commit is empty"
 
 # ---- 6b. prepare: the keyless job that finishes the repository unsigned ----
 make_world 20

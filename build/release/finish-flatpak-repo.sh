@@ -12,7 +12,7 @@
 #     for): every ref that is not on the sign list is as published, none was dropped, none is new, and every listed ref
 #     continues its published commit and is dated between it and an hour after now, and every unlisted head has the commit and
 #     signature files of gh-pages; every listed commit says it belongs to its own ref (ostree.ref-binding), the appstream
-#     ones have the metadata keys, subject and empty body of an honest run, and repo/ has only the entries ostree writes at its top;
+#     ones have the metadata keys, subject and empty body of an honest run, and repo/ has only the entries ostree writes at its top and only ostree files below;
 #   - the files of the site outside repo/ are exactly what build/flatpak/write-site-files.sh writes for SITE_URL and the key;
 #   - no file of the signed repository differs from the prepared one except the summary files and the signatures of the
 #     listed commits (no other object, no stray file, no config change);
@@ -107,6 +107,8 @@ check_repo_entries "$old"
 check_repo_entries "$new"
 # ---- against gh-pages: the prepared repository is not trusted for what the build did not make ----
 check_pages_base "$new"
+check_repo_paths "$old"
+check_repo_paths "$new"
 # The only files that may be new, changed or gone: the summary files and the signatures of commits.
 allowed='^\./(summary|summary\.sig|summary\.idx|summary\.idx\.sig)$|^\./summaries/[^/]+$'
 while IFS=$tab read -r ref commit; do printf './objects/%s/%s.commitmeta\n' "$(printf '%s' "$commit" | cut -c1-2)" "${commit#??}"; done < "$signlist" > "$tmp/files.signatures"
