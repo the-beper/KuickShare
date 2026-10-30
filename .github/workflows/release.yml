@@ -180,17 +180,15 @@ jobs:
           compression-level: 0
 
   # Builds the bundle and exports the commits WITHOUT a signature, onto an anonymous clone of the published repository (so that
-  # they keep their parent). --privileged is what bubblewrap needs inside the container; this job has no secret and no write token.
+  # they keep their parent). This job has no secret and no write token. It runs on the plain runner, not in a job container
+  # (which would be a rootful, --privileged Docker container): the scripts start the build image with rootless podman, and
+  # bubblewrap inside it needs nothing but /proc unmasked (build/flatpak/build-flatpak.sh).
   build-flatpak:
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
-    container:
-      # By digest (bump: CONTRIBUTING.md, Pinned tools).
-      image: ghcr.io/the-beper/kuickshare-flatpak:fedora45@sha256:461647d49f428683cd06e506021001833731ec3bb9ee5b5cac1d20e310b710cd
-      options: --privileged
     outputs:
       flatpak_sha256: ${{ steps.hash.outputs.flatpak }}
       commits_sha256: ${{ steps.hash.outputs.commits }}
@@ -211,21 +209,26 @@ jobs:
             mkdir pages
           fi
 
-      - name: Build the Flatpak (unsigned)
+      # By digest (bump: CONTRIBUTING.md, Pinned tools). A failed pull fails the job.
+      - name: Pull the build image
         run: |
-          touch /run/.containerenv
-          KUICKSHARE_FLATPAK_REPO="$PWD/pages/repo" build/flatpak/build-flatpak.sh
+          podman pull ghcr.io/the-beper/kuickshare-flatpak:fedora45@sha256:461647d49f428683cd06e506021001833731ec3bb9ee5b5cac1d20e310b710cd
+          podman tag ghcr.io/the-beper/kuickshare-flatpak:fedora45@sha256:461647d49f428683cd06e506021001833731ec3bb9ee5b5cac1d20e310b710cd localhost/kuickshare-flatpak:fedora45
+
+      - name: Build the Flatpak (unsigned)
+        run: KUICKSHARE_FLATPAK_REPO="$PWD/pages/repo" build/flatpak/build-flatpak.sh
 
       - name: Smoke test
         env:
           KUICKSHARE_EXPECT_VERSION: ${{ needs.validate.outputs.version }}
-        run: |
-          mkdir -p /run/user/0
-          chmod 700 /run/user/0
-          XDG_RUNTIME_DIR=/run/user/0 dbus-run-session -- build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
+        run: build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
 
+      # ostree of the runner image, as in sign-flatpak: the script only copies commits between repositories.
       - name: Export the new commits
-        run: build/release/export-flatpak-commits.sh pages dist/flatpak-commits
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ostree
+          build/release/export-flatpak-commits.sh pages dist/flatpak-commits
 
       - name: Hash
         id: hash

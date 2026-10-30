@@ -184,24 +184,23 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: read
-    container:
-      image: ghcr.io/the-beper/kuickshare-flatpak:fedora45
-      options: --privileged
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Build Flatpak
+      # On the plain runner, as the release's build job: the scripts run the image from images.yml with rootless podman (no job
+      # container, no --privileged). The release pins the image by digest; CI tests the one the tag points to now.
+      - name: Pull the build image
         run: |
-          touch /run/.containerenv
-          build/flatpak/build-flatpak.sh
+          podman pull ghcr.io/the-beper/kuickshare-flatpak:fedora45
+          podman tag ghcr.io/the-beper/kuickshare-flatpak:fedora45 localhost/kuickshare-flatpak:fedora45
+
+      - name: Build Flatpak
+        run: build/flatpak/build-flatpak.sh
 
       - name: Smoke test
-        run: |
-          mkdir -p /run/user/0
-          chmod 700 /run/user/0
-          XDG_RUNTIME_DIR=/run/user/0 dbus-run-session -- build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
+        run: build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
 
       # The repository this job built, for the update proof below (a tar: empty directories and modes matter to OSTree).
       - name: Pack the repository

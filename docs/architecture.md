@@ -479,7 +479,7 @@ flowchart LR
     D -->|"release.yml: sign, publish-repo.sh"| E["GitHub Pages: repo/, .flatpakrepo, .flatpakref"]
 ```
 
-- **Build environment.** The container needs `--privileged` for bwrap. Runtimes and the build cache live in the podman volume `kuickshare-flatpak`, not on the host.
+- **Build environment.** The container runs in rootless podman (the scripts refuse a rootful one) with `--security-opt unmask=ALL --cap-add SYS_ADMIN --cap-add NET_ADMIN` instead of `--privileged`: bwrap needs `/proc` unmasked to mount its own and those two capabilities to create namespaces (they hold inside the container's user namespace only). Runtimes and the build cache live in the podman volume `kuickshare-flatpak`, not on the host.
 - **Sandbox holes.** The permissions are listed in the [usage guide](usage.md#flatpak). The shell must own `org.kde.kuickshare` (`KDBusService`; the app does not start without it). The tray item registers with its connection name, so it needs no name of its own (tested against a fake watcher).
 - **Paths.** Inside the sandbox `XDG_*` point to `~/.var/app/<id>`, so `src/shell/launcher.h` finds the host's folders for the Dolphin and autostart entries in `/proc/self/mountinfo`.
   - Flatpak mounts the granted `kio/servicemenus` and `autostart` folders there at their host paths. If none is found, the default is `$HOME/.local/share` and `$HOME/.config`.

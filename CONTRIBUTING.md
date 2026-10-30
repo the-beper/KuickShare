@@ -31,7 +31,7 @@ build/build-tarball.sh && build/test-tarball.sh dist/KuickShare-x86_64.tar.gz
 build/flatpak/build-flatpak.sh && build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
 ```
 
-The Flatpak build runs in its own container image (`build/flatpak/Containerfile`, started with `--privileged` for bwrap). The KDE runtime, about 2 GB, and the build cache are kept in the podman volume `kuickshare-flatpak`; `podman volume rm kuickshare-flatpak` removes them. Nothing is installed on the host.
+The Flatpak build runs in its own container image (`build/flatpak/Containerfile`), started by the scripts with rootless podman (they refuse a rootful one) and `--security-opt unmask=ALL --cap-add SYS_ADMIN --cap-add NET_ADMIN` (bwrap mounts its own `/proc` and creates namespaces; the capabilities hold inside the container's user namespace only); there is no `--privileged`. CI and the release job run the same scripts on the plain runner, not in a job container (that would be a rootful, privileged one). The KDE runtime, about 2 GB, and the build cache are kept in the podman volume `kuickshare-flatpak`; `podman volume rm kuickshare-flatpak` removes them. Nothing is installed on the host.
 
 ## Run from the build tree
 

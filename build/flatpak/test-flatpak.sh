@@ -13,7 +13,8 @@ image=localhost/kuickshare-flatpak:fedora45
 
 if [ ! -e /run/.containerenv ]; then
     bundle=$(readlink -f "$1")
-    exec podman run --rm --privileged --security-opt label=disable -e KUICKSHARE_EXPECT_VERSION \
+    [ "$(podman info --format '{{.Host.Security.Rootless}}')" = true ] || { echo "test-flatpak.sh needs rootless podman" >&2; exit 1; }
+    exec podman run --rm --security-opt unmask=ALL --cap-add SYS_ADMIN --cap-add NET_ADMIN --security-opt label=disable -e KUICKSHARE_EXPECT_VERSION \
         --device /dev/fuse -v kuickshare-flatpak:/var/lib/flatpak -v "$bundle:/bundle.flatpak:ro" -v "$root/build/flatpak/test-flatpak.sh:/test.sh:ro" \
         -e XDG_RUNTIME_DIR=/run/user/0 \
         "$image" sh -c 'mkdir -p -m 700 /run/user/0 && exec dbus-run-session -- /test.sh /bundle.flatpak'
