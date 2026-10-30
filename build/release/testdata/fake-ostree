@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """A stand-in for the ostree CLI, for build/release/simulate.sh: a repository is a directory with
 refs/heads/<ref> (a file holding a commit id) and objects/<id>.commit ("parent=<id or ->" and a body). It implements
-the calls export-flatpak-commits.sh and sign-flatpak-repo.sh make, plus `fake-commit`, which plays what
-flatpak-builder does when it exports a build.
+the calls the release scripts make, plus `fake-commit`, which plays what flatpak-builder does when it exports a build.
+`gpg-sign` writes objects/<id>.commitmeta, a detached GnuPG signature of <id>.commit, and refuses a commit that has one,
+as ostree does; `show --print-detached-metadata-key=ostree.gpgsigs` prints something only for a signed commit; `fsck`
+only checks that every ref names a commit that exists.
 """
 import hashlib
 import os
 import shutil
+import subprocess
 import sys
 
 LOG = os.environ.get("FAKE_OSTREE_LOG")
@@ -112,6 +115,33 @@ def main():
                     shutil.copy(path, os.path.join(repo, "objects", commit + suffix))
             if named:
                 write_ref(repo, ref, commit)
+    elif command == "gpg-sign":
+        opts = [r for r in rest if r.startswith("--")]
+        commit, keys = [r for r in rest if not r.startswith("--")][0], [r for r in rest if not r.startswith("--")][1:]
+        home = [o.split("=", 1)[1] for o in opts if o.startswith("--gpg-homedir=")]
+        source, target = commit_path(repo, commit), os.path.join(repo, "objects", commit + ".commitmeta")
+        if not os.path.isfile(source):
+            die("gpg-sign: no commit %s" % commit)
+        if os.path.exists(target):
+            die("gpg-sign: commit %s is already signed" % commit)
+        for key in keys:
+            cmd = ["gpg", "--batch", "--yes", "--quiet", "--pinentry-mode", "error", "--local-user", key, "--detach-sign", "-o", target, source]
+            if home:
+                cmd[1:1] = ["--homedir", home[0]]
+            if subprocess.run(cmd).returncode != 0:
+                die("gpg-sign: signing %s failed" % commit)
+    elif command == "show":
+        key = [r for r in rest if r.startswith("--print-detached-metadata-key=")]
+        commit = read_ref(repo, [r for r in rest if not r.startswith("--")][0])
+        if key and os.path.isfile(os.path.join(repo, "objects", commit + ".commitmeta")):
+            print("[signature]")
+    elif command == "fsck":
+        base = os.path.join(repo, "refs", "heads")
+        for root, _, files in os.walk(base):
+            for name in files:
+                commit = open(os.path.join(root, name)).read().strip()
+                if not os.path.isfile(commit_path(repo, commit)):
+                    die("fsck: %s names a missing commit" % name)
     elif command == "fake-commit":
         ref, body = rest[0], rest[1]
         path = os.path.join(repo, "refs", "heads", ref)

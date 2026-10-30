@@ -4,12 +4,16 @@ of testdata/fake-ostree and real GnuPG for the signatures, so a wrong key, a mis
 up the way it would for a client:
 
   build-sign        signs the commit of a ref (objects/<id>.commitmeta, a detached signature of <id>.commit)
-  build-update-repo refuses when a ref has a commit that is not signed (the real tool embeds the commit metadata in the
-                    deltas, so signing must come first), then writes summary and summary.idx with their .sig files
+  build-update-repo with --generate-static-deltas refuses a ref whose commit is not signed (the real tool embeds the
+                    commit metadata in the deltas, so signing must come first); unless --no-update-appstream it adds
+                    the appstream refs (a new commit, signed only with --gpg-sign); it writes summary and summary.idx,
+                    and their .sig files with --gpg-sign (without it the old ones go, as ostree does)
   remote-add        imports the --gpg-import key into a keyring of its own, under $FLATPAK_USER_DIR
   remote-ls         verifies summary.sig with that keyring
   install           verifies the .commitmeta of the ref's commit with that keyring
+  update            --appstream verifies the .commitmeta of the appstream refs with that keyring
 """
+import hashlib
 import os
 import subprocess
 import sys
@@ -46,15 +50,38 @@ def read(path):
         return f.read().strip()
 
 
-def refs_of(repo):
+APPSTREAM_REFS = ("appstream/x86_64", "appstream2/x86_64")
+
+
+def refs_of(repo, prefixes=("app/", "runtime/")):
     base = os.path.join(repo, "refs", "heads")
     found = []
     for root, _, files in os.walk(base):
         for name in files:
             ref = os.path.relpath(os.path.join(root, name), base)
-            if ref.startswith(("app/", "runtime/")):
+            if ref.startswith(prefixes):
                 found.append((ref, read(os.path.join(root, name))))
     return sorted(found)
+
+
+def add_appstream(repo, key, home):
+    """What the real tool does for the appstream refs: a new commit when the data changed, signed with --gpg-sign."""
+    body = "appstream of " + " ".join("%s=%s" % pair for pair in refs_of(repo))
+    for ref in APPSTREAM_REFS:
+        path = os.path.join(repo, "refs", "heads", ref)
+        parent = read(path) if os.path.isfile(path) else "-"
+        if parent != "-":
+            with open(os.path.join(repo, "objects", parent + ".commit")) as f:
+                if f.read().split("\n")[1] == body:
+                    continue
+        commit = hashlib.sha256((parent + "\n" + body).encode()).hexdigest()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(os.path.join(repo, "objects", commit + ".commit"), "w") as f:
+            f.write("parent=%s\n%s\n" % (parent, body))
+        with open(path, "w") as f:
+            f.write(commit + "\n")
+        if key:
+            gpg_sign(key, home, os.path.join(repo, "objects", commit + ".commit"), os.path.join(repo, "objects", commit + ".commitmeta"))
 
 
 def gpg_sign(key, home, source, target):
@@ -97,17 +124,23 @@ def main():
                  os.path.join(repo, "objects", commit + ".commitmeta"))
     elif command == "build-update-repo":
         repo = positional[0]
-        for ref, commit in refs_of(repo):
-            if not os.path.isfile(os.path.join(repo, "objects", commit + ".commitmeta")):
-                die("build-update-repo: the commit of %s is not signed" % ref)
+        if "generate-static-deltas" in opts:
+            for ref, commit in refs_of(repo):
+                if not os.path.isfile(os.path.join(repo, "objects", commit + ".commitmeta")):
+                    die("build-update-repo: the commit of %s is not signed" % ref)
+        if "no-update-appstream" not in opts:
+            add_appstream(repo, opts.get("gpg-sign"), opts.get("gpg-homedir"))
         if os.environ.get("FAKE_FLATPAK_LEAK"):  # a tool that copies a secret into the site, to see the check catch it
             with open(os.path.join(repo, "leak.txt"), "w") as f:
                 f.write("-----BEGIN PGP PRIVATE KEY BLOCK-----\n")
-        summary = "".join("%s %s\n" % pair for pair in refs_of(repo))
+        summary = "".join("%s %s\n" % pair for pair in refs_of(repo, ("app/", "runtime/", "appstream")))
         for name in ("summary", "summary.idx"):
             with open(os.path.join(repo, name), "w") as f:
                 f.write(summary)
-            gpg_sign(opts["gpg-sign"], opts.get("gpg-homedir"), os.path.join(repo, name), os.path.join(repo, name + ".sig"))
+            if "gpg-sign" in opts:
+                gpg_sign(opts["gpg-sign"], opts.get("gpg-homedir"), os.path.join(repo, name), os.path.join(repo, name + ".sig"))
+            elif os.path.exists(os.path.join(repo, name + ".sig")):
+                os.remove(os.path.join(repo, name + ".sig"))
     elif command == "remote-add":
         name, url = positional[0], positional[1]
         home = client_home()
@@ -137,6 +170,14 @@ def main():
         if not gpg_verify(client_home(), os.path.join(repo, "objects", commit + ".commitmeta"),
                           os.path.join(repo, "objects", commit + ".commit")):
             die("install: the commit of %s is not signed by a key of the remote" % ref)
+    elif command == "update":
+        if "appstream" not in opts:
+            die("update: only --appstream", 99)
+        repo = remote_url(positional[0])[len("file://"):]
+        for ref, commit in refs_of(repo, ("appstream",)):
+            if not gpg_verify(client_home(), os.path.join(repo, "objects", commit + ".commitmeta"),
+                              os.path.join(repo, "objects", commit + ".commit")):
+                die("update: the commit of %s is not signed by a key of the remote" % ref)
     else:
         die("unsupported command: " + command, 99)
 
