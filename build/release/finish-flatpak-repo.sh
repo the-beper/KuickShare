@@ -8,11 +8,12 @@
 #     the refs.txt of the build;
 #   - the signed repository has the same refs as the prepared one, with the same commits (so exactly the commits of the list
 #     were signed, and no ref or commit was added, moved or dropped), and the sign list is on it;
-#   - against gh-pages itself (a read-only clone at the base the build started from, which the prepare job is not trusted
-#     for): every ref that is not on the sign list is as published, none was dropped, none is new, and every listed ref
-#     continues its published commit and is dated between it and an hour after now, and every unlisted head has the commit and
-#     signature files of gh-pages; every listed commit says it belongs to its own ref (ostree.ref-binding), the appstream
-#     ones have the metadata keys, subject and empty body of an honest run, and repo/ has only the entries ostree writes at its top and only ostree files below;
+#   - against gh-pages itself (a read-only clone at the base the build started from, which the prepare job is not
+#     trusted for): every ref that is not on the sign list is as published, none was dropped, none is new, and every
+#     listed ref continues its published commit and is dated between it and an hour after now, and every unlisted head
+#     has the commit and signature files of gh-pages; every listed commit says it belongs to its own ref
+#     (ostree.ref-binding), the appstream ones have the metadata keys, subject and empty body of an honest run, and
+#     repo/ has only the entries ostree writes at its top and only ostree files below;
 #   - the files of the site outside repo/ are exactly what build/flatpak/write-site-files.sh writes for SITE_URL and the key;
 #   - no file of the signed repository differs from the prepared one except the summary files and the signatures of the
 #     listed commits (no other object, no stray file, no config change);

@@ -8,14 +8,16 @@
 #   sign-flatpak-repo.sh --sign <work-dir> <out-dir>                                    the secret; writes <out-dir>/signed-repo.tar
 #   sign-flatpak-repo.sh --cleanup [<work-dir>]                                         an `if: always()` step
 # --check, before the key exists: the three files against the hashes the earlier jobs reported; gh-pages still where the
-# build left it (git ls-remote, ref hashes only); the archive holds plain files and directories under site/; every app and
-# runtime ref of the list is one of refs.txt with the commit the build made; the listed heads are those of the repository,
-# they have no signature yet and each says it belongs to its own ref (ostree.ref-binding); the appstream commits have the
-# metadata keys, empty collection binding, subject and empty body of an honest run; the config of the repository has only the lines ostree and flatpak
-# write and the top of repo/ only the entries ostree writes, and every file below it is an ostree object, ref head, summary file or the config; there are no static deltas; ostree fsck passes. Against gh-pages itself (an anonymous
-# clone at the base of the build): every ref that is not listed is as published and none was dropped, every listed ref continues
-# its published commit and is dated between it and an hour after now, and an unlisted head has the commit and signature files
-# of gh-pages, so a compromised prepare job cannot get the key to vouch for a rolled-back or invented ref. The old summary files are deleted: the new summary is made
+# build left it (git ls-remote, ref hashes only); the archive holds plain files and directories under site/; every app
+# and runtime ref of the list is one of refs.txt with the commit the build made; the listed heads are those of the
+# repository, they have no signature yet and each says it belongs to its own ref (ostree.ref-binding); the appstream
+# commits have the metadata keys, empty collection binding, subject and empty body of an honest run; the config of the
+# repository has only the lines ostree and flatpak write and the top of repo/ only the entries ostree writes, and every
+# file below it is an ostree object, ref head, summary file or the config; there are no static deltas; ostree fsck
+# passes. Against gh-pages itself (an anonymous clone at the base of the build): every ref that is not listed is as
+# published and none was dropped, every listed ref continues its published commit and is dated between it and an hour
+# after now, and an unlisted head has the commit and signature files of gh-pages, so a compromised prepare job cannot
+# get the key to vouch for a rolled-back or invented ref. The old summary files are deleted: the new summary is made
 # from the refs alone.
 # --sign: the secret is copied into a variable of the shell and removed from its environment before anything else runs, so
 # no child process (gpg, ostree, flatpak) inherits it. The key goes into a keyring in memory (/dev/shm) that holds exactly
