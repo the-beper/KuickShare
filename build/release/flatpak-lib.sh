@@ -59,3 +59,32 @@ key_fpr() {
     gpg --batch --quiet --show-keys --with-colons "$1" 2> /dev/null |
         awk -F: '$1 == "pub" { n++; w = 1; next } $1 == "sec" { bad = 1 } $1 == "fpr" && w { f = $10; w = 0 } END { if (n == 1 && !bad && f != "") print f }'
 }
+
+# read_signlist FILE [REFS]: checks sign-list.txt (one `ref TAB commit` per ref to sign: the refs of the build and the
+# appstream refs) and writes the refs, one per line, to $tmp/sign.refs. With the refs.txt of the build: every app and
+# runtime ref of the list is a ref of the build with the commit the build made, and every ref of the build is listed.
+read_signlist() {
+    : > "$tmp/sign.refs"
+    while IFS=$tab read -r ref commit extra; do
+        printf '%s\n' "$ref" | grep -Eq '^((app|runtime)/[A-Za-z0-9._-]+/[A-Za-z0-9_-]+/[A-Za-z0-9._-]+|appstream2?/[A-Za-z0-9_-]+)$' || bad_input "sign list: bad ref '$ref'"
+        printf '%s\n' "$commit" | grep -Eq '^[0-9a-f]{64}$' || bad_input "sign list: bad commit for $ref"
+        [ -z "$extra" ] || bad_input "sign list: more than two fields for $ref"
+        if [ -n "${2:-}" ]; then
+            case $ref in
+                app/* | runtime/*)
+                    [ "$(awk -F'\t' -v r="$ref" '$1 == r { print $2 }' "$2")" = "$commit" ] \
+                        || bad_input "sign list: $ref is not a ref of the build, or has another commit than the build made"
+                    ;;
+            esac
+        fi
+        printf '%s\n' "$ref" >> "$tmp/sign.refs"
+    done < "$1"
+    [ -s "$tmp/sign.refs" ] || bad_input "the sign list is empty"
+    [ -z "$(sort "$tmp/sign.refs" | uniq -d)" ] || bad_input "the sign list has a ref twice"
+    if [ -n "${2:-}" ]; then
+        awk -F'\t' '$1 != "base" { print $1 }' "$2" > "$tmp/build.refs"
+        while read -r ref; do
+            grep -qxF "$ref" "$tmp/sign.refs" || bad_input "sign list: $ref of the build is not on it"
+        done < "$tmp/build.refs"
+    fi
+}

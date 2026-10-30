@@ -1,10 +1,11 @@
 #!/bin/sh
 # Local simulation of the release: runs the real check-version.sh, verify-assets.sh, export-flatpak-commits.sh,
-# sign-flatpak-repo.sh and publish.sh (and build/flatpak/publish-repo.sh) against fixtures, with gh, flatpak, ostree and
+# prepare-flatpak-repo.sh, sign-flatpak-repo.sh, finish-flatpak-repo.sh and publish.sh (and build/flatpak/publish-repo.sh)
+# against fixtures, with gh, flatpak, ostree and
 # curl replaced by the fakes in build/release/testdata (put first in PATH). The signatures are real GnuPG signatures made
 # with ephemeral keys generated in temporary keyrings; no real key, no network, no container.
 # Needs only sh, git, gpg 2.2+, python3, tar, sha256sum, sha1sum. Everything happens in a mktemp directory that is removed
-# at the end. Output is TAP: "ok N - ..." lines and "# 19/19 passed"; the exit status is not 0 if a case fails.
+# at the end. Output is TAP: "ok N - ..." lines and "# 22/22 passed"; the exit status is not 0 if a case fails.
 #
 # What it does NOT show (see CONTRIBUTING.md, Releases): that real flatpak, ostree, gh and GitHub Pages behave like the
 # fakes. build/flatpak/test-repo-update.sh covers the real Flatpak client; the rest needs a release.
@@ -44,7 +45,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=20
+total=22
 n=0
 passed=0
 failed=0
@@ -106,7 +107,7 @@ else:
 state_is() { [ "$(release_state)" = "$1" ]; }
 pages_head() { git -C "$origin" rev-parse --verify -q refs/heads/gh-pages; }
 pages_file() { git -C "$origin" show "refs/heads/gh-pages:$1"; }
-no_leftovers() { [ -z "$(find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1)" ]; }
+no_leftovers() { [ -z "$(find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1)" ] && [ -z "$(find /dev/shm -maxdepth 1 -name 'kuickshare-gnupg.*' 2> /dev/null)" ]; }
 
 # ---- ephemeral keys: a real GnuPG key pair each, made in a keyring that exists only in this run ----
 gen_key() {
@@ -236,6 +237,7 @@ build_jobs() {
     ostree --repo="$w/pages/repo" fake-commit "runtime/$app_id.Locale/x86_64/stable" "built locale 1.2.3" > /dev/null
     run "$rel/export-flatpak-commits.sh" "$w/pages" "$w/commits"
     make_assets "$w/dist" 1.2.3
+    job_prepare
 }
 hashes_of_dist() {
     EXPECT_SHA256_APPIMAGE=$(sha256_of "$w/dist/KuickShare-x86_64.AppImage")
@@ -254,21 +256,44 @@ job_verify() {
     hashes_of_dist
     run "$rel/verify-assets.sh" "$w/assets"
 }
-job_sign() {
-    rm -rf "$w/signed"
-    EXPECT_COMMITS_SHA256=$(sha256_of "$w/commits/flatpak-commits.tar")
-    export EXPECT_COMMITS_SHA256
-    use_secret "${1:-a}"
-    run "$rel/sign-flatpak-repo.sh" "$w/commits/flatpak-commits.tar" "$w/signed"
-    drop_secret
-    cp "$work/last.out" "$w/sign.out"
-}
 job_prepare() { # the keyless job that finishes the repository unsigned
     rm -rf "$w/prepared" "$w/prepare.gho"
     EXPECT_COMMITS_SHA256=$(sha256_of "$w/commits/flatpak-commits.tar")
     EXPECT_REFS_SHA256=$(sha256_of "$w/commits/refs.txt")
     export EXPECT_COMMITS_SHA256 EXPECT_REFS_SHA256
     run env GITHUB_OUTPUT="$w/prepare.gho" "$rel/prepare-flatpak-repo.sh" "$w/commits/flatpak-commits.tar" "$w/prepared"
+    cp "$work/last.out" "$w/prepare.out"
+}
+# The jobs sign-flatpak (--check without the secret, then --sign with it) and finish-flatpak, from the files of prepare
+# and the hashes it reported. job_sign runs them in a row and stops at the first that fails, with its status in $rc.
+out_of() { sed -n "s/^$2=//p" "$1"; } # a value a job wrote to its GITHUB_OUTPUT
+job_sign_check() {
+    rm -rf "$w/signwork" "$w/signed-repo" "$w/signed" "$w/sign.gho"
+    EXPECT_PREPARED_SHA256=$(out_of "$w/prepare.gho" prepared_sha256)
+    EXPECT_SIGNLIST_SHA256=$(out_of "$w/prepare.gho" signlist_sha256)
+    EXPECT_REFS_SHA256=$(sha256_of "$w/commits/refs.txt")
+    EXPECT_BASE_SHA=$(out_of "$w/prepare.gho" base_sha)
+    export EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256 EXPECT_REFS_SHA256 EXPECT_BASE_SHA
+    run "$rel/sign-flatpak-repo.sh" --check "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
+}
+job_sign_key() { # <key name>
+    use_secret "${1:-a}"
+    run env GITHUB_OUTPUT="$w/sign.gho" "$rel/sign-flatpak-repo.sh" --sign "$w/signwork" "$w/signed-repo"
+    drop_secret
+}
+job_finish() {
+    EXPECT_PREPARED_SHA256=$(out_of "$w/prepare.gho" prepared_sha256)
+    EXPECT_SIGNLIST_SHA256=$(out_of "$w/prepare.gho" signlist_sha256)
+    EXPECT_SIGNED_SHA256=$(out_of "$w/sign.gho" signed_sha256)
+    EXPECT_BASE_SHA=$(out_of "$w/prepare.gho" base_sha)
+    export EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256 EXPECT_SIGNED_SHA256 EXPECT_BASE_SHA
+    run env GITHUB_OUTPUT="$w/finish.gho" "$rel/finish-flatpak-repo.sh" "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/signed-repo/signed-repo.tar" "$w/signed"
+}
+job_sign() { # <key name>
+    job_sign_check
+    if [ "$rc" -eq 0 ]; then job_sign_key "${1:-a}"; fi
+    if [ "$rc" -eq 0 ]; then job_finish; fi
+    cp "$work/last.out" "$w/sign.out"
 }
 prepared_has() { tar -tf "$w/prepared/prepared.tar" | grep -qx -e "$1"; }
 prepared_file() { tar -xOf "$w/prepared/prepared.tar" "$1"; }
@@ -308,8 +333,8 @@ check "the release notes link the changelog to the previous tag" file_has "$FAKE
 check "the AppImage was uploaded once" same "$(gh_count 'upload KuickShare-x86_64.AppImage')" 1
 check "gh-pages is the new site" same "$(pages_file repo/summary)" "$(tar -xOf "$w/signed/site.tar" ./repo/summary)"
 check "the old gh-pages is kept as gh-pages-previous" same "$(git -C "$origin" rev-parse refs/heads/gh-pages-previous)" "$base_sha"
-check "sign compared the GPGKey with the published one" file_has "$w/sign.out" "byte-identical"
-check "the new app commit sits on the published one" same "$(awk -F'\t' '$1 ~ /^app\// { print $3 }' "$w/signed/refs.txt")" "$(ostree --repo="$site/repo" rev-parse "app/$app_id/x86_64/stable")"
+check "prepare kept the GPGKey of the published repository" file_has "$w/prepare.out" "the GPGKey is the published one"
+check "the new app commit sits on the published one" same "$(awk -F'\t' '$1 ~ /^app\// { print $3 }' "$w/commits/refs.txt")" "$(ostree --repo="$site/repo" rev-parse "app/$app_id/x86_64/stable")"
 end_case "happy path: validate, verify, sign, publish; release complete and latest, previous gh-pages kept"
 
 # ---- 2. a missing artifact ----
@@ -450,52 +475,31 @@ build_jobs
 job_sign
 check "sign with the right key works" rc_is 0
 check "(and leaves no keyring or scratch directory behind)" no_leftovers
-check "(a client with only the public key accepted it)" out_has "a client with only the public key accepts"
-check "(the GPGKey was compared with the published one)" out_has "byte-identical"
+check "(a client with only the public key accepted it in finish)" out_has "a client with only the public key accepts"
+check "(the signed site has the signature of the summary)" tar -tf "$w/signed/site.tar" ./repo/summary.sig > /dev/null
 job_sign b
 check "sign with a key that is not the committed one is refused" rc_is 2
 check "(the message names the problem)" out_has "refusing to sign"
 check "(no keyring is left)" no_leftovers
-check "(no site was written)" not test -e "$w/signed/site.tar"
+check "(nothing was signed)" not test -e "$w/signed-repo/signed-repo.tar"
 sign_with_pubkey b a
 check "sign with a public key that is not the secret's is refused" rc_is 2
 check "(no keyring is left)" no_leftovers
 sign_with_pubkey b b
-check "a new key, not the published one, is refused even though it signs" rc_is 2
-check "(the message says clients would stop updating)" out_has "differs from the published one"
+check "a new key, not the published one, signs, and finish refuses the site" rc_is 1
+check "(the message says the GPGKey is not the key)" out_has "is not exactly the key"
 check "(no keyring is left)" no_leftovers
 check "(no site was written)" not test -e "$w/signed/site.tar"
-rm -rf "$w/signed"
-EXPECT_COMMITS_SHA256=0
-export EXPECT_COMMITS_SHA256
-use_secret a
-run "$rel/sign-flatpak-repo.sh" "$w/commits/flatpak-commits.tar" "$w/signed"
-drop_secret
-check "sign refuses commits that are not the ones the build job reported" rc_is 1
-check "(no keyring is left)" no_leftovers
 FAKE_FLATPAK_LEAK=1
 export FAKE_FLATPAK_LEAK
 job_sign
 unset FAKE_FLATPAK_LEAK
-check "sign refuses to archive a site that holds key material" rc_is 1
+check "sign refuses to archive a repository that holds key material" rc_is 1
 check "(the message says so)" out_has "key material found"
-check "(no site was written)" not test -e "$w/signed/site.tar"
+check "(nothing was signed)" not test -e "$w/signed-repo/signed-repo.tar"
 check "(no keyring is left)" no_leftovers
-mkdir "$w/evil"
-tar -xf "$w/commits/flatpak-commits.tar" -C "$w/evil"
-ln -s /etc/passwd "$w/evil/repo/objects/link"
-tar -C "$w/evil" -cf "$w/commits-evil.tar" repo refs.txt
-EXPECT_COMMITS_SHA256=$(sha256_of "$w/commits-evil.tar")
-export EXPECT_COMMITS_SHA256
-use_secret a
-run "$rel/sign-flatpak-repo.sh" "$w/commits-evil.tar" "$w/signed"
-drop_secret
-check "sign refuses a commits archive with a symlink" rc_is 2
-check "(the message says plain files)" out_has "not a plain file"
-check "(no keyring is left)" no_leftovers
-EXPECT_COMMITS_SHA256=$(sha256_of "$w/commits/flatpak-commits.tar")
-export EXPECT_COMMITS_SHA256
-run "$rel/sign-flatpak-repo.sh" "$w/commits/flatpak-commits.tar" "$w/signed"
+job_sign_check
+run "$rel/sign-flatpak-repo.sh" --sign "$w/signwork" "$w/signed-repo"
 check "sign without the secret exits 2" rc_is 2
 check "(the message names the secret)" out_has "FLATPAK_GPG_PRIVATE_KEY"
 check "(no keyring is left)" no_leftovers
@@ -506,9 +510,9 @@ git -C "$w/other" add -A
 git -C "$w/other" commit -q -m "Another release"
 git -C "$w/other" push -q origin gh-pages
 job_sign
-check "sign refuses when gh-pages moved after the build (stale base)" rc_is 3
+check "sign refuses when gh-pages moved since the build (stale base)" rc_is 3
 check "(no keyring is left)" no_leftovers
-end_case "failed build and failed sign: nothing exported, wrong parent, wrong key, wrong public key, new key, wrong hash, no secret, stale base; keyring always gone"
+end_case "failed build and failed sign: nothing exported, wrong parent, wrong key, wrong public key, new key, key material, no secret, stale base; keyring always gone"
 
 # ---- 6b. prepare: the keyless job that finishes the repository unsigned ----
 make_world 20
@@ -599,6 +603,239 @@ check "(it says the GPGKey is made from the public key file)" out_has "there was
 check "the GPGKey is the key of the public key file" same "$(prepared_file site/kuickshare.flatpakrepo | sed -n 's/^GPGKey=//p' | base64 -d | gpg --batch --show-keys --with-colons 2> /dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" "$(cat "$keys/a/fpr")"
 check "(and the .flatpakref has it too)" same "$(prepared_file site/kuickshare.flatpakref | sed -n 's/^GPGKey=//p')" "$(prepared_file site/kuickshare.flatpakrepo | sed -n 's/^GPGKey=//p')"
 end_case "prepare: unsigned site and list, hashes, GPGKey kept; refuses the secret, wrong hashes, links, other files, another key, stale base"
+
+# ---- 6c. the secret reaches nothing but the sign step; tampered inputs are refused ----
+make_world 22
+build_jobs
+cp -a "$w/prepared" "$w/prepared.orig"
+cp "$w/prepare.gho" "$w/prepare.gho.orig"
+restore_prepared() { rm -rf "$w/prepared"; cp -a "$w/prepared.orig" "$w/prepared"; cp "$w/prepare.gho.orig" "$w/prepare.gho"; }
+rehash_prepared() { # a compromised prepare job would report the hashes of what it made
+    sed -i '/^prepared_sha256=/d; /^signlist_sha256=/d' "$w/prepare.gho"
+    { echo "prepared_sha256=$(sha256_of "$w/prepared/prepared.tar")"; echo "signlist_sha256=$(sha256_of "$w/prepared/sign-list.txt")"; } >> "$w/prepare.gho"
+}
+unpack_prepared() { rm -rf "$w/x"; mkdir "$w/x"; tar -xf "$w/prepared.orig/prepared.tar" -C "$w/x"; }
+pack_prepared() { tar -C "$w/x" -cf "$w/prepared/prepared.tar" site; }
+app_ref=app/$app_id/x86_64/stable
+app_commit=$(awk -F'\t' -v r="$app_ref" '$1 == r { print $2 }' "$w/commits/refs.txt")
+locale_commit=$(awk -F'\t' '$1 ~ /^runtime\// { print $2 }' "$w/commits/refs.txt")
+
+# the secret in the environment of the steps that read data of other jobs
+use_secret a
+job_sign_check
+drop_secret
+check "sign --check refuses to run with the secret in its environment" rc_is 2
+check "(the message says so)" out_has "must run without the secret"
+check "(nothing was unpacked)" not test -e "$w/signwork/sign-list.txt"
+
+# no child process of the sign step sees the secret, and the step does what it should and no more
+rt=$work/shim
+mkdir -p "$rt/bin"
+for t in flatpak gpg ostree git; do
+    real=$(command -v "$t")
+    # shellcheck disable=SC2016 # the shim expands its own variables
+    printf '#!/bin/sh\necho "%s $*" >> "%s/calls"\nprintenv FLATPAK_GPG_PRIVATE_KEY >> "%s/seen" || true\nexec %s "$@"\n' "$t" "$rt" "$rt" "$real" > "$rt/bin/$t"
+    chmod +x "$rt/bin/$t"
+done
+with_shims() { saved_path=$PATH; PATH=$rt/bin:$PATH; export PATH; "$@"; PATH=$saved_path; export PATH; }
+: > "$rt/seen"
+: > "$rt/calls"
+with_shims job_sign_check
+check "sign --check passes" rc_is 0
+: > "$rt/seen"
+: > "$rt/calls"
+with_shims job_sign_key
+check "sign --sign works" rc_is 0
+check "the secret was seen by no child process" same "$(wc -c < "$rt/seen")" 0
+for t in flatpak gpg ostree; do
+    check "(the shim of $t was called: the check proves something)" test "$(grep -c "^$t " "$rt/calls")" -gt 0
+done
+check "the key was imported" file_has "$rt/calls" "^gpg .*--import"
+check "the commits were signed with ostree gpg-sign" file_has "$rt/calls" "^ostree .*gpg-sign"
+check "the summary was signed without appstream data" file_has "$rt/calls" "^flatpak build-update-repo --no-update-appstream --gpg-sign="
+check "no static delta" not file_has "$rt/calls" "generate-static-deltas"
+check "no prune" not file_has "$rt/calls" "prune"
+check "no commit was made or pulled from the build" not file_has "$rt/calls" "build-commit-from\\|pull-local\\|fake-commit"
+check "no git, no network in the step with the key" not file_has "$rt/calls" "^git "
+check "(no keyring is left)" no_leftovers
+use_secret a
+job_finish
+drop_secret
+check "finish refuses to run with the secret in its environment" rc_is 2
+check "(the message says so)" out_has "must run without the secret"
+job_finish
+check "finish accepts what sign made" rc_is 0
+cp -a "$w/signed-repo" "$w/signed-repo.orig"
+cp "$w/sign.gho" "$w/sign.gho.orig"
+
+# a tampered prepared site or sign list
+job_sign_check
+check "the untouched files pass the checks" rc_is 0
+unpack_prepared
+echo surprise > "$w/x/site/evil.txt"
+pack_prepared
+job_sign_check
+check "sign refuses a prepared site that is not the one prepare reported" rc_is 1
+check "(the message says so)" out_has "not the one the earlier job produced"
+check "(nothing was unpacked)" not test -e "$w/signwork/sign-list.txt"
+unpack_prepared
+ln -s /etc/passwd "$w/x/site/repo/objects/link"
+pack_prepared
+rehash_prepared
+job_sign_check
+check "sign refuses a prepared site with a symlink, whatever hash prepare reported" rc_is 2
+check "(the message says plain files)" out_has "not a plain file"
+restore_prepared
+unpack_prepared
+printf '%s\n' "$locale_commit" > "$w/x/site/repo/refs/heads/$app_ref"
+pack_prepared
+rehash_prepared
+job_sign_check
+check "sign refuses a repository whose listed ref is not at the listed commit" rc_is 1
+check "(the message names the ref)" out_has "is not at the listed commit"
+restore_prepared
+echo "app/other.app/x86_64/stable	$app_commit" >> "$w/prepared/sign-list.txt"
+job_sign_check
+check "sign refuses a sign list that is not the one prepare reported" rc_is 1
+rehash_prepared
+job_sign_check
+check "sign refuses a sign list with a ref that is not in refs.txt" rc_is 2
+check "(the message says so)" out_has "is not a ref of the build"
+restore_prepared
+awk -F'\t' -v r="$app_ref" -v c="$locale_commit" 'BEGIN { OFS = "\t" } $1 == r { $2 = c } { print }' "$w/prepared.orig/sign-list.txt" > "$w/prepared/sign-list.txt"
+rehash_prepared
+job_sign_check
+check "sign refuses a sign list with another commit than the build made" rc_is 2
+check "(the message says so)" out_has "another commit than the build made"
+restore_prepared
+grep -v "^$app_ref" "$w/prepared.orig/sign-list.txt" > "$w/prepared/sign-list.txt"
+rehash_prepared
+job_sign_check
+check "sign refuses a sign list that lacks a ref of the build" rc_is 2
+check "(the message says so)" out_has "of the build is not on it"
+restore_prepared
+sed -i 's/^base_sha=.*/base_sha=0000000000000000000000000000000000000001/' "$w/prepare.gho"
+job_sign_check
+check "sign refuses a base that is not the one refs.txt records" rc_is 2
+restore_prepared
+job_sign_check
+EXPECT_REFS_SHA256=0
+run "$rel/sign-flatpak-repo.sh" --check "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
+check "sign refuses a refs.txt that is not the one the build job reported" rc_is 1
+
+# a signed repository that is not the prepared one plus signatures
+job_sign_check
+job_sign_key
+restore_signed() { rm -rf "$w/signed-repo"; cp -a "$w/signed-repo.orig" "$w/signed-repo"; cp "$w/sign.gho.orig" "$w/sign.gho"; }
+rehash_signed() { sed -i '/^signed_sha256=/d' "$w/sign.gho"; echo "signed_sha256=$(sha256_of "$w/signed-repo/signed-repo.tar")" >> "$w/sign.gho"; }
+unpack_signed() { rm -rf "$w/y"; mkdir "$w/y"; tar -xf "$w/signed-repo.orig/signed-repo.tar" -C "$w/y"; }
+pack_signed() { tar -C "$w/y" -cf "$w/signed-repo/signed-repo.tar" repo; rehash_signed; }
+restore_signed
+job_finish
+check "finish accepts the signed repository" rc_is 0
+unpack_signed
+echo surprise >> "$w/y/repo/refs/heads/$app_ref"
+tar -C "$w/y" -cf "$w/signed-repo/signed-repo.tar" repo
+job_finish
+check "finish refuses a signed repository that is not the one sign reported" rc_is 1
+check "(the message says so)" out_has "not the one the earlier job produced"
+restore_signed
+unpack_signed
+mkdir -p "$w/y/repo/refs/heads/app/evil.app/x86_64"
+printf '%s\n' "$app_commit" > "$w/y/repo/refs/heads/app/evil.app/x86_64/stable"
+pack_signed
+job_finish
+check "finish refuses an extra ref" rc_is 1
+check "(the message says so)" out_has "other refs or commits"
+restore_signed
+unpack_signed
+printf '%s\n' "$locale_commit" > "$w/y/repo/refs/heads/$app_ref"
+pack_signed
+job_finish
+check "finish refuses a ref moved to another commit" rc_is 1
+check "(the message says so)" out_has "other refs or commits"
+restore_signed
+unpack_signed
+echo "<script>alert(1)</script>" > "$w/y/repo/evil.html"
+pack_signed
+job_finish
+check "finish refuses a stray file in the repository" rc_is 1
+check "(the message names the file)" out_has "evil.html"
+restore_signed
+unpack_signed
+obj=$(find "$w/y/repo/objects" -name '*.commit' | head -n 1)
+echo changed >> "$obj"
+pack_signed
+job_finish
+check "finish refuses a changed object" rc_is 1
+check "(the message says so)" out_has "differs from the prepared one"
+restore_signed
+unpack_signed
+rm "$w/y/repo/objects/$(printf '%s' "$app_commit" | cut -c1-2)/${app_commit#??}.commitmeta"
+pack_signed
+job_finish
+check "finish refuses a listed commit that is not signed" rc_fails
+check "(the client check says so)" out_has "not signed by a key"
+restore_signed
+unpack_signed
+rm "$w/y/repo/summary.sig"
+pack_signed
+job_finish
+check "finish refuses an unsigned summary" rc_fails
+restore_signed
+unpack_signed
+astream=$(cat "$w/y/repo/refs/heads/appstream/x86_64")
+rm "$w/y/repo/objects/$(printf '%s' "$astream" | cut -c1-2)/${astream#??}.commitmeta"
+pack_signed
+job_finish
+check "finish refuses an appstream commit that is not signed (Flatpak itself does not notice)" rc_fails
+check "(the pull with signature checks says so)" out_has "not signed by a key"
+restore_signed
+unpack_signed
+ln -s /etc/passwd "$w/y/repo/link"
+pack_signed
+job_finish
+check "finish refuses a symlink in the signed repository" rc_is 2
+check "(the message says plain files)" out_has "not a plain file"
+restore_signed
+unpack_prepared
+printf '[Flatpak Repo]\nGPGKey=%s\n' "$(gpg --batch --dearmor < "$keys/b/pub.asc" | base64 -w0)" > "$w/x/site/kuickshare.flatpakrepo"
+pack_prepared
+rehash_prepared
+job_finish
+check "finish refuses a GPGKey that is not the key of the public key file" rc_is 1
+check "(the message says so)" out_has "is not exactly the key"
+restore_prepared
+job_finish
+check "and accepts everything again once the files are the real ones" rc_is 0
+end_case "split signing: the secret reaches only the sign step; tampered prepared site, sign list, refs, signed repository, stray file, object, signature and key are refused"
+
+# ---- 6d. gh-pages moved since the build: sign refuses before the key is imported ----
+make_world 23
+build_jobs
+git clone -q "file://$origin" "$w/other"
+git -C "$w/other" checkout -q gh-pages
+echo other > "$w/other/other.txt"
+git -C "$w/other" add -A
+git -C "$w/other" commit -q -m "Another release"
+git -C "$w/other" push -q origin gh-pages
+rt=$work/shim2
+mkdir -p "$rt/bin"
+for t in flatpak gpg ostree git; do
+    real=$(command -v "$t")
+    # shellcheck disable=SC2016 # the shim expands its own variables
+    printf '#!/bin/sh\necho "%s $*" >> "%s/calls"\nexec %s "$@"\n' "$t" "$rt" "$real" > "$rt/bin/$t"
+    chmod +x "$rt/bin/$t"
+done
+: > "$rt/calls"
+with_shims job_sign
+check "sign exits 3 when gh-pages is not where the build left it" rc_is 3
+check "(the message says stale base)" out_has "stale base"
+check "the key was never imported" not file_has "$rt/calls" "--import"
+check "the repository was not touched" not file_has "$rt/calls" "gpg-sign\\|build-update-repo"
+check "gh-pages did ask: git ls-remote ran" file_has "$rt/calls" "^git ls-remote"
+check "(no keyring is left)" no_leftovers
+end_case "stale base: sign refuses before the key is imported, nothing was signed"
 
 # ---- 7. an upload fails halfway, then the rerun completes ----
 make_world 8
@@ -827,6 +1064,7 @@ ostree --repo="$w/pages/repo" fake-commit "runtime/$app_id.Locale/x86_64/stable"
 run "$rel/export-flatpak-commits.sh" "$w/pages" "$w/commits"
 check "the export records no base" file_has "$w/commits/refs.txt" "^base	-$"
 make_assets "$w/dist" 1.2.3
+job_prepare
 job_verify
 job_sign
 check "sign accepts the first release" rc_is 0

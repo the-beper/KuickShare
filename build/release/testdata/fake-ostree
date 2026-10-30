@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """A stand-in for the ostree CLI, for build/release/simulate.sh: a repository is a directory with
-refs/heads/<ref> (a file holding a commit id) and objects/<id>.commit ("parent=<id or ->" and a body). It implements
-the calls the release scripts make, plus `fake-commit`, which plays what flatpak-builder does when it exports a build.
-`gpg-sign` writes objects/<id>.commitmeta, a detached GnuPG signature of <id>.commit, and refuses a commit that has one,
-as ostree does; `show --print-detached-metadata-key=ostree.gpgsigs` prints something only for a signed commit; `fsck`
-only checks that every ref names a commit that exists.
+refs/heads/<ref> (a file holding a commit id) and objects/<first two digits>/<rest>.commit ("parent=<id or ->" and a
+body). It implements the calls the release scripts make, plus `fake-commit`, which plays what flatpak-builder does when it
+exports a build. `gpg-sign` writes <rest>.commitmeta, a detached GnuPG signature of the commit, and refuses a commit that
+has one, as ostree does; `remote add` and `pull` check commit signatures with the key imported into the remote;
+`show --print-detached-metadata-key=ostree.gpgsigs` prints something only for a signed commit; `fsck` only checks that
+every ref names a commit that exists.
 """
 import hashlib
 import os
@@ -26,8 +27,9 @@ def log(line):
             f.write(line + "\n")
 
 
-def commit_path(repo, commit):
-    return os.path.join(repo, "objects", commit + ".commit")
+def commit_path(repo, commit, ext=".commit"):
+    """Where ostree keeps an object of an archive repository: objects/<first two digits>/<the rest><ext>."""
+    return os.path.join(repo, "objects", commit[:2], commit[2:] + ext)
 
 
 def read_ref(repo, ref):
@@ -108,18 +110,49 @@ def main():
             # Like ostree: a ref name is copied with its ref, a bare checksum only as objects.
             named = os.path.isfile(os.path.join(src, "refs", "heads", ref))
             commit = read_ref(src, ref)
-            os.makedirs(os.path.join(repo, "objects"), exist_ok=True)
             for suffix in (".commit", ".commitmeta"):
-                path = os.path.join(src, "objects", commit + suffix)
+                path = commit_path(src, commit, suffix)
                 if os.path.exists(path):
-                    shutil.copy(path, os.path.join(repo, "objects", commit + suffix))
+                    os.makedirs(os.path.dirname(commit_path(repo, commit)), exist_ok=True)
+                    shutil.copy(path, commit_path(repo, commit, suffix))
             if named:
                 write_ref(repo, ref, commit)
+    elif command == "remote":
+        # remote add [--set=k=v] [--gpg-import=FILE] NAME URL: the URL and a keyring of its own under the repository
+        if rest[0] != "add":
+            die("remote: only add", 99)
+        opts = [r for r in rest[1:] if r.startswith("--")]
+        name, url = [r for r in rest[1:] if not r.startswith("--")]
+        home = os.path.join(repo, "gnupg-" + name)
+        os.makedirs(home, mode=0o700, exist_ok=True)
+        for o in opts:
+            if o.startswith("--gpg-import="):
+                if subprocess.run(["gpg", "--homedir", home, "--batch", "--quiet", "--import", o.split("=", 1)[1]]).returncode != 0:
+                    die("remote add: cannot import the key")
+        with open(os.path.join(repo, "remote-" + name), "w") as f:
+            f.write(url + "\n")
+    elif command == "pull":
+        # pull [--untrusted] REMOTE REF...: copies the head commit of each ref, refusing one whose signature the remote's keyring does not accept
+        name, refs = [r for r in rest if not r.startswith("--")][0], [r for r in rest if not r.startswith("--")][1:]
+        with open(os.path.join(repo, "remote-" + name)) as f:
+            src = f.read().strip()[len("file://"):]
+        home = os.path.join(repo, "gnupg-" + name)
+        for ref in refs:
+            commit = read_ref(src, ref)
+            sig = commit_path(src, commit, ".commitmeta")
+            done = subprocess.run(["gpg", "--homedir", home, "--batch", "--status-fd", "1", "--verify", sig, commit_path(src, commit)],
+                                  capture_output=True, text=True) if os.path.isfile(sig) else None
+            if done is None or done.returncode != 0 or "[GNUPG:] VALIDSIG" not in done.stdout:
+                die("pull: the commit of %s is not signed by a key of the remote" % ref)
+            for suffix in (".commit", ".commitmeta"):
+                os.makedirs(os.path.dirname(commit_path(repo, commit)), exist_ok=True)
+                shutil.copy(commit_path(src, commit, suffix), commit_path(repo, commit, suffix))
+            write_ref(repo, ref, commit)
     elif command == "gpg-sign":
         opts = [r for r in rest if r.startswith("--")]
         commit, keys = [r for r in rest if not r.startswith("--")][0], [r for r in rest if not r.startswith("--")][1:]
         home = [o.split("=", 1)[1] for o in opts if o.startswith("--gpg-homedir=")]
-        source, target = commit_path(repo, commit), os.path.join(repo, "objects", commit + ".commitmeta")
+        source, target = commit_path(repo, commit), commit_path(repo, commit, ".commitmeta")
         if not os.path.isfile(source):
             die("gpg-sign: no commit %s" % commit)
         if os.path.exists(target):
@@ -133,7 +166,7 @@ def main():
     elif command == "show":
         key = [r for r in rest if r.startswith("--print-detached-metadata-key=")]
         commit = read_ref(repo, [r for r in rest if not r.startswith("--")][0])
-        if key and os.path.isfile(os.path.join(repo, "objects", commit + ".commitmeta")):
+        if key and os.path.isfile(commit_path(repo, commit, ".commitmeta")):
             print("[signature]")
     elif command == "fsck":
         base = os.path.join(repo, "refs", "heads")
@@ -147,7 +180,7 @@ def main():
         path = os.path.join(repo, "refs", "heads", ref)
         parent = read_ref(repo, ref) if os.path.isfile(path) and not os.environ.get("FAKE_OSTREE_ORPHAN") else "-"
         commit = hashlib.sha256((parent + "\n" + body).encode()).hexdigest()
-        os.makedirs(os.path.join(repo, "objects"), exist_ok=True)
+        os.makedirs(os.path.dirname(commit_path(repo, commit)), exist_ok=True)
         with open(commit_path(repo, commit), "w") as f:
             f.write("parent=%s\n%s\n" % (parent, body))
         write_ref(repo, ref, commit)

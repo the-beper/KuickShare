@@ -11,7 +11,6 @@ up the way it would for a client:
   remote-add        imports the --gpg-import key into a keyring of its own, under $FLATPAK_USER_DIR
   remote-ls         verifies summary.sig with that keyring
   install           verifies the .commitmeta of the ref's commit with that keyring
-  update            --appstream verifies the .commitmeta of the appstream refs with that keyring
 """
 import hashlib
 import os
@@ -45,6 +44,11 @@ def options(args):
     return opts, positional
 
 
+def obj(repo, commit, ext):
+    """Where ostree keeps an object of an archive repository: objects/<first two digits>/<the rest><ext>."""
+    return os.path.join(repo, "objects", commit[:2], commit[2:] + ext)
+
+
 def read(path):
     with open(path) as f:
         return f.read().strip()
@@ -71,17 +75,18 @@ def add_appstream(repo, key, home):
         path = os.path.join(repo, "refs", "heads", ref)
         parent = read(path) if os.path.isfile(path) else "-"
         if parent != "-":
-            with open(os.path.join(repo, "objects", parent + ".commit")) as f:
+            with open(obj(repo, parent, ".commit")) as f:
                 if f.read().split("\n")[1] == body:
                     continue
         commit = hashlib.sha256((parent + "\n" + body).encode()).hexdigest()
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(os.path.join(repo, "objects", commit + ".commit"), "w") as f:
+        os.makedirs(os.path.dirname(obj(repo, commit, ".commit")), exist_ok=True)
+        with open(obj(repo, commit, ".commit"), "w") as f:
             f.write("parent=%s\n%s\n" % (parent, body))
         with open(path, "w") as f:
             f.write(commit + "\n")
         if key:
-            gpg_sign(key, home, os.path.join(repo, "objects", commit + ".commit"), os.path.join(repo, "objects", commit + ".commitmeta"))
+            gpg_sign(key, home, obj(repo, commit, ".commit"), obj(repo, commit, ".commitmeta"))
 
 
 def gpg_sign(key, home, source, target):
@@ -120,13 +125,13 @@ def main():
         if not os.path.isfile(path):
             die("build-sign: no ref " + ref)
         commit = read(path)
-        gpg_sign(opts["gpg-sign"], opts.get("gpg-homedir"), os.path.join(repo, "objects", commit + ".commit"),
-                 os.path.join(repo, "objects", commit + ".commitmeta"))
+        gpg_sign(opts["gpg-sign"], opts.get("gpg-homedir"), obj(repo, commit, ".commit"),
+                 obj(repo, commit, ".commitmeta"))
     elif command == "build-update-repo":
         repo = positional[0]
         if "generate-static-deltas" in opts:
             for ref, commit in refs_of(repo):
-                if not os.path.isfile(os.path.join(repo, "objects", commit + ".commitmeta")):
+                if not os.path.isfile(obj(repo, commit, ".commitmeta")):
                     die("build-update-repo: the commit of %s is not signed" % ref)
         if "no-update-appstream" not in opts:
             add_appstream(repo, opts.get("gpg-sign"), opts.get("gpg-homedir"))
@@ -167,17 +172,9 @@ def main():
         if not os.path.isfile(path):
             die("install: no ref " + ref)
         commit = read(path)
-        if not gpg_verify(client_home(), os.path.join(repo, "objects", commit + ".commitmeta"),
-                          os.path.join(repo, "objects", commit + ".commit")):
+        if not gpg_verify(client_home(), obj(repo, commit, ".commitmeta"),
+                          obj(repo, commit, ".commit")):
             die("install: the commit of %s is not signed by a key of the remote" % ref)
-    elif command == "update":
-        if "appstream" not in opts:
-            die("update: only --appstream", 99)
-        repo = remote_url(positional[0])[len("file://"):]
-        for ref, commit in refs_of(repo, ("appstream",)):
-            if not gpg_verify(client_home(), os.path.join(repo, "objects", commit + ".commitmeta"),
-                              os.path.join(repo, "objects", commit + ".commit")):
-                die("update: the commit of %s is not signed by a key of the remote" % ref)
     else:
         die("unsupported command: " + command, 99)
 

@@ -3,7 +3,7 @@
 # inside a throw-away rootless podman container. Runtimes and the Flatpak build cache live in the podman volume "kuickshare-flatpak", not on the host.
 # Usage: build/flatpak/build-flatpak.sh [flatpak-builder options...]
 # Without --gpg-sign the exported commits are unsigned. The release does that on purpose: this build job has no key, and
-# build/release/sign-flatpak-repo.sh signs the commits in another job (see CONTRIBUTING.md, Releases).
+# build/release/prepare-flatpak-repo.sh, sign-flatpak-repo.sh and finish-flatpak-repo.sh sign the commits in other jobs (see CONTRIBUTING.md, Releases).
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)
 image=localhost/kuickshare-flatpak:fedora45
