@@ -5,7 +5,7 @@
 # curl replaced by the fakes in build/release/testdata (put first in PATH). The signatures are real GnuPG signatures made
 # with ephemeral keys generated in temporary keyrings; no real key, no network, no container.
 # Needs only sh, git, gpg 2.2+, python3, tar, sha256sum, sha1sum. Everything happens in a mktemp directory that is removed
-# at the end. Output is TAP: "ok N - ..." lines and "# 22/22 passed"; the exit status is not 0 if a case fails.
+# at the end. Output is TAP: "ok N - ..." lines and "# 24/24 passed"; the exit status is not 0 if a case fails.
 #
 # What it does NOT show (see CONTRIBUTING.md, Releases): that real flatpak, ostree, gh and GitHub Pages behave like the
 # fakes. build/flatpak/test-repo-update.sh covers the real Flatpak client; the rest needs a release.
@@ -45,7 +45,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=22
+total=24
 n=0
 passed=0
 failed=0
@@ -285,9 +285,10 @@ job_finish() {
     EXPECT_PREPARED_SHA256=$(out_of "$w/prepare.gho" prepared_sha256)
     EXPECT_SIGNLIST_SHA256=$(out_of "$w/prepare.gho" signlist_sha256)
     EXPECT_SIGNED_SHA256=$(out_of "$w/sign.gho" signed_sha256)
+    EXPECT_REFS_SHA256=$(sha256_of "$w/commits/refs.txt")
     EXPECT_BASE_SHA=$(out_of "$w/prepare.gho" base_sha)
-    export EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256 EXPECT_SIGNED_SHA256 EXPECT_BASE_SHA
-    run env GITHUB_OUTPUT="$w/finish.gho" "$rel/finish-flatpak-repo.sh" "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/signed-repo/signed-repo.tar" "$w/signed"
+    export EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256 EXPECT_SIGNED_SHA256 EXPECT_REFS_SHA256 EXPECT_BASE_SHA
+    run env GITHUB_OUTPUT="$w/finish.gho" "$rel/finish-flatpak-repo.sh" "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/signed-repo/signed-repo.tar" "$w/commits/refs.txt" "$w/signed"
 }
 job_sign() { # <key name>
     job_sign_check
@@ -513,6 +514,118 @@ job_sign
 check "sign refuses when gh-pages moved since the build (stale base)" rc_is 3
 check "(no keyring is left)" no_leftovers
 end_case "failed build and failed sign: nothing exported, wrong parent, wrong key, wrong public key, new key, key material, no secret, stale base; keyring always gone"
+
+# ---- 6e. review findings: config, bindings, unlisted refs, tampered base ----
+add_published_ref() { # an extra ref on gh-pages with a parent, signed with key A, summary made again (as an earlier release would)
+    extra=app/other.app/x86_64/stable
+    git clone -q "file://$origin" "$w/pubx"
+    git -C "$w/pubx" checkout -q gh-pages
+    mkdir -p "$w/pubx/repo/refs/heads" "$w/pubx/repo/refs/mirrors" "$w/pubx/repo/refs/remotes" "$w/pubx/repo/tmp"
+    extra_parent=$(ostree --repo="$w/pubx/repo" fake-commit "$extra" "other 1")
+    extra_head=$(ostree --repo="$w/pubx/repo" fake-commit "$extra" "other 2")
+    ostree --repo="$w/pubx/repo" gpg-sign --gpg-homedir="$keys/a" "$extra_parent" "$(cat "$keys/a/fpr")"
+    ostree --repo="$w/pubx/repo" gpg-sign --gpg-homedir="$keys/a" "$extra_head" "$(cat "$keys/a/fpr")"
+    GNUPGHOME=$keys/a GPG_KEY_ID=$(cat "$keys/a/fpr") "$repo_root/build/flatpak/publish-repo.sh" "$w/pubx" "$SITE_URL"
+    git -C "$w/pubx" add -A
+    git -C "$w/pubx" commit -q -m "Another app"
+    git -C "$w/pubx" push -q origin gh-pages
+    base_sha=$(git -C "$w/pubx" rev-parse HEAD)
+}
+rehash_prepared() { sed -i '/^prepared_sha256=/d; /^signlist_sha256=/d' "$w/prepare.gho"; { echo "prepared_sha256=$(sha256_of "$w/prepared/prepared.tar")"; echo "signlist_sha256=$(sha256_of "$w/prepared/sign-list.txt")"; } >> "$w/prepare.gho"; }
+tamper_prepared() { # <shell command run in the unpacked site>: a compromised prepare job
+    rm -rf "$w/x"
+    mkdir "$w/x"
+    tar -xf "$w/prepared.orig/prepared.tar" -C "$w/x"
+    (cd "$w/x/site/repo" && eval "$1")
+    tar -C "$w/x" -cf "$w/prepared/prepared.tar" site
+    rehash_prepared
+}
+make_world 24
+add_published_ref
+build_jobs
+check "prepare accepts a published repository with another app in it" rc_is 0
+check "(and verified the published repository with the pinned key)" file_has "$w/prepare.out" "verify with the pinned key"
+check "the other app is not on the sign list" not file_has "$w/prepared/sign-list.txt" "other.app"
+cp -a "$w/prepared" "$w/prepared.orig"
+cp "$w/prepare.gho" "$w/prepare.gho.orig"
+app_ref=app/$app_id/x86_64/stable
+app_commit=$(awk -F'\t' -v r="$app_ref" '$1 == r { print $2 }' "$w/commits/refs.txt")
+restore_prepared() { rm -rf "$w/prepared"; cp -a "$w/prepared.orig" "$w/prepared"; cp "$w/prepare.gho.orig" "$w/prepare.gho"; }
+objfile() { printf 'objects/%s/%s.commit' "$(printf '%s' "$1" | cut -c1-2)" "${1#??}"; }
+
+job_sign
+check "an honest run goes through" rc_is 0
+# config
+tamper_prepared 'printf "[remote \"evil\"]\nurl=file:///etc\ngpg-verify=false\n" >> config'
+job_sign_check
+check "sign --check refuses a config with a remote" rc_is 2
+check "(the message says so)" out_has "config of the repository"
+restore_prepared
+tamper_prepared 'echo "gpg-verify=false" >> config'
+job_sign_check
+check "sign --check refuses a config with another key" rc_is 2
+restore_prepared
+# the old summary is gone before the key is used
+job_sign_check
+check "the old summary files are deleted in --check" not test -e "$w/signwork/site/repo/summary"
+check "(and the summaries folder)" not test -e "$w/signwork/site/repo/summaries"
+# binding of a listed commit
+tamper_prepared "sed -i 's|^binding=.*|binding=app/other.app/x86_64/stable|' $(objfile "$app_commit")"
+job_sign_check
+check "sign --check refuses a listed commit bound to another ref" rc_is 1
+check "(the message says so)" out_has "not bound to its own ref"
+restore_prepared
+tamper_prepared "sed -i '/^binding=/d' $(objfile "$app_commit")"
+job_sign_check
+check "sign --check refuses a listed commit with no binding" rc_is 1
+restore_prepared
+# a signature already on a listed commit
+tamper_prepared "touch $(objfile "$app_commit" | sed 's/\.commit$/.commitmeta/')"
+job_sign_check
+check "sign --check refuses a listed commit that has a signature" rc_is 1
+restore_prepared
+# an unlisted ref rolled back or dropped, which a compromised prepare job would do and the new summary would vouch for
+tamper_prepared "printf '%s\n' $extra_parent > refs/heads/$extra"
+job_sign
+check "sign does not look at refs it was not asked to sign" rc_is 1
+check "finish refuses a ref that was rolled back" out_has "not on the sign list"
+restore_prepared
+tamper_prepared "rm refs/heads/$extra"
+job_sign
+check "finish refuses a ref that was dropped" rc_is 1
+check "(the message says so)" out_has "is missing in the signed repository"
+restore_prepared
+# a listed commit with another binding, after the signature step
+job_sign_check
+job_sign_key
+job_finish
+check "finish accepts the honest signed repository" rc_is 0
+rm -rf "$w/y"
+mkdir "$w/y"
+tar -xf "$w/signed-repo/signed-repo.tar" -C "$w/y"
+sed -i 's|^binding=.*|binding=app/other.app/x86_64/stable|' "$w/y/repo/$(objfile "$app_commit")"
+tar -C "$w/y" -cf "$w/signed-repo/signed-repo.tar" repo
+sed -i '/^signed_sha256=/d' "$w/sign.gho"
+echo "signed_sha256=$(sha256_of "$w/signed-repo/signed-repo.tar")" >> "$w/sign.gho"
+rm -rf "$w/signed"
+job_finish
+check "finish refuses a listed commit bound to another ref" rc_is 1
+check "(the message says so)" out_has "not bound to its own ref"
+check "(no site was written)" not test -e "$w/signed/site.tar"
+end_case "review findings: config, bindings, a signature already there, rolled-back and dropped unlisted refs"
+
+make_world 25
+git clone -q "file://$origin" "$w/pubx"
+git -C "$w/pubx" checkout -q gh-pages
+echo tampered >> "$w/pubx/repo/summary"
+git -C "$w/pubx" commit -q -a -m "Tampered"
+git -C "$w/pubx" push -q origin gh-pages
+base_sha=$(git -C "$w/pubx" rev-parse HEAD)
+build_jobs
+check "prepare refuses a published summary that the pinned key did not sign" rc_is 2
+check "(the message says so)" out_has "does not verify with the pinned key"
+check "(nothing was written)" not test -e "$w/prepared/prepared.tar"
+end_case "tampered gh-pages: the base is verified with the pinned key before anything is built on it"
 
 # ---- 6b. prepare: the keyless job that finishes the repository unsigned ----
 make_world 20

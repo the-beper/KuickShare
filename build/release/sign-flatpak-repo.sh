@@ -1,16 +1,21 @@
 #!/bin/sh
-# Release gate 3b, the only place that touches the Flatpak signing key, and as little else as possible: it unpacks nothing
-# it has not checked, makes no commit, no appstream data and no static delta. It signs the commits that
-# prepare-flatpak-repo.sh listed and the summary that lists them, and hands back the whole repository. Nothing is pushed.
+# Release gate 3b, the only place that touches the Flatpak signing key, and as little else as possible: it makes no commit,
+# no appstream data and no static delta. It signs the commits that prepare-flatpak-repo.sh listed and the summary that lists
+# them, and hands back the whole repository. Nothing is pushed. With the key at hand ostree and flatpak still read parts of
+# the repository: the commit objects, the commit metadata (xa.metadata) of the refs to write the summary, and the config.
+# --check therefore reduces what they can meet before the key exists (config, fsck, bindings, no old summary).
 #   sign-flatpak-repo.sh --check <prepared.tar> <sign-list.txt> <refs.txt> <work-dir>   no secret (refused when it is set)
 #   sign-flatpak-repo.sh --sign <work-dir> <out-dir>                                    the secret; writes <out-dir>/signed-repo.tar
 #   sign-flatpak-repo.sh --cleanup [<work-dir>]                                         an `if: always()` step
 # --check, before the key exists: the three files against the hashes the earlier jobs reported; gh-pages still where the
 # build left it (git ls-remote, ref hashes only); the archive holds plain files and directories under site/; every app and
-# runtime ref of the list is one of refs.txt with the commit the build made; the listed heads are those of the repository.
+# runtime ref of the list is one of refs.txt with the commit the build made; the listed heads are those of the repository,
+# they have no signature yet and each says it belongs to its own ref (ostree.ref-binding); the config of the repository has
+# only the lines ostree and flatpak write; ostree fsck passes. The old summary files are deleted: the new summary is made
+# from the refs alone.
 # --sign: the secret is copied into a variable of the shell and removed from its environment before anything else runs, so
 # no child process (gpg, ostree, flatpak) inherits it. The key goes into a keyring in memory (/dev/shm) that holds exactly
-# one secret key, the one of SIGNING_PUBKEY. Each listed commit that has no signature gets one (ostree gpg-sign), then
+# one secret key, the one of SIGNING_PUBKEY. Each listed commit gets a signature (ostree gpg-sign), then
 # `flatpak build-update-repo --no-update-appstream --gpg-sign` signs the new summary: no prune, no deltas, no appstream.
 # The repository is scanned for key material and archived; the keyring is deleted, with its agent stopped, however the
 # script ends.
@@ -31,6 +36,8 @@
 # The first commands are the secret's: it leaves the environment before any other command can run.
 secret=${FLATPAK_GPG_PRIVATE_KEY:-}
 unset FLATPAK_GPG_PRIVATE_KEY
+# Nothing an earlier step put into the environment of this one may load code into the tools that run with the key.
+unset BASH_ENV ENV LD_PRELOAD LD_LIBRARY_PATH
 set -eu
 umask 077
 tools=$(cd "$(dirname "$0")/../.." && pwd)
@@ -109,6 +116,15 @@ if [ "$mode" = --check ]; then
     while IFS=$tab read -r ref commit; do
         [ "$(ostree --repo="$repo" rev-parse "$ref")" = "$commit" ] || fail "$ref is not at the listed commit in the prepared repository"
     done < "$signlist"
+    check_config "$repo/config"
+    ostree --repo="$repo" fsck --quiet > "$tmp/fsck.log" 2>&1 || { sed 's/^/    /' "$tmp/fsck.log" >&2; fail "ostree fsck of the prepared repository failed"; }
+    while IFS=$tab read -r ref commit; do
+        check_binding "$repo" "$ref" "$commit"
+        sigs=$(ostree --repo="$repo" show --print-detached-metadata-key=ostree.gpgsigs "$commit" 2> /dev/null || true)
+        [ -z "$sigs" ] || fail "$ref $commit has a signature already: prepare lists only new commits"
+    done < "$signlist"
+    # The summary is made again from the refs; whatever the old files hold is not read with the key at hand.
+    rm -rf "$repo/summary" "$repo/summary.sig" "$repo/summary.idx" "$repo/summary.idx.sig" "$repo/summaries"
     want_fpr=$(key_fpr "$pubkey")
     printf '%s\n' "$want_fpr" | grep -Eq '^[0-9A-F]{40}$' || bad_input "cannot read the fingerprint of $pubkey"
     cp "$signlist" "$work/sign-list.txt"
@@ -141,9 +157,9 @@ if printf '%s\n' "$secret" | gpg --batch --quiet --import 2> "$gnupg/import.log"
     sed 's/^/gpg: /' "$gnupg/import.log" >&2
     bad_input "the secret FLATPAK_GPG_PRIVATE_KEY cannot be imported"
 fi
-# Something to look for in the repository before it is archived: a line of the secret key text and the keygrips of its keys.
-# (They stay in the keyring directory, which is removed at the end.)
-printf '%s\n' "$secret" | awk 'NR == 3 && length($0) >= 20' > "$gnupg/leaks"
+# Something to look for in the repository before it is archived: every line of the secret key text (the base64 body) and the
+# keygrips of its keys. (They stay in the keyring directory, which is removed at the end.)
+printf '%s\n' "$secret" | awk 'length($0) >= 40 && $0 !~ /^-/' > "$gnupg/leaks"
 unset secret
 secret_count=$(gpg --batch --list-secret-keys --with-colons | awk -F: '$1 == "sec" { n++ } END { print n + 0 }')
 [ "$secret_count" -eq 1 ] || bad_input "the secret holds $secret_count keys, expected exactly one"
@@ -160,9 +176,6 @@ echo "$me: signing key $fpr matches $(basename "$pubkey")"
 # ---- sign the listed commits, then the summary that lists them ----
 while IFS=$tab read -r ref commit; do
     [ "$(ostree --repo="$repo" rev-parse "$ref")" = "$commit" ] || bad_input "$ref is not the commit that was checked"
-    # A commit that has a signature came with the published history.
-    sigs=$(ostree --repo="$repo" show --print-detached-metadata-key=ostree.gpgsigs "$commit" 2> /dev/null || true)
-    [ -z "$sigs" ] || { echo "$me: $ref $commit is signed already"; continue; }
     ostree --repo="$repo" gpg-sign --gpg-homedir="$gnupg" "$commit" "$fpr" > "$gnupg/gpg-sign.log" 2>&1 || {
         sed 's/^/    /' "$gnupg/gpg-sign.log" >&2
         fail "ostree gpg-sign failed for $ref"

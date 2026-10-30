@@ -5,7 +5,8 @@ body). It implements the calls the release scripts make, plus `fake-commit`, whi
 exports a build. `gpg-sign` writes <rest>.commitmeta, a detached GnuPG signature of the commit, and refuses a commit that
 has one, as ostree does; `remote add` and `pull` check commit signatures with the key imported into the remote;
 `show --print-detached-metadata-key=ostree.gpgsigs` prints something only for a signed commit; `fsck` only checks that
-every ref names a commit that exists.
+every ref names a commit that exists. A commit file has the lines `parent=<id or ->`, the body and `binding=<ref>`, what
+`show --print-metadata-key=ostree.ref-binding` prints (as `['<ref>']`); `init` writes the config of an archive-z2 repository.
 """
 import hashlib
 import os
@@ -48,6 +49,12 @@ def parent_of(repo, commit):
     return first.split("=", 1)[1]
 
 
+def write_config(repo):
+    os.makedirs(repo, exist_ok=True)
+    with open(os.path.join(repo, "config"), "w") as f:
+        f.write("[core]\nrepo_version=1\nmode=archive-z2\n")
+
+
 def write_ref(repo, ref, commit):
     path = os.path.join(repo, "refs", "heads", ref)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -77,6 +84,7 @@ def main():
     if command == "init":
         os.makedirs(os.path.join(repo, "refs", "heads"), exist_ok=True)
         os.makedirs(os.path.join(repo, "objects"), exist_ok=True)
+        write_config(repo)
     elif command == "refs":
         create = [r for r in rest if r.startswith("--create=")]
         if create:
@@ -131,12 +139,20 @@ def main():
                     die("remote add: cannot import the key")
         with open(os.path.join(repo, "remote-" + name), "w") as f:
             f.write(url + "\n")
+        with open(os.path.join(repo, "remote-" + name + ".opts"), "w") as f:
+            f.write(" ".join(opts) + "\n")
     elif command == "pull":
         # pull [--untrusted] REMOTE REF...: copies the head commit of each ref, refusing one whose signature the remote's keyring does not accept
         name, refs = [r for r in rest if not r.startswith("--")][0], [r for r in rest if not r.startswith("--")][1:]
         with open(os.path.join(repo, "remote-" + name)) as f:
             src = f.read().strip()[len("file://"):]
         home = os.path.join(repo, "gnupg-" + name)
+        with open(os.path.join(repo, "remote-" + name + ".opts")) as f:
+            if "gpg-verify-summary=true" in f.read():
+                done = subprocess.run(["gpg", "--homedir", home, "--batch", "--status-fd", "1", "--verify", os.path.join(src, "summary.sig"), os.path.join(src, "summary")],
+                                      capture_output=True, text=True) if os.path.isfile(os.path.join(src, "summary.sig")) else None
+                if done is None or done.returncode != 0 or "[GNUPG:] VALIDSIG" not in done.stdout:
+                    die("pull: the summary is not signed by a key of the remote")
         for ref in refs:
             commit = read_ref(src, ref)
             sig = commit_path(src, commit, ".commitmeta")
@@ -166,6 +182,13 @@ def main():
     elif command == "show":
         key = [r for r in rest if r.startswith("--print-detached-metadata-key=")]
         commit = read_ref(repo, [r for r in rest if not r.startswith("--")][0])
+        if "--print-metadata-key=ostree.ref-binding" in rest:
+            with open(commit_path(repo, commit)) as f:
+                found = [line.strip()[len("binding="):] for line in f if line.startswith("binding=")]
+            if not found:
+                die("show: no such metadata key")
+            print("['%s']" % found[0])
+            return
         if key and os.path.isfile(commit_path(repo, commit, ".commitmeta")):
             print("[signature]")
     elif command == "fsck":
@@ -177,12 +200,14 @@ def main():
                     die("fsck: %s names a missing commit" % name)
     elif command == "fake-commit":
         ref, body = rest[0], rest[1]
+        if not os.path.isfile(os.path.join(repo, "config")):
+            write_config(repo)
         path = os.path.join(repo, "refs", "heads", ref)
         parent = read_ref(repo, ref) if os.path.isfile(path) and not os.environ.get("FAKE_OSTREE_ORPHAN") else "-"
-        commit = hashlib.sha256((parent + "\n" + body).encode()).hexdigest()
+        commit = hashlib.sha256((ref + "\n" + parent + "\n" + body).encode()).hexdigest()
         os.makedirs(os.path.dirname(commit_path(repo, commit)), exist_ok=True)
         with open(commit_path(repo, commit), "w") as f:
-            f.write("parent=%s\n%s\n" % (parent, body))
+            f.write("parent=%s\n%s\nbinding=%s\n" % (parent, body, ref))
         write_ref(repo, ref, commit)
         print(commit)
     else:

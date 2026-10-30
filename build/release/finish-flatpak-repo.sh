@@ -2,25 +2,32 @@
 # Release gate 3c, keyless, on a machine of its own. Trusts nothing the signing job returned: it checks, with the public key
 # only, that the signed repository is the prepared one plus signatures, and then writes the site as a tar archive for
 # publish.sh. Nothing is pushed.
-#   finish-flatpak-repo.sh <prepared.tar> <sign-list.txt> <signed-repo.tar> <out-dir>      writes <out-dir>/site.tar
+#   finish-flatpak-repo.sh <prepared.tar> <sign-list.txt> <signed-repo.tar> <refs.txt> <out-dir>      writes <out-dir>/site.tar
 # What it checks:
-#   - the three files against the hashes the earlier jobs reported; plain files and directories only;
+#   - the four files against the hashes the earlier jobs reported; plain files and directories only; the sign list against
+#     the refs.txt of the build;
 #   - the signed repository has the same refs as the prepared one, with the same commits (so exactly the commits of the list
 #     were signed, and no ref or commit was added, moved or dropped), and the sign list is on it;
-#   - no file of the signed repository differs from the prepared one except the summary files and the signatures of commits
-#     (no other object, no stray file, no config change);
+#   - against gh-pages itself (a read-only clone at the base the build started from, which the prepare job is not trusted
+#     for): every ref that is not on the sign list is as published, none was dropped, none is new, and every listed ref
+#     continues its published commit; every listed commit says it belongs to its own ref (ostree.ref-binding);
+#   - no file of the signed repository differs from the prepared one except the summary files and the signatures of the
+#     listed commits (no other object, no stray file, no config change);
 #   - a client that has only signing-key.asc accepts the summary and every listed commit (flatpak remote-add, remote-ls,
 #     install --no-deploy for the app and runtime refs; for every listed ref an ostree pull with commit and summary signatures checked);
 #   - the GPGKey of the .flatpakrepo and the .flatpakref is exactly that key.
 # Environment:
-#   EXPECT_PREPARED_SHA256, EXPECT_SIGNLIST_SHA256, EXPECT_SIGNED_SHA256   as prepare-flatpak and sign-flatpak reported them
+#   EXPECT_PREPARED_SHA256, EXPECT_SIGNLIST_SHA256, EXPECT_SIGNED_SHA256, EXPECT_REFS_SHA256   as prepare-flatpak, sign-flatpak
+#                            and build-flatpak reported them
+#   GITHUB_REPOSITORY        owner/name, to find gh-pages (or PAGES_REMOTE: the git URL)
 #   EXPECT_BASE_SHA          the gh-pages commit the build started from ("-" when there was none); passed on to the output
 #   GITHUB_SHA               the commit of the run; HEAD of the checkout must be exactly it
 #   RUNNER_TEMP              where scratch files go (default $TMPDIR, then /tmp)
 #   SIGNING_PUBKEY           (optional) the public key, default build/flatpak/signing-key.asc
 #   KUICKSHARE_ROOT          (optional) the checkout whose HEAD is compared
 # Refuses to run when FLATPAK_GPG_PRIVATE_KEY is set. Writes site_sha256= and base_sha= to $GITHUB_OUTPUT when it is set.
-# Needs flatpak, ostree, gpg 2.2+, git, tar, base64. Exit codes: 0 ok, 1 a check failed, 2 bad input or the secret is set.
+# Needs flatpak, ostree, gpg 2.2+, git, tar, base64, diff. Exit codes: 0 ok, 1 a check failed, 2 bad input or the secret is
+# set, 3 gh-pages is not at the base of the build.
 # shellcheck disable=SC2154 # $tab comes from flatpak-lib.sh
 set -eu
 tools=$(cd "$(dirname "$0")/../.." && pwd)
@@ -40,16 +47,18 @@ trap 'exit 130' INT TERM HUP
 . "$tools/build/release/flatpak-lib.sh"
 
 no_secret
-[ $# -eq 4 ] || bad_input "usage: finish-flatpak-repo.sh <prepared.tar> <sign-list.txt> <signed-repo.tar> <out-dir>"
-: "${GITHUB_SHA:?}" "${EXPECT_PREPARED_SHA256:?}" "${EXPECT_SIGNLIST_SHA256:?}" "${EXPECT_SIGNED_SHA256:?}" "${EXPECT_BASE_SHA:?}"
+[ $# -eq 5 ] || bad_input "usage: finish-flatpak-repo.sh <prepared.tar> <sign-list.txt> <signed-repo.tar> <refs.txt> <out-dir>"
+: "${GITHUB_SHA:?}" "${EXPECT_PREPARED_SHA256:?}" "${EXPECT_SIGNLIST_SHA256:?}" "${EXPECT_SIGNED_SHA256:?}" "${EXPECT_REFS_SHA256:?}" "${EXPECT_BASE_SHA:?}"
+remote=${PAGES_REMOTE:-https://github.com/${GITHUB_REPOSITORY:?}.git}
 printf '%s\n' "$EXPECT_BASE_SHA" | grep -Eq '^(-|[0-9a-f]{40})$' || bad_input "EXPECT_BASE_SHA is not a commit or -"
 [ "$(git -C "$root" rev-parse HEAD)" = "$GITHUB_SHA" ] || fail "HEAD is not $GITHUB_SHA"
-for f in "$1" "$2" "$3"; do [ -f "$f" ] || bad_input "$f does not exist"; done
+for f in "$1" "$2" "$3" "$4"; do [ -f "$f" ] || bad_input "$f does not exist"; done
 prepared=$(readlink -f "$1")
 signlist=$(readlink -f "$2")
 signed=$(readlink -f "$3")
-mkdir -p "$4"
-out=$(cd "$4" && pwd)
+refs=$(readlink -f "$4")
+mkdir -p "$5"
+out=$(cd "$5" && pwd)
 mkdir -m 700 "$tmp/gnupg"
 GNUPGHOME=$tmp/gnupg
 export GNUPGHOME
@@ -58,6 +67,9 @@ export GNUPGHOME
 check_sha256 "$prepared" "$EXPECT_PREPARED_SHA256" "the prepared site"
 check_sha256 "$signlist" "$EXPECT_SIGNLIST_SHA256" "the sign list"
 check_sha256 "$signed" "$EXPECT_SIGNED_SHA256" "the signed repository"
+check_sha256 "$refs" "$EXPECT_REFS_SHA256" "refs.txt"
+read_refs "$refs"
+[ "$base" = "$EXPECT_BASE_SHA" ] || bad_input "refs.txt says the build started from $base, not from $EXPECT_BASE_SHA"
 tar_safe "$prepared" site
 tar_safe "$signed" repo
 mkdir "$tmp/prepared" "$tmp/signed"
@@ -68,7 +80,7 @@ new=$tmp/signed/repo
 old=$site/repo
 [ -d "$old/objects" ] && [ -d "$new/objects" ] || bad_input "the prepared site or the signed archive has no ostree repository"
 for r in "$old" "$new"; do mkdir -p "$r/refs/heads" "$r/refs/mirrors" "$r/refs/remotes" "$r/tmp"; done
-read_signlist "$signlist"
+read_signlist "$signlist" "$refs"
 
 # ---- the signed repository is the prepared one plus signatures ----
 ref_map() { for ref in $(ostree --repo="$1" refs | LC_ALL=C sort); do printf '%s %s\n' "$ref" "$(ostree --repo="$1" rev-parse "$ref")"; done; }
@@ -80,17 +92,44 @@ while IFS=$tab read -r ref commit; do
     grep -qxF "$ref $commit" "$tmp/refs.new" || fail "$ref is not at the listed commit $commit in the signed repository"
 done < "$signlist"
 ostree --repo="$new" fsck --quiet > "$tmp/fsck.log" 2>&1 || { sed 's/^/    /' "$tmp/fsck.log" >&2; fail "ostree fsck of the signed repository failed"; }
+while IFS=$tab read -r ref commit; do check_binding "$new" "$ref" "$commit"; done < "$signlist"
+
+# ---- against gh-pages: the prepared repository is not trusted for what the build did not make ----
+mkdir "$tmp/pages"
+if [ "$base" = - ]; then
+    heads=$(git ls-remote --heads "$remote" gh-pages | cut -f1)
+    [ -z "$heads" ] || stale "the build saw no gh-pages, but it exists now ($heads)"
+    : > "$tmp/refs.pub"
+else
+    git clone --quiet --depth 1 --branch gh-pages "$remote" "$tmp/pages"
+    [ "$(git -C "$tmp/pages" rev-parse HEAD)" = "$base" ] || stale "gh-pages is not at $base any more"
+    mkdir -p "$tmp/pages/repo/refs/heads" "$tmp/pages/repo/refs/mirrors" "$tmp/pages/repo/refs/remotes" "$tmp/pages/repo/tmp"
+    ref_map "$tmp/pages/repo" > "$tmp/refs.pub"
+fi
+while read -r ref commit; do
+    now=$(awk -v r="$ref" '$1 == r { print $2 }' "$tmp/refs.new")
+    [ -n "$now" ] || fail "$ref of gh-pages is missing in the signed repository"
+    if grep -qxF "$ref" "$tmp/sign.refs"; then
+        [ "$(ostree --repo="$new" rev-parse "$now^" 2> /dev/null)" = "$commit" ] || fail "$ref: the new commit $now does not continue the published commit $commit"
+    else
+        [ "$now" = "$commit" ] || fail "$ref is at $now in the signed repository and at $commit on gh-pages, and it is not on the sign list"
+    fi
+done < "$tmp/refs.pub"
+while read -r ref commit; do
+    grep -q "^$ref " "$tmp/refs.pub" || grep -qxF "$ref" "$tmp/sign.refs" || fail "$ref is new in the signed repository and not on the sign list"
+done < "$tmp/refs.new"
 # The only files that may be new, changed or gone: the summary files and the signatures of commits.
-allowed='^\./(summary|summary\.sig|summary\.idx|summary\.idx\.sig)$|^\./summaries/[^/]+$|^\./objects/[0-9a-f]{2}/[0-9a-f]{62}\.commitmeta$'
+allowed='^\./(summary|summary\.sig|summary\.idx|summary\.idx\.sig)$|^\./summaries/[^/]+$'
+while IFS=$tab read -r ref commit; do printf './objects/%s/%s.commitmeta\n' "$(printf '%s' "$commit" | cut -c1-2)" "${commit#??}"; done < "$signlist" > "$tmp/files.signatures"
 for r in old new; do
     case $r in old) d=$old ;; *) d=$new ;; esac
     (cd "$d" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum > "$tmp/files.$r")
 done
 # Lines are "hash  ./path": a path that is in one list only, or with another hash, shows up as a line of the diff.
 diff "$tmp/files.old" "$tmp/files.new" | sed -n 's/^[<>] [0-9a-f]\{64\}  //p' | LC_ALL=C sort -u > "$tmp/files.changed"
-if bad=$(grep -Ev "$allowed" "$tmp/files.changed"); then
+if bad=$(grep -Ev "$allowed" "$tmp/files.changed" | grep -vxF -f "$tmp/files.signatures"); then
     printf '%s\n' "$bad" | sed 's/^/    /' >&2
-    fail "the signed repository differs from the prepared one in files that are not summary files or commit signatures"
+    fail "the signed repository differs from the prepared one in files that are not summary files or signatures of the listed commits"
 fi
 echo "$me: the signed repository is the prepared one plus $(wc -l < "$tmp/files.changed") summary and signature files"
 

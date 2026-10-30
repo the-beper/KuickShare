@@ -115,8 +115,8 @@ FLATPAK_GPG_PRIVATE_KEY=$(GNUPGHOME=$work/key-a gpg --batch --pinentry-mode loop
     GITHUB_OUTPUT=$work/ci/sign.out "$root/build/release/sign-flatpak-repo.sh" --sign "$work/signwork" "$work/signed-repo"
 # finish-flatpak: no key
 EXPECT_PREPARED_SHA256=$EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256=$EXPECT_SIGNLIST_SHA256 EXPECT_BASE_SHA=$base \
-    EXPECT_SIGNED_SHA256=$(sed -n 's/^signed_sha256=//p' "$work/ci/sign.out") \
-    "$root/build/release/finish-flatpak-repo.sh" "$work/prepared/prepared.tar" "$work/prepared/sign-list.txt" "$work/signed-repo/signed-repo.tar" "$work/signed"
+    EXPECT_SIGNED_SHA256=$(sed -n 's/^signed_sha256=//p' "$work/ci/sign.out") EXPECT_REFS_SHA256=$(sha256sum "$work/commits/refs.txt" | cut -d' ' -f1) \
+    "$root/build/release/finish-flatpak-repo.sh" "$work/prepared/prepared.tar" "$work/prepared/sign-list.txt" "$work/signed-repo/signed-repo.tar" "$work/commits/refs.txt" "$work/signed"
 mkdir "$work/s2"
 tar -xf "$work/signed/site.tar" -C "$work/s2"
 c2=$(ostree --repo="$work/s2/repo" rev-parse "$ref")

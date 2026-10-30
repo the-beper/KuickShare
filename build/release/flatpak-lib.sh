@@ -66,7 +66,7 @@ key_fpr() {
 read_signlist() {
     : > "$tmp/sign.refs"
     while IFS=$tab read -r ref commit extra; do
-        printf '%s\n' "$ref" | grep -Eq '^((app|runtime)/[A-Za-z0-9._-]+/[A-Za-z0-9_-]+/[A-Za-z0-9._-]+|appstream2?/[A-Za-z0-9_-]+)$' || bad_input "sign list: bad ref '$ref'"
+        printf '%s\n' "$ref" | grep -Eq '^((app|runtime)/[A-Za-z0-9._-]+/[A-Za-z0-9_-]+/[A-Za-z0-9._-]+|appstream2?/x86_64)$' || bad_input "sign list: bad ref '$ref'"
         printf '%s\n' "$commit" | grep -Eq '^[0-9a-f]{64}$' || bad_input "sign list: bad commit for $ref"
         [ -z "$extra" ] || bad_input "sign list: more than two fields for $ref"
         if [ -n "${2:-}" ]; then
@@ -86,5 +86,23 @@ read_signlist() {
         while read -r ref; do
             grep -qxF "$ref" "$tmp/sign.refs" || bad_input "sign list: $ref of the build is not on it"
         done < "$tmp/build.refs"
+    fi
+}
+
+# check_binding REPO REF COMMIT: the commit says it belongs to REF (ostree.ref-binding, which flatpak build-export and
+# build-update-repo set on app, runtime and appstream commits alike: tried with flatpak 1.14.6), so a signed commit cannot be
+# served under another ref.
+check_binding() {
+    [ "$(ostree --repo="$1" show --print-metadata-key=ostree.ref-binding "$3" 2> /dev/null)" = "['$2']" ] \
+        || fail "$2 $3 is not bound to its own ref (ostree.ref-binding)"
+}
+
+# check_config FILE: the config of an ostree repository is read by every ostree and flatpak call, so it may hold only what
+# `ostree init --mode=archive-z2` and flatpak build-update-repo write: no remote, no gpg setting, nothing else.
+check_config() {
+    [ -f "$1" ] || bad_input "the repository has no config file"
+    if bad=$(grep -Evx '\[core\]|repo_version=1|mode=archive-z2|indexed-deltas=true|' "$1"); then
+        printf '%s\n' "$bad" | sed 's/^/    /' >&2
+        bad_input "the config of the repository has lines that are not the expected ones (see above)"
     fi
 }

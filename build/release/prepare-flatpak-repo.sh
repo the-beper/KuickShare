@@ -99,6 +99,22 @@ else
 fi
 export GPG_KEY_B64
 
+# What this build is put on must be what was signed: the published summary and the head commits of the published refs
+# verify with the pinned key (a pull with signature checks from the clone), so a gh-pages that was altered is not re-signed.
+if [ "$base" != - ]; then
+    gpg --batch --dearmor < "$pubkey" > "$tmp/pinned.gpg"
+    published_refs=$(ostree --repo="$repo" refs | LC_ALL=C sort)
+    [ -n "$published_refs" ] || bad_input "gh-pages has a repository without a ref"
+    ostree --repo="$tmp/verify" init --mode=archive
+    ostree --repo="$tmp/verify" remote add --set=gpg-verify=true --set=gpg-verify-summary=true --gpg-import="$tmp/pinned.gpg" published "file://$repo"
+    # shellcheck disable=SC2086 # refs have no spaces
+    ostree --repo="$tmp/verify" pull --untrusted published $published_refs > "$tmp/verify.log" 2>&1 || {
+        sed 's/^/    /' "$tmp/verify.log" >&2
+        bad_input "the published repository does not verify with the pinned key $want_fpr: gh-pages was altered, or is not signed by that key"
+    }
+    echo "$me: the published summary and heads verify with the pinned key"
+fi
+
 # Each ref moves from its published commit to the new one: no commit is skipped or replaced.
 while IFS=$tab read -r ref commit parent; do
     [ "$ref" != base ] || continue
