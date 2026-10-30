@@ -917,14 +917,41 @@ fake_release v1.2.4 true KuickShare-x86_64.flatpak
 job_prepare
 check "prepare ignores a draft" rc_is 0
 fake_release v1.2.4 false KuickShare-x86_64.flatpak
+# the old record of gh-pages is what a pusher writes: the subject of the head commit says it is current
 git clone -q "file://$origin" "$w/pubx"
 git -C "$w/pubx" checkout -q gh-pages
-git -C "$w/pubx" commit -q --allow-empty -m "By hand"
+git -C "$w/pubx" commit -q --allow-empty -m "Flatpak repository for v1.2.4"
 git -C "$w/pubx" push -q origin gh-pages
 base_sha=$(git -C "$w/pubx" rev-parse HEAD)
 build_jobs
-check "prepare refuses a gh-pages that does not say which release it is, when one is published" rc_is 1
-check "(the message says so)" out_has "does not say which release"
+check "prepare refuses a rolled-back gh-pages whose head commit says it is current" rc_is 1
+check "(the version comes from the signed app: the message names it)" out_has "the app of gh-pages is at 1.2.2, but v1.2.4 is published"
+fake_release v1.2.4 false -
+job_prepare
+check "(without the bundle on the release it is accepted again)" rc_is 0
+# GH_TOKEN is for gh alone
+: > "$FAKE_OSTREE_LOG"
+: > "$FAKE_FLATPAK_LOG"
+fake_release v1.2.2 false KuickShare-x86_64.flatpak
+job_prepare
+check "prepare lists the releases with the token" rc_is 0
+check "(ostree never saw the token)" not file_has "$FAKE_OSTREE_LOG" "SAW GH_TOKEN"
+check "(flatpak never saw it)" not file_has "$FAKE_FLATPAK_LOG" "SAW GH_TOKEN"
+# the first publication: no gh-pages, so no release may be on Pages already
+make_world 36
+git -C "$origin" update-ref -d refs/heads/gh-pages
+rm -rf "$w/pages" "$w/commits" "$w/dist"
+mkdir "$w/pages"
+ostree --repo="$w/pages/repo" fake-commit "app/$app_id/x86_64/stable" "first 1.2.3" > /dev/null
+ostree --repo="$w/pages/repo" fake-commit "runtime/$app_id.Locale/x86_64/stable" "first locale 1.2.3" > /dev/null
+run "$rel/export-flatpak-commits.sh" "$w/pages" "$w/commits"
+fake_release v1.2.2 false KuickShare-x86_64.flatpak
+job_prepare
+check "prepare refuses a first publication when a release with the bundle exists" rc_is 1
+check "(the message says gh-pages is gone)" out_has "there is no gh-pages, but v1.2.2 is published"
+fake_release v1.2.2 false -
+job_prepare
+check "(a release without files does not stop the first publication)" rc_is 0
 end_case "a gh-pages older than the newest published release (with files) is refused, a draft or a release without files is no anchor"
 
 # ---- 6p. a published repository from the time of static deltas ----

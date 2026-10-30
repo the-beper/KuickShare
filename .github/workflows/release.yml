@@ -341,7 +341,7 @@ jobs:
           name: flatpak-commits
           path: flatpak-commits
 
-      # GH_TOKEN is the read-only token of the job (contents: read): the script lists the published releases with it.
+      # GH_TOKEN is the read-only token of the job (contents: read): the script gives it to gh alone, to list the published releases.
       - name: Prepare the Flatpak repository (unsigned)
         id: prepare
         env:

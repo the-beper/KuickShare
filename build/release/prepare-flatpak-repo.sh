@@ -17,7 +17,8 @@
 #   RUNNER_TEMP              where the scratch directory goes (default $TMPDIR, then /tmp)
 #   SIGNING_PUBKEY           (optional) the public key of the repository, default build/flatpak/signing-key.asc
 #   KUICKSHARE_ROOT          (optional) the checkout whose HEAD is compared
-# Refuses a gh-pages that is older than the newest published release (see the comment where it is checked).
+# Refuses a gh-pages whose signed app head is older than the newest published release, and no gh-pages while one is published
+# (see the comments where they are checked). GH_TOKEN is read at the start and given to gh only.
 # Refuses to run when FLATPAK_GPG_PRIVATE_KEY is set. The GPGKey of the .flatpakrepo is SIGNING_PUBKEY, dearmored; a published
 # one with other bytes is refused (installed clients would stop updating, and finish requires these bytes).
 # Writes prepared_sha256=, signlist_sha256= and base_sha= to $GITHUB_OUTPUT when it is set.
@@ -42,6 +43,9 @@ trap 'exit 130' INT TERM HUP
 . "$tools/build/release/flatpak-lib.sh"
 
 no_secret
+# The token is for gh alone: flatpak, ostree and git never see it.
+gh_token=${GH_TOKEN:-}
+unset GH_TOKEN
 [ $# -eq 2 ] || bad_input "usage: prepare-flatpak-repo.sh <flatpak-commits.tar> <out-dir>"
 : "${GITHUB_SHA:?}" "${EXPECT_COMMITS_SHA256:?}" "${EXPECT_REFS_SHA256:?}" "${SITE_URL:?}"
 remote=${PAGES_REMOTE:-https://github.com/${GITHUB_REPOSITORY:?}.git}
@@ -70,24 +74,10 @@ set -- $(cat "$tmp/ref.names")
 want_fpr=$(key_fpr "$pubkey")
 printf '%s\n' "$want_fpr" | grep -Eq '^[0-9A-F]{40}$' || bad_input "cannot read the fingerprint of $pubkey"
 
-# ---- the published repository ----
-heads=$(git ls-remote --heads "$remote" gh-pages | cut -f1)
-site=$tmp/site
-if [ "$base" = - ]; then
-    [ -z "$heads" ] || stale "the build saw no gh-pages, but it exists now ($heads)"
-    mkdir "$site"
-else
-    [ "$heads" = "$base" ] || stale "gh-pages is $heads, the build started from $base"
-    git clone --quiet --depth 1 --branch gh-pages "$remote" "$site"
-    [ "$(git -C "$site" rev-parse HEAD)" = "$base" ] || stale "the clone of gh-pages is not at $base"
-fi
-# gh-pages must not be older than the last published release: someone who can only push to gh-pages could restore an older,
-# validly signed state, and a new version would be built on it. The record of gh-pages is the subject of its commit that
-# publish.sh writes; the anchor outside it is the newest published release that has the Flatpak bundle (a release made by hand
-# has no files and was never on Pages). Only a draft or no release at all means there is nothing to compare.
-if [ "$base" != - ]; then
-    gh api --paginate "repos/${GITHUB_REPOSITORY:?}/releases?per_page=100" > "$tmp/releases.json" || bad_input "cannot list the releases of $GITHUB_REPOSITORY (gh needs GH_TOKEN)"
-    published=$(python3 -I - "$tmp/releases.json" << 'PY'
+# Releases that are published: the anchor outside gh-pages for the check against a rolled-back gh-pages below. The newest
+# non-draft vX.Y.Z release that has the Flatpak bundle (a release made by hand has no files and was never on Pages).
+GH_TOKEN=$gh_token gh api --paginate "repos/${GITHUB_REPOSITORY:?}/releases?per_page=100" > "$tmp/releases.json" || bad_input "cannot list the releases of $GITHUB_REPOSITORY (gh needs GH_TOKEN)"
+published=$(python3 -I - "$tmp/releases.json" << 'PY'
 import json
 import re
 import sys
@@ -109,14 +99,19 @@ while True:
             found.append(tag)
 print(max(found, key=lambda t: tuple(int(n) for n in t[1:].split("."))) if found else "")
 PY
-    ) || bad_input "cannot read the list of releases"
-    if [ -n "$published" ]; then
-        pages_tag=$(git -C "$site" log -1 --format=%s | sed -n 's/^Flatpak repository for \(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p')
-        [ -n "$pages_tag" ] || fail "the head of gh-pages does not say which release it is ('Flatpak repository for vX.Y.Z'), and $published is published"
-        [ "$(printf '%s\n%s\n' "$pages_tag" "$published" | sort -V | tail -n 1)" = "$pages_tag" ] \
-            || fail "gh-pages is at $pages_tag, but $published is published: gh-pages was rolled back or never updated. Restore it first (CONTRIBUTING.md, Releases, When a run fails)"
-        echo "$me: gh-pages is at $pages_tag, the newest published release is $published"
-    fi
+) || bad_input "cannot read the list of releases"
+
+# ---- the published repository ----
+heads=$(git ls-remote --heads "$remote" gh-pages | cut -f1)
+site=$tmp/site
+if [ "$base" = - ]; then
+    [ -z "$heads" ] || stale "the build saw no gh-pages, but it exists now ($heads)"
+    [ -z "$published" ] || fail "there is no gh-pages, but $published is published: gh-pages was deleted. Restore it first (CONTRIBUTING.md, Releases, When a run fails)"
+    mkdir "$site"
+else
+    [ "$heads" = "$base" ] || stale "gh-pages is $heads, the build started from $base"
+    git clone --quiet --depth 1 --branch gh-pages "$remote" "$site"
+    [ "$(git -C "$site" rev-parse HEAD)" = "$base" ] || stale "the clone of gh-pages is not at $base"
 fi
 repo=$site/repo
 if [ ! -d "$repo" ]; then ostree --repo="$repo" init --mode=archive-z2; fi
@@ -161,6 +156,17 @@ if [ "$base" != - ]; then
             || bad_input "what was pulled for $ref is not the commit $commit of the signed summary"
     done < "$tmp/summary.refs"
     echo "$me: the published summary and heads verify with the pinned key"
+    # gh-pages must not be older than the last published release: someone who can push only to gh-pages could bring back an
+    # older, validly signed state, and a new version would be built on it. The version is read from the signed app head (the
+    # first <release> of its metainfo, in the repository that was just pulled and verified), not from anything gh-pages says.
+    if [ -n "$published" ]; then
+        app_version=$(ostree --repo="$tmp/verify" cat app/io.github.the_beper.KuickShare/x86_64/stable /files/share/metainfo/io.github.the_beper.KuickShare.metainfo.xml 2> /dev/null \
+            | awk '/<release / && !d { v = $0; sub(/.*version="/, "", v); sub(/".*/, "", v); print v; d = 1 }') || app_version=
+        printf '%s\n' "$app_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || fail "cannot read the version of the signed app head of gh-pages (metainfo, first <release>), and $published is published"
+        [ "$(printf '%s\n%s\n' "v$app_version" "$published" | sort -V | tail -n 1)" = "v$app_version" ] \
+            || fail "the app of gh-pages is at $app_version, but $published is published: gh-pages was rolled back or never updated. Restore it first (CONTRIBUTING.md, Releases, When a run fails)"
+        echo "$me: the signed app of gh-pages is at $app_version, the newest published release is $published"
+    fi
 fi
 
 # Each ref moves from its published commit to the new one: no commit is skipped or replaced.

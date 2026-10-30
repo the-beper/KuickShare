@@ -84,6 +84,8 @@ def sha256(path):
 
 def api(args):
     method = option(args, "-X") or "GET"
+    if not os.environ.get("GH_TOKEN"):
+        die("gh: GH_TOKEN is not set", 4)
     option(args, "--paginate", False)
     endpoint = args[0].split("?")[0]
     state = load()

@@ -30,6 +30,8 @@ def log(line):
     if LOG:
         with open(LOG, "a") as f:
             f.write(line + "\n")
+            if os.environ.get("GH_TOKEN"):
+                f.write("SAW GH_TOKEN in the environment of flatpak\n")
 
 
 def options(args):
