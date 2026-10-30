@@ -23,6 +23,6 @@ fi
 
 mkdir -p "$site/repo/refs/heads" "$site/repo/refs/mirrors" "$site/repo/refs/remotes" "$site/repo/tmp"
 # The deltas of earlier releases would be listed in the new summary: clients fetch objects instead.
-rm -rf "$site/repo/deltas"
+rm -rf "$site/repo/deltas" "$site/repo/delta-indexes"
 flatpak build-update-repo ${sign:+"$sign"} --prune --prune-depth=3 "$site/repo"
 GPG_KEY_B64=$key "$(dirname "$0")/write-site-files.sh" "$site" "$url"
