@@ -16,8 +16,8 @@
 #   RUNNER_TEMP              where the scratch directory goes (default $TMPDIR, then /tmp)
 #   SIGNING_PUBKEY           (optional) the public key of the repository, default build/flatpak/signing-key.asc
 #   KUICKSHARE_ROOT          (optional) the checkout whose HEAD is compared
-# Refuses to run when FLATPAK_GPG_PRIVATE_KEY is set. The GPGKey of the .flatpakrepo is the published one when it is the
-# key of SIGNING_PUBKEY (anything else is refused: installed clients would stop updating), else made from SIGNING_PUBKEY.
+# Refuses to run when FLATPAK_GPG_PRIVATE_KEY is set. The GPGKey of the .flatpakrepo is SIGNING_PUBKEY, dearmored; a published
+# one with other bytes is refused (installed clients would stop updating, and finish requires these bytes).
 # Writes prepared_sha256=, signlist_sha256= and base_sha= to $GITHUB_OUTPUT when it is set.
 # Needs flatpak, ostree, gpg 2.2+, git, tar, base64. Exit codes: 0 ok, 1 a check failed, 2 bad input or the secret is set,
 # 3 gh-pages is not where the build left it ("stale base").
@@ -84,17 +84,15 @@ if [ ! -d "$repo" ]; then ostree --repo="$repo" init --mode=archive-z2; fi
 # git keeps no empty directory, and ostree (Ubuntu's at least) fails without these.
 mkdir -p "$repo/refs/heads" "$repo/refs/mirrors" "$repo/refs/remotes" "$repo/tmp"
 
-# The key every installed client trusts must not change by accident: the published one, if it is the key of $pubkey.
+# The key every installed client trusts must not change by accident: $pubkey dearmored, which must be the published bytes.
+GPG_KEY_B64=$(gpg --batch --dearmor < "$pubkey" | base64 -w0)
 old_gpgkey=
 if [ -f "$site/kuickshare.flatpakrepo" ]; then old_gpgkey=$(sed -n 's/^GPGKey=//p' "$site/kuickshare.flatpakrepo"); fi
 if [ -n "$old_gpgkey" ]; then
-    printf '%s' "$old_gpgkey" | base64 -d > "$tmp/old.gpg" 2> /dev/null || bad_input "the GPGKey of the published .flatpakrepo is not valid base64"
-    [ "$(key_fpr "$tmp/old.gpg")" = "$want_fpr" ] \
-        || bad_input "the GPGKey of the published .flatpakrepo is not exactly the key of $(basename "$pubkey") ($want_fpr): installed clients would stop updating"
-    GPG_KEY_B64=$old_gpgkey
+    [ "$old_gpgkey" = "$GPG_KEY_B64" ] \
+        || bad_input "the GPGKey of the published .flatpakrepo is not $(basename "$pubkey") ($want_fpr) byte for byte: installed clients would stop updating"
     echo "$me: the GPGKey is the published one, the key $want_fpr"
 else
-    GPG_KEY_B64=$(gpg --batch --dearmor < "$pubkey" | base64 -w0)
     echo "$me: there was no published .flatpakrepo: the GPGKey is made from $(basename "$pubkey")"
 fi
 export GPG_KEY_B64

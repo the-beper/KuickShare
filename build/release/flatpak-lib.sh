@@ -30,7 +30,7 @@ tar_safe() {
         bad_input "$(basename "$tar_file") has a member name with characters outside A-Z a-z 0-9 . _ / -"
     fi
     tar_allowed="^($tar_prefix(/|\$)"
-    for extra in "$@"; do tar_allowed="$tar_allowed|$extra\$"; done
+    for extra in "$@"; do tar_allowed="$tar_allowed|$(printf '%s' "$extra" | sed 's/[.]/\\./g')\$"; done
     tar_allowed="$tar_allowed)"
     if grep -Evq "$tar_allowed" "$tmp/tar.names" || grep -Eq '(^/|(^|/)\.\.(/|$))' "$tmp/tar.names"; then
         bad_input "$(basename "$tar_file") has files other than $tar_prefix/ $*"
@@ -111,8 +111,18 @@ check_config() {
     fi
 }
 
-# ref_map REPO: "ref commit" for every ref of an ostree repository, sorted.
-ref_map() { for ref in $(ostree --repo="$1" refs | LC_ALL=C sort); do printf '%s %s\n' "$ref" "$(ostree --repo="$1" rev-parse "$ref")"; done; }
+# ref_map REPO: "ref commit" for every ref of an ostree repository, sorted; stops if a ref cannot be read (an empty commit
+# would pass the comparisons of check_pages_base). Refs under refs/mirrors are not listed by `ostree refs` but can end up in
+# the summary, so a repository with any is refused.
+ref_map() {
+    [ -z "$(find "$1/refs/mirrors" -type f 2> /dev/null)" ] || fail "$1 has refs under refs/mirrors"
+    ostree --repo="$1" refs > "$tmp/ref_map.list" || fail "cannot list the refs of $1"
+    LC_ALL=C sort "$tmp/ref_map.list" > "$tmp/ref_map.sorted"
+    while read -r ref; do
+        ref_commit=$(ostree --repo="$1" rev-parse "$ref") && [ -n "$ref_commit" ] || fail "cannot read the commit of $ref in $1"
+        printf '%s %s\n' "$ref" "$ref_commit"
+    done < "$tmp/ref_map.sorted"
+}
 
 # no_deltas REPO: static deltas carry the signature of their commit and are not part of a release (publish-repo.sh deletes
 # them), so none may be in a repository that is about to be signed or has been.
@@ -148,7 +158,7 @@ check_pages_base() {
         fi
     done < "$tmp/refs.pub"
     while read -r ref commit; do
-        if grep -q "^$ref " "$tmp/refs.pub"; then continue; fi
+        if awk -v r="$ref" '$1 == r { f = 1 } END { exit !f }' "$tmp/refs.pub"; then continue; fi
         grep -qxF "$ref" "$tmp/sign.refs" || fail "$ref is new in the repository and not on the sign list"
         if ostree --repo="$1" rev-parse "$commit^" > /dev/null 2>&1; then fail "$ref is new but its commit $commit has a parent"; fi
     done < "$tmp/refs.checked"

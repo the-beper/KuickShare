@@ -488,7 +488,7 @@ check "sign with a public key that is not the secret's is refused" rc_is 2
 check "(no keyring is left)" no_leftovers
 sign_with_pubkey b b
 check "a new key, not the published one, signs, and finish refuses the site" rc_is 1
-check "(the message says the GPGKey is not the key)" out_has "is not exactly the key"
+check "(the message says the GPGKey is not the key)" out_has "byte for byte"
 check "(no keyring is left)" no_leftovers
 check "(no site was written)" not test -e "$w/signed/site.tar"
 FAKE_FLATPAK_LEAK=1
@@ -626,6 +626,19 @@ tamper_prepared "rm refs/heads/$extra"
 job_sign
 check "finish refuses a ref that was dropped" rc_is 1
 check "(the message says so)" out_has "is missing in the repository"
+restore_prepared
+# refs that `ostree refs` does not list, and a new ref whose name matches a published one only as a pattern
+tamper_prepared "mkdir -p refs/mirrors/org.example; printf '%s\n' $extra_head > refs/mirrors/org.example/x"
+job_sign
+check "sign --check refuses a ref under refs/mirrors" rc_is 1
+check "(the message says so)" out_has "refs/mirrors"
+restore_prepared
+# app.other.app/x86_64/stable: as a regex it matches the published app/other.app/x86_64/stable
+dotted=$(printf '%s' "$extra" | sed 's|^app/|app.|')
+tamper_prepared "mkdir -p refs/heads/$(dirname "$dotted"); printf '%s\n' $extra_head > refs/heads/$dotted"
+job_sign
+check "sign --check refuses a new ref that matches a published one only as a pattern" rc_is 1
+check "(the message says so)" out_has "not on the sign list"
 restore_prepared
 # a listed commit with another binding, after the signature step
 job_sign_check
@@ -966,7 +979,16 @@ pack_prepared
 rehash_prepared
 job_finish
 check "finish refuses a GPGKey that is not the key of the public key file" rc_is 1
-check "(the message says so)" out_has "is not exactly the key"
+check "(the message says so)" out_has "byte for byte"
+restore_prepared
+unpack_prepared
+k=$({ gpg --batch --dearmor < "$keys/a/pub.asc"; printf '\250\003PGP'; } | base64 -w0)
+sed -i "s|^GPGKey=.*|GPGKey=$k|" "$w/x/site/kuickshare.flatpakrepo" "$w/x/site/kuickshare.flatpakref"
+pack_prepared
+rehash_prepared
+job_finish
+check "finish refuses the same key with other bytes (an extra marker packet)" rc_is 1
+check "(the message says so)" out_has "byte for byte"
 restore_prepared
 job_finish
 check "and accepts everything again once the files are the real ones" rc_is 0

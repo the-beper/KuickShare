@@ -119,17 +119,17 @@ echo "$me: the signed repository is the prepared one plus $(wc -l < "$tmp/files.
 want_fpr=$(key_fpr "$pubkey")
 printf '%s\n' "$want_fpr" | grep -Eq '^[0-9A-F]{40}$' || bad_input "cannot read the fingerprint of $pubkey"
 gpg --batch --dearmor < "$pubkey" > "$tmp/public.gpg"
+# Byte for byte, not by fingerprint: the same key with other packets (a subkey stripped, extra ones) would pass a fingerprint
+# check and could stop new clients from verifying.
+want_gpgkey=$(base64 -w0 < "$tmp/public.gpg")
 for f in kuickshare.flatpakrepo kuickshare.flatpakref; do
-    key=$(sed -n 's/^GPGKey=//p' "$site/$f")
-    [ -n "$key" ] || fail "$f has no GPGKey"
-    printf '%s' "$key" | base64 -d > "$tmp/$f.gpg" 2> /dev/null || fail "the GPGKey of $f is not valid base64"
-    [ "$(key_fpr "$tmp/$f.gpg")" = "$want_fpr" ] || fail "the GPGKey of $f is not exactly the key $want_fpr of $(basename "$pubkey")"
+    [ "$(sed -n 's/^GPGKey=//p' "$site/$f")" = "$want_gpgkey" ] || fail "the GPGKey of $f is not $(basename "$pubkey") ($want_fpr) byte for byte"
 done
 
 # Everything outside the repository is what publish-repo.sh writes for this URL and this key, and nothing else (no extra file,
 # no changed .flatpakrepo, .flatpakref, icon or .nojekyll).
 mkdir "$tmp/expected"
-GPG_KEY_B64=$(sed -n 's/^GPGKey=//p' "$site/kuickshare.flatpakrepo") "$tools/build/flatpak/write-site-files.sh" "$tmp/expected" "$SITE_URL"
+GPG_KEY_B64=$want_gpgkey "$tools/build/flatpak/write-site-files.sh" "$tmp/expected" "$SITE_URL"
 diff -r -x repo "$site" "$tmp/expected" > "$tmp/site.diff" 2>&1 || { sed 's/^/    /' "$tmp/site.diff" >&2; fail "the files of the site outside repo/ are not the ones publish-repo.sh writes"; }
 
 # ---- check it as a client would: only the public key, a keyring of its own ----
