@@ -19,7 +19,7 @@
 #   RELEASE_TAG, GITHUB_SHA, GITHUB_REPOSITORY, GH_TOKEN
 #   ASSETS_DIR           the five release files
 #   EXPECT_SUMS_SHA256   SHA-256 of SHA256SUMS, as reported by the verify job
-#   SITE_TAR             the site archive from the sign job, EXPECT_SITE_SHA256 its SHA-256
+#   SITE_TAR             the site archive from the finish job, EXPECT_SITE_SHA256 its SHA-256
 #   SITE_BASE_SHA        the gh-pages commit the site was built on ("-" when there was none)
 #   SITE_URL             where Pages serves the site
 #   REPO_REMOTE          (optional) git remote of the repository, default https://github.com/$GITHUB_REPOSITORY.git
@@ -83,7 +83,7 @@ set -- KuickShare-x86_64.AppImage KuickShare-x86_64.AppImage.zsync KuickShare-x8
 # ---- 1. what we were given ----
 "$tools/build/release/verify-assets.sh" --recheck "$ASSETS_DIR"
 [ "$(sha256_of "$ASSETS_DIR/SHA256SUMS")" = "$EXPECT_SUMS_SHA256" ] || fail "SHA256SUMS is not the file the verify job produced"
-[ "$(sha256_of "$SITE_TAR")" = "$EXPECT_SITE_SHA256" ] || fail "the site archive is not the one the sign job produced"
+[ "$(sha256_of "$SITE_TAR")" = "$EXPECT_SITE_SHA256" ] || fail "the site archive is not the one the finish job produced"
 tar -tf "$SITE_TAR" > "$tmp/site.list"
 if grep -Eq '(^/|(^|/)\.\.(/|$)|(^|/)\.git(/|$))' "$tmp/site.list"; then fail "the site archive has an unsafe path"; fi
 tags=$(git ls-remote "$remote" "refs/tags/$tag" "refs/tags/$tag^{}")
