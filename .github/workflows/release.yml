@@ -101,11 +101,13 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      # The Arch image published by images.yml (public, pulled without credentials): the one CI tested. A failed pull fails the job.
+      # The Arch image published by images.yml (public, pulled without credentials), by digest: a release builds in the
+      # image the repository names, not in whatever the tag points to now (bump: CONTRIBUTING.md, Pinned tools). A failed
+      # pull fails the job.
       - name: Pull the build image
         run: |
-          podman pull ghcr.io/the-beper/kuickshare-appimage:arch
-          podman tag ghcr.io/the-beper/kuickshare-appimage:arch localhost/kuickshare-appimage:arch
+          podman pull ghcr.io/the-beper/kuickshare-appimage:arch@sha256:61389bc5e90c7c859d9b4d13c5b0cf5bdee9e79f67010f510648ed75beaeddf7
+          podman tag ghcr.io/the-beper/kuickshare-appimage:arch@sha256:61389bc5e90c7c859d9b4d13c5b0cf5bdee9e79f67010f510648ed75beaeddf7 localhost/kuickshare-appimage:arch
 
       - name: Build the AppImage
         run: build/build-appimage.sh
@@ -141,7 +143,8 @@ jobs:
     permissions:
       contents: read
     container:
-      image: ghcr.io/the-beper/kuickshare-build:fedora45
+      # By digest (bump: CONTRIBUTING.md, Pinned tools).
+      image: ghcr.io/the-beper/kuickshare-build:fedora45@sha256:0da038b579457e83f700797c1344f5e7f3f608d06d49f5fd23c5d2ea842ec6e8
     outputs:
       tarball_sha256: ${{ steps.hash.outputs.tarball }}
     steps:
@@ -185,7 +188,8 @@ jobs:
     permissions:
       contents: read
     container:
-      image: ghcr.io/the-beper/kuickshare-flatpak:fedora45
+      # By digest (bump: CONTRIBUTING.md, Pinned tools).
+      image: ghcr.io/the-beper/kuickshare-flatpak:fedora45@sha256:461647d49f428683cd06e506021001833731ec3bb9ee5b5cac1d20e310b710cd
       options: --privileged
     outputs:
       flatpak_sha256: ${{ steps.hash.outputs.flatpak }}

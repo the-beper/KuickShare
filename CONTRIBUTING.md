@@ -169,7 +169,7 @@ The tag triggers [`release.yml`](.github/workflows/release.yml), one run for one
 |---|---|---|
 | `validate` | the tag is `vX.Y.Z`, equals the version in `Cargo.toml`, `CMakeLists.txt` and the first metainfo `<release>`, points to the commit of the run, which is on `main`, and is the newest `vX.Y.Z` tag of the repository: a release below an existing one is refused (`build/release/check-version.sh`; other `v*` tags, such as a prerelease, do not count) | read |
 | `ci-gate` | waits up to 20 minutes for the CI run of the push of that commit to `main` to finish green (a pull request's run does not count) | read |
-| `build-appimage`, `build-tarball`, `build-flatpak` | build and smoke-test with the version of the tag; the Flatpak commits are exported unsigned onto an anonymous clone of `gh-pages` | read; no secret |
+| `build-appimage`, `build-tarball`, `build-flatpak` | build and smoke-test with the version of the tag, in the images pinned by digest ([Pinned tools](#pinned-tools)); the Flatpak commits are exported unsigned onto an anonymous clone of `gh-pages` | read; no secret |
 | `verify` | exactly the four files, their hashes against the build jobs, the tarball layout and `VERSION`, the `.zsync` header against the AppImage; writes `SHA256SUMS` (those four files) | read |
 | `sign-flatpak` | after `ci-gate` and `verify`; the only job with the signing key (environment `release-signing`), on the plain runner with flatpak and ostree from Ubuntu's signed packages, not in a container image: signs the commits and finishes the repository in a temporary keyring, checks it as a client, requires the `GPGKey` to be unchanged | read; key |
 | `publish` | draft release, missing assets, `gh-pages`, wait for Pages, then publishes (`build/release/publish.sh`) | write |
@@ -195,8 +195,10 @@ The release builds with fixed tool versions, bumped by hand in a pull request. D
 | Rust of the tarball | `1.99.1` | `RUST_VERSION` in `release.yml`, and CI's tarball job (`check.sh` keeps them equal) | run `build/build-env.sh build/check.sh` with that toolchain; the `rustup-init` script itself is not pinned, it only installs this toolchain |
 | Rust of the Flatpak | `org.freedesktop.Sdk.Extension.rust-stable//25.08` at `09784a99…1507` (rustc 1.98.1) | `rust_commit` in `build/flatpak/build-flatpak.sh` | below |
 | KDE SDK and runtime | `org.kde.Sdk//6.11` at `df314f9c…3a86`, `org.kde.Platform//6.11` at `76fa01ac…c473` | `sdk_commit`, `platform_commit` in the same file | below |
+| Build images | `ghcr.io/the-beper/kuickshare-build:fedora45`, `…-flatpak:fedora45`, `…-appimage:arch`, each `@sha256:…` | the image references of the build jobs in `release.yml` (`check.sh` fails on one without a digest) | [Bump the images](#bump-the-build-images) |
+| `tomlkit` of the Flatpak image | exact version and wheel hash (`--require-hashes`) | `build/flatpak/Containerfile` | the hash is `urls[].digests.sha256` of the wheel in `https://pypi.org/pypi/tomlkit/<version>/json` |
 
-The Flatpak build installs the three refs, moves each to its pinned commit and stops if one is elsewhere, before and after `flatpak-builder`, which runs without `--install-deps-from` so it cannot update them. The extension branch (`25.08`) is the freedesktop version of the KDE SDK (`flatpak remote-info --show-metadata flathub org.kde.Sdk//6.11`, `[Extension org.freedesktop.Sdk.Extension]`). The freedesktop runtime and the other extensions the KDE runtime pulls in are not pinned, and neither is the AppImage's Rust (the Arch image has it; images are not pinned by digest).
+The Flatpak build installs the three refs, moves each to its pinned commit and stops if one is elsewhere, before and after `flatpak-builder`, which runs without `--install-deps-from` so it cannot update them. The extension branch (`25.08`) is the freedesktop version of the KDE SDK (`flatpak remote-info --show-metadata flathub org.kde.Sdk//6.11`, `[Extension org.freedesktop.Sdk.Extension]`). The freedesktop runtime and the other extensions the KDE runtime pulls in are not pinned, and neither is the AppImage's Rust (the Arch image has it, at whatever version the image was built with).
 
 Re-check or bump a commit with a throwaway Flatpak directory, so nothing touches the real installation:
 
@@ -207,6 +209,15 @@ flatpak --user remote-info --arch=x86_64 --show-commit flathub org.kde.Sdk//6.11
 ```
 
 After a bump run `build/flatpak/build-flatpak.sh` and `build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak`.
+
+#### Bump the build images
+
+`images.yml` rebuilds the three images weekly and on a change to a Containerfile, under the same tag; the release names an image by digest, so a rebuild changes nothing in a release until the digest is bumped by hand. Dependabot cannot do it: it is not known to read the `container:` image of a workflow (inferred, not verified). Old digests stay pullable from `ghcr.io`.
+
+1. After `images.yml` has run on `main`, take the new `image:tag@sha256:…` lines from the `Digest` step of each job summary (Actions, Images). Or ask the registry, read-only and without credentials (`kuickshare-build` and `fedora45` are the image and tag): `curl -fsSI -H "Authorization: Bearer $(curl -fsS 'https://ghcr.io/token?scope=repository:the-beper/kuickshare-build:pull' | jq -r .token)" -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' https://ghcr.io/v2/the-beper/kuickshare-build/manifests/fedora45 | grep -i docker-content-digest`.
+2. Replace the digests in `release.yml` (every occurrence of the three images) in a pull request, and run `build/build-env.sh build/check.sh`.
+
+A change to a Containerfile therefore takes two pull requests: the change, then the digest bump after `images.yml` published it. Until then the release builds in the previous image.
 
 ### One-time setup (needs a repository admin)
 

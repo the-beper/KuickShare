@@ -65,3 +65,8 @@ grep -qx "platform=org.kde.Platform//$runtime" build/flatpak/build-flatpak.sh
 # The tarball job of CI builds with the release's Rust.
 rust_version=$(sed -n 's/^  RUST_VERSION: "\(.*\)"$/\1/p' .github/workflows/release.yml)
 grep -q -- "--default-toolchain $rust_version\$" .github/workflows/ci.yml || { echo "ci.yml does not install the release's Rust $rust_version" >&2; exit 1; }
+# The release builds in images named by digest, never by the tag they carry today (see CONTRIBUTING.md, Pinned tools).
+for img in kuickshare-build kuickshare-flatpak kuickshare-appimage; do
+    grep -Eq "ghcr\.io/the-beper/$img:[a-z0-9]+@sha256:[0-9a-f]{64}" .github/workflows/release.yml || { echo "release.yml does not pin $img by digest" >&2; exit 1; }
+done
+if grep -o 'ghcr\.io/the-beper/[^ "]*' .github/workflows/release.yml | grep -Ev '@sha256:[0-9a-f]{64}$'; then echo "release.yml has an image without a digest" >&2; exit 1; fi

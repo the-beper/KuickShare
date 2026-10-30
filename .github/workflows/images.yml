@@ -53,10 +53,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           pull: true
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: ghcr.io/the-beper/${{ matrix.image }}:${{ matrix.tag }}
+
+      # The release workflow names these images by digest. This is the line to paste there (CONTRIBUTING.md, Pinned tools).
+      - name: Digest
+        if: github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ghcr.io/the-beper/${{ matrix.image }}:${{ matrix.tag }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "$IMAGE@$DIGEST" >> "$GITHUB_STEP_SUMMARY"
