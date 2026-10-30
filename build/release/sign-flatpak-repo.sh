@@ -11,7 +11,9 @@
 # build left it (git ls-remote, ref hashes only); the archive holds plain files and directories under site/; every app and
 # runtime ref of the list is one of refs.txt with the commit the build made; the listed heads are those of the repository,
 # they have no signature yet and each says it belongs to its own ref (ostree.ref-binding); the config of the repository has
-# only the lines ostree and flatpak write; ostree fsck passes. The old summary files are deleted: the new summary is made
+# only the lines ostree and flatpak write; there are no static deltas; ostree fsck passes. Against gh-pages itself (an anonymous
+# clone at the base of the build): every ref that is not listed is as published and none was dropped, every listed ref continues
+# its published commit, so a compromised prepare job cannot get the key to vouch for a rolled-back or invented ref. The old summary files are deleted: the new summary is made
 # from the refs alone.
 # --sign: the secret is copied into a variable of the shell and removed from its environment before anything else runs, so
 # no child process (gpg, ostree, flatpak) inherits it. The key goes into a keyring in memory (/dev/shm) that holds exactly
@@ -32,7 +34,7 @@
 # Writes signed_sha256= to $GITHUB_OUTPUT when it is set.
 # Needs flatpak, ostree, gpg 2.2+, git, tar. Exit codes: 0 ok, 1 a check failed, 2 key or input problem, 3 gh-pages is not
 # where the build left it ("stale base").
-# shellcheck disable=SC2154 # $base and $tab come from flatpak-lib.sh
+# shellcheck disable=SC2154,SC2034 # $base and $tab come from flatpak-lib.sh
 # The first commands are the secret's: it leaves the environment before any other command can run.
 secret=${FLATPAK_GPG_PRIVATE_KEY:-}
 unset FLATPAK_GPG_PRIVATE_KEY
@@ -117,9 +119,12 @@ if [ "$mode" = --check ]; then
         [ "$(ostree --repo="$repo" rev-parse "$ref")" = "$commit" ] || fail "$ref is not at the listed commit in the prepared repository"
     done < "$signlist"
     check_config "$repo/config"
+    no_deltas "$repo"
+    check_pages_base "$repo"
     ostree --repo="$repo" fsck --quiet > "$tmp/fsck.log" 2>&1 || { sed 's/^/    /' "$tmp/fsck.log" >&2; fail "ostree fsck of the prepared repository failed"; }
     while IFS=$tab read -r ref commit; do
         check_binding "$repo" "$ref" "$commit"
+        no_commitmeta "$repo" "$commit"
         sigs=$(ostree --repo="$repo" show --print-detached-metadata-key=ostree.gpgsigs "$commit" 2> /dev/null || true)
         [ -z "$sigs" ] || fail "$ref $commit has a signature already: prepare lists only new commits"
     done < "$signlist"

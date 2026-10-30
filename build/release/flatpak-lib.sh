@@ -24,7 +24,11 @@ tar_safe() {
     tar_file=$1
     tar_prefix=$2
     shift 2
-    tar -tf "$tar_file" > "$tmp/tar.names" 2> /dev/null || bad_input "$tar_file is not a readable archive"
+    # --quoting-style=escape: a name with a newline or a backslash is listed with a backslash, and refused below.
+    tar --quoting-style=escape -tf "$tar_file" > "$tmp/tar.names" 2> /dev/null || bad_input "$tar_file is not a readable archive"
+    if grep -Evq '^[A-Za-z0-9._/-]+$' "$tmp/tar.names"; then
+        bad_input "$(basename "$tar_file") has a member name with characters outside A-Z a-z 0-9 . _ / -"
+    fi
     tar_allowed="^($tar_prefix(/|\$)"
     for extra in "$@"; do tar_allowed="$tar_allowed|$extra\$"; done
     tar_allowed="$tar_allowed)"
@@ -105,4 +109,52 @@ check_config() {
         printf '%s\n' "$bad" | sed 's/^/    /' >&2
         bad_input "the config of the repository has lines that are not the expected ones (see above)"
     fi
+}
+
+# ref_map REPO: "ref commit" for every ref of an ostree repository, sorted.
+ref_map() { for ref in $(ostree --repo="$1" refs | LC_ALL=C sort); do printf '%s %s\n' "$ref" "$(ostree --repo="$1" rev-parse "$ref")"; done; }
+
+# no_deltas REPO: static deltas carry the signature of their commit and are not part of a release (publish-repo.sh deletes
+# them), so none may be in a repository that is about to be signed or has been.
+no_deltas() {
+    [ ! -e "$1/deltas" ] && [ ! -e "$1/delta-indexes" ] || fail "the repository has static deltas (deltas/ or delta-indexes/)"
+}
+
+# check_pages_base REPO: the repository (prepared or signed) against gh-pages as the build saw it, which the job that made
+# the repository is not trusted for. Needs $remote, $base, $tmp and $tmp/sign.refs (read_signlist). Clones gh-pages at $base
+# (anonymous, read-only) and requires: every ref that is not on the sign list is unchanged and none was dropped; every listed
+# ref continues its published commit (its parent is the published head), or has no parent when it is new; nothing else is new.
+# Leaves "ref commit" of the published repository in $tmp/refs.pub.
+check_pages_base() {
+    ref_map "$1" > "$tmp/refs.checked"
+    mkdir "$tmp/pages"
+    if [ "$base" = - ]; then
+        heads=$(git ls-remote --heads "$remote" gh-pages | cut -f1)
+        [ -z "$heads" ] || stale "the build saw no gh-pages, but it exists now ($heads)"
+        : > "$tmp/refs.pub"
+    else
+        git clone --quiet --depth 1 --branch gh-pages "$remote" "$tmp/pages"
+        [ "$(git -C "$tmp/pages" rev-parse HEAD)" = "$base" ] || stale "gh-pages is not at $base any more"
+        mkdir -p "$tmp/pages/repo/refs/heads" "$tmp/pages/repo/refs/mirrors" "$tmp/pages/repo/refs/remotes" "$tmp/pages/repo/tmp"
+        ref_map "$tmp/pages/repo" > "$tmp/refs.pub"
+    fi
+    while read -r ref commit; do
+        now=$(awk -v r="$ref" '$1 == r { print $2 }' "$tmp/refs.checked")
+        [ -n "$now" ] || fail "$ref of gh-pages is missing in the repository"
+        if grep -qxF "$ref" "$tmp/sign.refs"; then
+            [ "$(ostree --repo="$1" rev-parse "$now^" 2> /dev/null)" = "$commit" ] || fail "$ref: the new commit $now does not continue the published commit $commit"
+        else
+            [ "$now" = "$commit" ] || fail "$ref is at $now in the repository and at $commit on gh-pages, and it is not on the sign list"
+        fi
+    done < "$tmp/refs.pub"
+    while read -r ref commit; do
+        if grep -q "^$ref " "$tmp/refs.pub"; then continue; fi
+        grep -qxF "$ref" "$tmp/sign.refs" || fail "$ref is new in the repository and not on the sign list"
+        if ostree --repo="$1" rev-parse "$commit^" > /dev/null 2>&1; then fail "$ref is new but its commit $commit has a parent"; fi
+    done < "$tmp/refs.checked"
+}
+
+# no_commitmeta REPO COMMIT: a commit about to be signed has no signature file (and none inside the repository's metadata).
+no_commitmeta() {
+    [ ! -e "$1/objects/$(printf '%s' "$2" | cut -c1-2)/${2#??}.commitmeta" ] || fail "commit $2 has a signature file already"
 }

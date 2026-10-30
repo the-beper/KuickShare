@@ -5,7 +5,7 @@
 # curl replaced by the fakes in build/release/testdata (put first in PATH). The signatures are real GnuPG signatures made
 # with ephemeral keys generated in temporary keyrings; no real key, no network, no container.
 # Needs only sh, git, gpg 2.2+, python3, tar, sha256sum, sha1sum. Everything happens in a mktemp directory that is removed
-# at the end. Output is TAP: "ok N - ..." lines and "# 24/24 passed"; the exit status is not 0 if a case fails.
+# at the end. Output is TAP: "ok N - ..." lines and "# 25/25 passed"; the exit status is not 0 if a case fails.
 #
 # What it does NOT show (see CONTRIBUTING.md, Releases): that real flatpak, ostree, gh and GitHub Pages behave like the
 # fakes. build/flatpak/test-repo-update.sh covers the real Flatpak client; the rest needs a release.
@@ -45,7 +45,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=24
+total=25
 n=0
 passed=0
 failed=0
@@ -587,13 +587,45 @@ restore_prepared
 # an unlisted ref rolled back or dropped, which a compromised prepare job would do and the new summary would vouch for
 tamper_prepared "printf '%s\n' $extra_parent > refs/heads/$extra"
 job_sign
-check "sign does not look at refs it was not asked to sign" rc_is 1
-check "finish refuses a ref that was rolled back" out_has "not on the sign list"
+check "sign --check refuses a ref that was rolled back, though it is not on the list" rc_is 1
+check "(the message says so)" out_has "not on the sign list"
+check "(nothing was signed)" not test -e "$w/signed-repo/signed-repo.tar"
+restore_prepared
+tamper_prepared "mkdir -p refs/heads/app/new.app/x86_64; printf '%s\n' $extra_head > refs/heads/app/new.app/x86_64/stable"
+job_sign
+check "sign --check refuses a ref that is new and not on the list" rc_is 1
+restore_prepared
+# the appstream commit continues the published one, or the key does not sign
+tamper_prepared "FAKE_OSTREE_ORPHAN=1 ostree --repo=. fake-commit appstream/x86_64 evil > ../../newappstream"
+sed -i "s/^\(appstream\/x86_64\t\).*/\1$(cat "$w/x/newappstream")/" "$w/prepared/sign-list.txt"
+rehash_prepared
+job_sign
+check "sign --check refuses an appstream commit that does not continue the published one" rc_is 1
+check "(the message says so)" out_has "does not continue the published commit"
+restore_prepared
+tamper_prepared "mkdir deltas; echo x > deltas/x"
+job_sign
+check "sign --check refuses static deltas" rc_is 1
+check "(the message says so)" out_has "static deltas"
+restore_prepared
+tamper_prepared "touch 'we\\ird'"
+job_sign
+check "sign --check refuses a member name with a backslash" rc_is 2
+check "(the message says so)" out_has "characters outside"
+restore_prepared
+tamper_prepared "echo '# changed' >> ../kuickshare.flatpakref"
+job_sign
+check "finish refuses a changed file outside repo/" rc_is 1
+check "(the message says so)" out_has "outside repo/"
+restore_prepared
+tamper_prepared "echo x > ../extra.html"
+job_sign
+check "finish refuses an extra file outside repo/" rc_is 1
 restore_prepared
 tamper_prepared "rm refs/heads/$extra"
 job_sign
 check "finish refuses a ref that was dropped" rc_is 1
-check "(the message says so)" out_has "is missing in the signed repository"
+check "(the message says so)" out_has "is missing in the repository"
 restore_prepared
 # a listed commit with another binding, after the signature step
 job_sign_check
@@ -626,6 +658,23 @@ check "prepare refuses a published summary that the pinned key did not sign" rc_
 check "(the message says so)" out_has "does not verify with the pinned key"
 check "(nothing was written)" not test -e "$w/prepared/prepared.tar"
 end_case "tampered gh-pages: the base is verified with the pinned key before anything is built on it"
+
+# ---- 6g. gh-pages with refs/heads moved and the old signed summary kept ----
+make_world 26
+git clone -q "file://$origin" "$w/pubx"
+git -C "$w/pubx" checkout -q gh-pages
+mkdir -p "$w/pubx/repo/refs/heads" "$w/pubx/repo/refs/mirrors" "$w/pubx/repo/refs/remotes" "$w/pubx/repo/tmp"
+evil=$(ostree --repo="$w/pubx/repo" fake-commit "app/$app_id/x86_64/stable" "evil")
+ostree --repo="$w/pubx/repo" gpg-sign --gpg-homedir="$keys/a" "$evil" "$(cat "$keys/a/fpr")"
+git -C "$w/pubx" add -A
+git -C "$w/pubx" commit -q -m "Moved a ref, summary unchanged"
+git -C "$w/pubx" push -q origin gh-pages
+base_sha=$(git -C "$w/pubx" rev-parse HEAD)
+build_jobs
+check "prepare refuses a gh-pages whose refs are not those of its signed summary" rc_is 2
+check "(the message says so)" out_has "not the refs and commits of its signed summary"
+check "(nothing was written)" not test -e "$w/prepared/prepared.tar"
+end_case "gh-pages with a ref moved under a valid signed summary: refused"
 
 # ---- 6b. prepare: the keyless job that finishes the repository unsigned ----
 make_world 20

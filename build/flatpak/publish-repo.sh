@@ -13,7 +13,6 @@
 set -eu
 site=$(readlink -f "$1")
 url=${2%/}
-id=io.github.the_beper.KuickShare
 if [ -n "${GPG_KEY_ID:-}" ]; then
     sign=--gpg-sign=$GPG_KEY_ID
     key=$(gpg --export "$GPG_KEY_ID" | base64 -w0)
@@ -26,30 +25,4 @@ mkdir -p "$site/repo/refs/heads" "$site/repo/refs/mirrors" "$site/repo/refs/remo
 # The deltas of earlier releases would be listed in the new summary: clients fetch objects instead.
 rm -rf "$site/repo/deltas"
 flatpak build-update-repo ${sign:+"$sign"} --prune --prune-depth=3 "$site/repo"
-
-cat > "$site/kuickshare.flatpakrepo" <<REPO
-[Flatpak Repo]
-Title=KuickShare
-Url=$url/repo/
-Homepage=https://github.com/the-beper/KuickShare
-Comment=Quick Share client for KDE Plasma
-Description=Send files, text and links between your Linux desktop and Android phones.
-Icon=$url/icon.svg
-GPGKey=$key
-REPO
-
-cat > "$site/kuickshare.flatpakref" <<REF
-[Flatpak Ref]
-Title=KuickShare
-Name=$id
-Branch=stable
-Url=$url/repo/
-SuggestRemoteName=kuickshare
-IsRuntime=false
-RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
-GPGKey=$key
-REF
-
-cp "$(dirname "$0")/../../data/icons/hicolor/scalable/apps/$id.svg" "$site/icon.svg"
-# GitHub Pages runs Jekyll unless told not to, and Jekyll skips the dot-files OSTree uses.
-touch "$site/.nojekyll"
+GPG_KEY_B64=$key "$(dirname "$0")/write-site-files.sh" "$site" "$url"

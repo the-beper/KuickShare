@@ -11,6 +11,7 @@
 #   - against gh-pages itself (a read-only clone at the base the build started from, which the prepare job is not trusted
 #     for): every ref that is not on the sign list is as published, none was dropped, none is new, and every listed ref
 #     continues its published commit; every listed commit says it belongs to its own ref (ostree.ref-binding);
+#   - the files of the site outside repo/ are exactly what build/flatpak/write-site-files.sh writes for SITE_URL and the key;
 #   - no file of the signed repository differs from the prepared one except the summary files and the signatures of the
 #     listed commits (no other object, no stray file, no config change);
 #   - a client that has only signing-key.asc accepts the summary and every listed commit (flatpak remote-add, remote-ls,
@@ -19,6 +20,7 @@
 # Environment:
 #   EXPECT_PREPARED_SHA256, EXPECT_SIGNLIST_SHA256, EXPECT_SIGNED_SHA256, EXPECT_REFS_SHA256   as prepare-flatpak, sign-flatpak
 #                            and build-flatpak reported them
+#   SITE_URL                 where Pages serves the site (the files outside repo/ are compared with what is written for it)
 #   GITHUB_REPOSITORY        owner/name, to find gh-pages (or PAGES_REMOTE: the git URL)
 #   EXPECT_BASE_SHA          the gh-pages commit the build started from ("-" when there was none); passed on to the output
 #   GITHUB_SHA               the commit of the run; HEAD of the checkout must be exactly it
@@ -28,7 +30,7 @@
 # Refuses to run when FLATPAK_GPG_PRIVATE_KEY is set. Writes site_sha256= and base_sha= to $GITHUB_OUTPUT when it is set.
 # Needs flatpak, ostree, gpg 2.2+, git, tar, base64, diff. Exit codes: 0 ok, 1 a check failed, 2 bad input or the secret is
 # set, 3 gh-pages is not at the base of the build.
-# shellcheck disable=SC2154 # $tab comes from flatpak-lib.sh
+# shellcheck disable=SC2154,SC2034 # $tab and $remote (used by check_pages_base) come from flatpak-lib.sh
 set -eu
 tools=$(cd "$(dirname "$0")/../.." && pwd)
 root=${KUICKSHARE_ROOT:-$tools}
@@ -49,6 +51,7 @@ trap 'exit 130' INT TERM HUP
 no_secret
 [ $# -eq 5 ] || bad_input "usage: finish-flatpak-repo.sh <prepared.tar> <sign-list.txt> <signed-repo.tar> <refs.txt> <out-dir>"
 : "${GITHUB_SHA:?}" "${EXPECT_PREPARED_SHA256:?}" "${EXPECT_SIGNLIST_SHA256:?}" "${EXPECT_SIGNED_SHA256:?}" "${EXPECT_REFS_SHA256:?}" "${EXPECT_BASE_SHA:?}"
+: "${SITE_URL:?}"
 remote=${PAGES_REMOTE:-https://github.com/${GITHUB_REPOSITORY:?}.git}
 printf '%s\n' "$EXPECT_BASE_SHA" | grep -Eq '^(-|[0-9a-f]{40})$' || bad_input "EXPECT_BASE_SHA is not a commit or -"
 [ "$(git -C "$root" rev-parse HEAD)" = "$GITHUB_SHA" ] || fail "HEAD is not $GITHUB_SHA"
@@ -83,7 +86,6 @@ for r in "$old" "$new"; do mkdir -p "$r/refs/heads" "$r/refs/mirrors" "$r/refs/r
 read_signlist "$signlist" "$refs"
 
 # ---- the signed repository is the prepared one plus signatures ----
-ref_map() { for ref in $(ostree --repo="$1" refs | LC_ALL=C sort); do printf '%s %s\n' "$ref" "$(ostree --repo="$1" rev-parse "$ref")"; done; }
 ref_map "$old" > "$tmp/refs.old"
 ref_map "$new" > "$tmp/refs.new"
 [ -s "$tmp/refs.old" ] || fail "the prepared repository has no ref"
@@ -94,30 +96,10 @@ done < "$signlist"
 ostree --repo="$new" fsck --quiet > "$tmp/fsck.log" 2>&1 || { sed 's/^/    /' "$tmp/fsck.log" >&2; fail "ostree fsck of the signed repository failed"; }
 while IFS=$tab read -r ref commit; do check_binding "$new" "$ref" "$commit"; done < "$signlist"
 
+no_deltas "$old"
+no_deltas "$new"
 # ---- against gh-pages: the prepared repository is not trusted for what the build did not make ----
-mkdir "$tmp/pages"
-if [ "$base" = - ]; then
-    heads=$(git ls-remote --heads "$remote" gh-pages | cut -f1)
-    [ -z "$heads" ] || stale "the build saw no gh-pages, but it exists now ($heads)"
-    : > "$tmp/refs.pub"
-else
-    git clone --quiet --depth 1 --branch gh-pages "$remote" "$tmp/pages"
-    [ "$(git -C "$tmp/pages" rev-parse HEAD)" = "$base" ] || stale "gh-pages is not at $base any more"
-    mkdir -p "$tmp/pages/repo/refs/heads" "$tmp/pages/repo/refs/mirrors" "$tmp/pages/repo/refs/remotes" "$tmp/pages/repo/tmp"
-    ref_map "$tmp/pages/repo" > "$tmp/refs.pub"
-fi
-while read -r ref commit; do
-    now=$(awk -v r="$ref" '$1 == r { print $2 }' "$tmp/refs.new")
-    [ -n "$now" ] || fail "$ref of gh-pages is missing in the signed repository"
-    if grep -qxF "$ref" "$tmp/sign.refs"; then
-        [ "$(ostree --repo="$new" rev-parse "$now^" 2> /dev/null)" = "$commit" ] || fail "$ref: the new commit $now does not continue the published commit $commit"
-    else
-        [ "$now" = "$commit" ] || fail "$ref is at $now in the signed repository and at $commit on gh-pages, and it is not on the sign list"
-    fi
-done < "$tmp/refs.pub"
-while read -r ref commit; do
-    grep -q "^$ref " "$tmp/refs.pub" || grep -qxF "$ref" "$tmp/sign.refs" || fail "$ref is new in the signed repository and not on the sign list"
-done < "$tmp/refs.new"
+check_pages_base "$new"
 # The only files that may be new, changed or gone: the summary files and the signatures of commits.
 allowed='^\./(summary|summary\.sig|summary\.idx|summary\.idx\.sig)$|^\./summaries/[^/]+$'
 while IFS=$tab read -r ref commit; do printf './objects/%s/%s.commitmeta\n' "$(printf '%s' "$commit" | cut -c1-2)" "${commit#??}"; done < "$signlist" > "$tmp/files.signatures"
@@ -143,6 +125,12 @@ for f in kuickshare.flatpakrepo kuickshare.flatpakref; do
     printf '%s' "$key" | base64 -d > "$tmp/$f.gpg" 2> /dev/null || fail "the GPGKey of $f is not valid base64"
     [ "$(key_fpr "$tmp/$f.gpg")" = "$want_fpr" ] || fail "the GPGKey of $f is not exactly the key $want_fpr of $(basename "$pubkey")"
 done
+
+# Everything outside the repository is what publish-repo.sh writes for this URL and this key, and nothing else (no extra file,
+# no changed .flatpakrepo, .flatpakref, icon or .nojekyll).
+mkdir "$tmp/expected"
+GPG_KEY_B64=$(sed -n 's/^GPGKey=//p' "$site/kuickshare.flatpakrepo") "$tools/build/flatpak/write-site-files.sh" "$tmp/expected" "$SITE_URL"
+diff -r -x repo "$site" "$tmp/expected" > "$tmp/site.diff" 2>&1 || { sed 's/^/    /' "$tmp/site.diff" >&2; fail "the files of the site outside repo/ are not the ones publish-repo.sh writes"; }
 
 # ---- check it as a client would: only the public key, a keyring of its own ----
 FLATPAK_USER_DIR=$tmp/client

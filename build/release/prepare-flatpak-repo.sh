@@ -112,6 +112,17 @@ if [ "$base" != - ]; then
         sed 's/^/    /' "$tmp/verify.log" >&2
         bad_input "the published repository does not verify with the pinned key $want_fpr: gh-pages was altered, or is not signed by that key"
     }
+    # The pull takes the commit of a ref from the verified summary, not from refs/heads of the clone: an attacker who writes
+    # gh-pages can move refs/heads/X and keep the old, signed summary (tried with ostree 2024.5). So the refs of the clone, the
+    # refs and commits of the verified summary and what was pulled must be the same.
+    ostree --repo="$tmp/verify" remote summary published 2> /dev/null | awk '/^\* / { r = $2 } /Latest Commit/ { getline; print r, $1 }' | LC_ALL=C sort > "$tmp/summary.refs"
+    ref_map "$repo" > "$tmp/heads.refs"
+    [ -s "$tmp/summary.refs" ] && cmp -s "$tmp/summary.refs" "$tmp/heads.refs" \
+        || bad_input "the refs of gh-pages are not the refs and commits of its signed summary: gh-pages was altered"
+    while read -r ref commit; do
+        [ "$(ostree --repo="$tmp/verify" rev-parse "published:$ref" 2> /dev/null || ostree --repo="$tmp/verify" rev-parse "$ref" 2> /dev/null)" = "$commit" ] \
+            || bad_input "what was pulled for $ref is not the commit $commit of the signed summary"
+    done < "$tmp/summary.refs"
     echo "$me: the published summary and heads verify with the pinned key"
 fi
 

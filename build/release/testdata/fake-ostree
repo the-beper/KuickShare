@@ -127,8 +127,17 @@ def main():
                 write_ref(repo, ref, commit)
     elif command == "remote":
         # remote add [--set=k=v] [--gpg-import=FILE] NAME URL: the URL and a keyring of its own under the repository
+        if rest[0] == "summary":
+            # remote summary NAME: the refs of the remote's summary file, in the format of ostree
+            with open(os.path.join(repo, "remote-" + rest[1])) as f:
+                src = f.read().strip()[len("file://"):]
+            with open(os.path.join(src, "summary")) as f:
+                for line in f:
+                    ref, commit = line.split()
+                    print("* %s\n    Latest Commit (0 bytes):\n      %s\n" % (ref, commit))
+            return
         if rest[0] != "add":
-            die("remote: only add", 99)
+            die("remote: only add and summary", 99)
         opts = [r for r in rest[1:] if r.startswith("--")]
         name, url = [r for r in rest[1:] if not r.startswith("--")]
         home = os.path.join(repo, "gnupg-" + name)
@@ -153,8 +162,13 @@ def main():
                                       capture_output=True, text=True) if os.path.isfile(os.path.join(src, "summary.sig")) else None
                 if done is None or done.returncode != 0 or "[GNUPG:] VALIDSIG" not in done.stdout:
                     die("pull: the summary is not signed by a key of the remote")
+        summary = {}
+        if os.path.isfile(os.path.join(src, "summary")):
+            with open(os.path.join(src, "summary")) as f:
+                summary = dict(line.split() for line in f)
         for ref in refs:
-            commit = read_ref(src, ref)
+            # Like ostree: with a summary, the commit of a ref is the one the summary names, whatever refs/heads says
+            commit = summary.get(ref) or read_ref(src, ref)
             sig = commit_path(src, commit, ".commitmeta")
             done = subprocess.run(["gpg", "--homedir", home, "--batch", "--status-fd", "1", "--verify", sig, commit_path(src, commit)],
                                   capture_output=True, text=True) if os.path.isfile(sig) else None

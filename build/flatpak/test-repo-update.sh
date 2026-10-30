@@ -124,6 +124,36 @@ c2=$(ostree --repo="$work/s2/repo" rev-parse "$ref")
 [ "$(ostree --repo="$work/s2/repo" rev-parse "$c2^")" = "$c1" ] || fail "the new commit does not have the old one as its parent"
 echo "ok: S2 built the new way, commit $c2 on top of $c1"
 
+# ---- S4: gh-pages as an attacker could write it: refs/heads/X moved to another commit, the signed summary left as it was ----
+# ostree takes the commit of a ref from the verified summary (tried), so a pull alone would not notice; prepare compares the refs.
+fpr_b=$(cat "$work/key-b/fpr")
+mkdir -p "$work/evil-tree/files"
+echo evil > "$work/evil-tree/files/evil"
+for variant in unsigned other-key; do
+    git clone -q --bare "file://$work/origin.git" "$work/origin-$variant.git"
+    git clone -q --depth 1 --branch gh-pages "file://$work/origin-$variant.git" "$work/bad-$variant"
+    mkdir -p "$work/bad-$variant/repo/refs/heads" "$work/bad-$variant/repo/refs/mirrors" "$work/bad-$variant/repo/refs/remotes" "$work/bad-$variant/repo/tmp"
+    if [ "$variant" = unsigned ]; then signing=; else signing="--gpg-sign=$fpr_b --gpg-homedir=$work/key-b"; fi
+    # shellcheck disable=SC2086 # the options have no spaces
+    ostree --repo="$work/bad-$variant/repo" commit --branch="$ref" --tree=dir="$work/evil-tree" --no-xattrs --subject="moved ref ($variant)" $signing > /dev/null
+    git -C "$work/bad-$variant" add --all
+    git -C "$work/bad-$variant" commit -q -m "ref moved, summary unchanged"
+    git -C "$work/bad-$variant" push -q "file://$work/origin-$variant.git" HEAD:gh-pages
+    # the build job exports on top of that gh-pages, as it would
+    git clone -q --depth 1 --branch gh-pages "file://$work/origin-$variant.git" "$work/pages-$variant"
+    mkdir -p "$work/pages-$variant/repo/refs/heads" "$work/pages-$variant/repo/refs/mirrors" "$work/pages-$variant/repo/refs/remotes" "$work/pages-$variant/repo/tmp"
+    flatpak build-commit-from --src-repo="$work/changed" --src-ref="$ref" --no-update-summary --subject="update test 3" "$work/pages-$variant/repo" "$ref"
+    "$root/build/release/export-flatpak-commits.sh" "$work/pages-$variant" "$work/commits-$variant" > /dev/null
+    if EXPECT_COMMITS_SHA256=$(sha256sum "$work/commits-$variant/flatpak-commits.tar" | cut -d' ' -f1) EXPECT_REFS_SHA256=$(sha256sum "$work/commits-$variant/refs.txt" | cut -d' ' -f1) \
+        PAGES_REMOTE=file://$work/origin-$variant.git "$root/build/release/prepare-flatpak-repo.sh" "$work/commits-$variant/flatpak-commits.tar" "$work/prepared-$variant" > "$work/prepare-$variant.log" 2>&1; then
+        cat "$work/prepare-$variant.log"
+        fail "prepare accepted a gh-pages whose ref was moved under the signed summary ($variant)"
+    fi
+    grep -q "not the refs and commits of its signed summary" "$work/prepare-$variant.log" || { cat "$work/prepare-$variant.log"; fail "prepare refused ($variant) for another reason"; }
+    [ ! -e "$work/prepared-$variant/prepared.tar" ] || fail "prepare wrote its output after refusing ($variant)"
+done
+echo "ok: a gh-pages with a ref moved under its signed summary is refused (commit unsigned, or signed by another key)"
+
 # ---- S3: S2 whose new commit is signed by somebody else (the published key's signature removed) ----
 cp -a "$work/s2" "$work/s3"
 fpr_b=$(cat "$work/key-b/fpr")
