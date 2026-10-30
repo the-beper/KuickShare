@@ -16,9 +16,13 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 
 step "Rust tests"
 cargo test --locked --all-features
-# The vendored library is not a workspace member; its tests leave an untracked Cargo.lock behind.
+# The vendored library is not a workspace member; its tests may leave a Cargo.lock behind. Remove only one that did not
+# exist before. (Asking git is wrong here: in a git worktree the .git file points outside the mounted directory, git fails
+# in the build container, and a tracked lock file would be deleted.)
+rqs_lock=third_party/rqs_lib/Cargo.lock
+had_lock=false; [ ! -e "$rqs_lock" ] || had_lock=true
 cargo test -p rqs_lib
-git ls-files --error-unmatch third_party/rqs_lib/Cargo.lock >/dev/null 2>&1 || rm -f third_party/rqs_lib/Cargo.lock
+[ "$had_lock" = true ] || rm -f "$rqs_lock"
 
 step "Shell build and tests"
 cmake -S src/shell -B dist/tmp/cmake-dev -G Ninja -DBUILD_TESTING=ON
