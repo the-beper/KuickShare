@@ -65,6 +65,7 @@ build/build-env.sh build/check.sh
 | Rust tests | `cargo test --locked --all-features` (needs `dbus-daemon`), and `cargo test -p rqs_lib` for the vendored library, which is not a workspace member |
 | Shell | CMake build with `-DBUILD_TESTING=ON` into `dist/tmp/cmake-dev` (the Qt tests are built only then; the AppImage, tarball and Flatpak builds pass `-DBUILD_TESTING=OFF`), `ctest`, `qmllint-qt6` |
 | Data | `xmllint` on the metainfo, `desktop-file-validate`, `msgfmt -c` on every catalog |
+| Flatpak pins | the SDK and runtime pinned in `build/flatpak/build-flatpak.sh` are the runtime version of the manifest, and every pinned commit is a full id |
 
 CI ([`ci.yml`](.github/workflows/ci.yml)) runs the same script in the image built from [`build/Containerfile`](build/Containerfile) and published to `ghcr.io` by [`images.yml`](.github/workflows/images.yml) (which also publishes the Flatpak and the AppImage Arch images; the AppImage and tarball jobs run in parallel and cache the Rust build); a pull request that changes a Containerfile is checked with the previous image until it is merged. A separate job runs `cargo deny check` ([`deny.toml`](deny.toml): advisories, licenses, sources), and a `lint` job runs `shellcheck` on `build/` and `scripts/` and `actionlint` on the workflows. Dependabot proposes Cargo and action updates weekly, waits 7 days after a release before proposing it, keeps at most 3 action and 5 Cargo pull requests open, and groups only patch updates of Cargo (a minor or major update is its own pull request).
 
@@ -183,6 +184,28 @@ The tag triggers [`release.yml`](.github/workflows/release.yml), one run for one
 - `ci-gate` fails: CI is red or missing on the tagged commit. Fix on `main`, then tag the new commit. Do not move a tag that was pushed: delete it and push a new one only if no release exists for it.
 - An asset with different content on the release (`refusing to overwrite`): look at why; delete that asset by hand only if it is the wrong one, then re-run `publish`.
 - Rollback of a bad Flatpak repository: `git fetch origin gh-pages-previous && git push --force origin FETCH_HEAD:gh-pages`, then `gh release edit vX.Y.Z --draft=true`. Clients that already updated keep the new commit; fix forward with a new version.
+
+### Pinned tools
+
+The release builds with fixed tool versions, bumped by hand in a pull request. Dependabot does not see them.
+
+| Tool | Pin | Where | Re-check |
+|---|---|---|---|
+| Rust of the tarball | `1.99.1` | `RUST_VERSION` in `release.yml` | run `build/build-env.sh build/check.sh` with that toolchain; the `rustup-init` script itself is not pinned, it only installs this toolchain |
+| Rust of the Flatpak | `org.freedesktop.Sdk.Extension.rust-stable//25.08` at `09784a99…1507` (rustc 1.98.1) | `rust_commit` in `build/flatpak/build-flatpak.sh` | below |
+| KDE SDK and runtime | `org.kde.Sdk//6.11` at `df314f9c…3a86`, `org.kde.Platform//6.11` at `76fa01ac…c473` | `sdk_commit`, `platform_commit` in the same file | below |
+
+The Flatpak build installs the three refs, moves each to its pinned commit and stops if one is elsewhere, before and after `flatpak-builder`. The extension branch (`25.08`) is the freedesktop version of the KDE SDK (`flatpak remote-info --show-metadata flathub org.kde.Sdk//6.11`, `[Extension org.freedesktop.Sdk.Extension]`). The freedesktop runtime and the other extensions the KDE runtime pulls in are not pinned, and neither is the AppImage's Rust (the Arch image has it; images are not pinned by digest).
+
+Re-check or bump a commit with a throwaway Flatpak directory, so nothing touches the real installation:
+
+```sh
+export FLATPAK_USER_DIR=$(mktemp -d)
+flatpak --user remote-add flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak --user remote-info --arch=x86_64 --show-commit flathub org.kde.Sdk//6.11
+```
+
+After a bump run `build/flatpak/build-flatpak.sh` and `build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak`.
 
 ### One-time setup (needs a repository admin)
 

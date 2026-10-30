@@ -35,3 +35,11 @@ desktop-file-validate data/io.github.the_beper.KuickShare.desktop
 
 step "Catalogs"
 while read -r l; do msgfmt -c --statistics -o /dev/null "po/$l.po"; done < po/LINGUAS
+
+step "Flatpak pins"
+# The refs pinned in build-flatpak.sh are the runtime of the manifest, and every pin is a full commit id.
+manifest=build/flatpak/io.github.the_beper.KuickShare.yml
+runtime=$(sed -n 's/^runtime-version: "\(.*\)"$/\1/p' "$manifest")
+grep -qx "sdk=org.kde.Sdk//$runtime" build/flatpak/build-flatpak.sh
+grep -qx "platform=org.kde.Platform//$runtime" build/flatpak/build-flatpak.sh
+[ "$(grep -Ec '^(sdk|platform|rust)_commit=[0-9a-f]{64}$' build/flatpak/build-flatpak.sh)" = 3 ]
