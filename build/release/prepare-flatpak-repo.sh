@@ -130,7 +130,7 @@ while IFS=$tab read -r ref commit parent; do
     if current=$(ostree --repo="$repo" rev-parse "$ref" 2> /dev/null); then :; else current=-; fi
     [ "$current" = "$parent" ] || stale "$ref is at $current in the published repository, the new commit $commit has parent $parent"
 done < "$refs"
-ostree --repo="$repo" refs | LC_ALL=C sort | while read -r ref; do printf '%s %s\n' "$ref" "$(ostree --repo="$repo" rev-parse "$ref")"; done > "$tmp/refs.before"
+ref_map "$repo" > "$tmp/refs.before"
 # --untrusted: the objects come from a build job, so ostree checks every object against its checksum.
 ostree --repo="$repo" pull-local --untrusted "$tmp/commits/repo" "$@"
 for ref in "$@"; do

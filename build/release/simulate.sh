@@ -5,7 +5,7 @@
 # curl replaced by the fakes in build/release/testdata (put first in PATH). The signatures are real GnuPG signatures made
 # with ephemeral keys generated in temporary keyrings; no real key, no network, no container.
 # Needs only sh, git, gpg 2.2+, python3, tar, sha256sum, sha1sum. Everything happens in a mktemp directory that is removed
-# at the end. Output is TAP: "ok N - ..." lines and "# 25/25 passed"; the exit status is not 0 if a case fails.
+# at the end. Output is TAP: "ok N - ..." lines and "# 28/28 passed"; the exit status is not 0 if a case fails.
 #
 # What it does NOT show (see CONTRIBUTING.md, Releases): that real flatpak, ostree, gh and GitHub Pages behave like the
 # fakes. build/flatpak/test-repo-update.sh covers the real Flatpak client; the rest needs a release.
@@ -45,7 +45,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=25
+total=28
 n=0
 passed=0
 failed=0
@@ -688,6 +688,84 @@ check "prepare refuses a gh-pages whose refs are not those of its signed summary
 check "(the message says so)" out_has "not the refs and commits of its signed summary"
 check "(nothing was written)" not test -e "$w/prepared/prepared.tar"
 end_case "gh-pages with a ref moved under a valid signed summary: refused"
+
+# ---- 6h. gh-pages with a link under refs/mirrors ----
+# git keeps symbolic links; `ostree refs` and a search for plain files do not see one. (In a tar the link is refused by tar_safe,
+# so only prepare, which works on the clone itself, depends on the check of ref_map.)
+make_world 27
+git clone -q "file://$origin" "$w/pubx"
+git -C "$w/pubx" checkout -q gh-pages
+mkdir -p "$w/pubx/repo/refs/mirrors/org.example"
+ln -s "../../heads/app/$app_id/x86_64/stable" "$w/pubx/repo/refs/mirrors/org.example/x"
+git -C "$w/pubx" add -A
+git -C "$w/pubx" commit -q -m "A link under refs/mirrors"
+git -C "$w/pubx" push -q origin gh-pages
+base_sha=$(git -C "$w/pubx" rev-parse HEAD)
+build_jobs
+check "prepare refuses a gh-pages with a link under refs/mirrors" rc_is 1
+check "(the message says so)" out_has "refs/mirrors"
+check "(nothing was written)" not test -e "$w/prepared/prepared.tar"
+end_case "gh-pages with a symbolic link under refs/mirrors: refused by the check itself, not by a later tar check"
+
+# ---- 6i. the same key (fingerprint) with other bytes ----
+# A renewed expiry or an added user id: the fingerprint is the same, the bytes clients imported are not.
+make_world 28
+mkdir -m 700 "$keys/a2"
+cp "$keys/a/pubring.kbx" "$keys/a2/"
+cp -r "$keys/a/private-keys-v1.d" "$keys/a2/"
+GNUPGHOME=$keys/a2 gpg --batch --pinentry-mode loopback --passphrase '' --quick-add-uid "$(cat "$keys/a/fpr")" "KuickShare second user id" > "$keys/a2/uid.log" 2>&1
+GNUPGHOME=$keys/a2 gpg --batch --armor --export "$(cat "$keys/a/fpr")" > "$keys/a2/pub.asc" 2>> "$keys/a2/uid.log"
+check "the changed key has the fingerprint of key A" same "$(GNUPGHOME=$keys/a2 gpg --batch --show-keys --with-colons "$keys/a2/pub.asc" 2> /dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" "$(cat "$keys/a/fpr")"
+check "(and other bytes)" not cmp -s "$keys/a/pub.asc" "$keys/a2/pub.asc"
+build_jobs
+SIGNING_PUBKEY=$keys/a2/pub.asc
+job_prepare
+SIGNING_PUBKEY=$keys/a/pub.asc
+check "prepare refuses a public key file with the published fingerprint and other bytes" rc_is 2
+check "(the message says byte for byte)" out_has "byte for byte"
+check "(nothing was written)" not test -e "$w/prepared/prepared.tar"
+# the same, one job later: finish compares the site files with the bytes of its own public key file
+job_prepare
+job_sign_check
+job_sign_key a
+SIGNING_PUBKEY=$keys/a2/pub.asc
+job_finish
+SIGNING_PUBKEY=$keys/a/pub.asc
+check "finish refuses a public key file with the same fingerprint and other bytes than the site" rc_is 1
+check "(the message says byte for byte)" out_has "byte for byte"
+check "(no site was written)" not test -e "$w/signed/site.tar"
+# what CONTRIBUTING.md (Releases) tells to do: put the new bytes on gh-pages by hand, then the release goes through
+git clone -q "file://$origin" "$w/pubx"
+git -C "$w/pubx" checkout -q gh-pages
+sed -i "s|^GPGKey=.*|GPGKey=$(gpg --batch --dearmor < "$keys/a2/pub.asc" | base64 -w0)|" "$w/pubx/kuickshare.flatpakrepo" "$w/pubx/kuickshare.flatpakref"
+git -C "$w/pubx" commit -q -a -m "The renewed key"
+git -C "$w/pubx" push -q origin gh-pages
+base_sha=$(git -C "$w/pubx" rev-parse HEAD)
+SIGNING_PUBKEY=$keys/a2/pub.asc
+build_jobs
+job_sign a
+SIGNING_PUBKEY=$keys/a/pub.asc
+check "with the new bytes on gh-pages, prepare, sign and finish go through" rc_is 0
+check "(and the site has the new bytes)" same "$(tar -xOf "$w/signed/site.tar" ./kuickshare.flatpakrepo | sed -n 's/^GPGKey=//p')" "$(gpg --batch --dearmor < "$keys/a2/pub.asc" | base64 -w0)"
+end_case "same fingerprint, other key bytes: prepare and finish refuse until gh-pages carries the new bytes"
+
+# ---- 6j. an empty variable is said to be empty ----
+make_world 29
+mkdir "$w/s"
+run env -u GPG_KEY_ID GPG_KEY_B64= "$repo_root/build/flatpak/publish-repo.sh" "$w/s" "$SITE_URL"
+check "publish-repo.sh refuses an empty GPG_KEY_B64" rc_fails
+check "(and says it is empty or not set)" out_has "GPG_KEY_B64 is empty or not set"
+run env -u GPG_KEY_B64 "$repo_root/build/flatpak/write-site-files.sh" "$w/s" "$SITE_URL"
+check "write-site-files.sh refuses a GPG_KEY_B64 that is not set" rc_fails
+check "(and says it is empty or not set)" out_has "GPG_KEY_B64 is empty or not set"
+check "(nothing was written)" test -z "$(find "$w/s" -mindepth 1)"
+build_jobs
+job_sign_check
+run env FLATPAK_GPG_PRIVATE_KEY= "$rel/sign-flatpak-repo.sh" --sign "$w/signwork" "$w/signed-repo"
+check "sign --sign refuses an empty secret" rc_is 2
+check "(and says it is empty or not available)" out_has "is empty or not available"
+check "(no scratch directory is left)" no_leftovers
+end_case "empty GPG_KEY_B64 and empty secret: refused, and the message says empty"
 
 # ---- 6b. prepare: the keyless job that finishes the repository unsigned ----
 make_world 20

@@ -113,9 +113,9 @@ check_config() {
 
 # ref_map REPO: "ref commit" for every ref of an ostree repository, sorted; stops if a ref cannot be read (an empty commit
 # would pass the comparisons of check_pages_base). Refs under refs/mirrors are not listed by `ostree refs` but can end up in
-# the summary, so a repository with any is refused.
+# the summary, so a repository with anything but directories there (a ref, a symbolic link) is refused.
 ref_map() {
-    [ -z "$(find "$1/refs/mirrors" -type f 2> /dev/null)" ] || fail "$1 has refs under refs/mirrors"
+    [ -z "$(find "$1/refs/mirrors" ! -type d 2> /dev/null)" ] || fail "$1 has a ref or a link under refs/mirrors"
     ostree --repo="$1" refs > "$tmp/ref_map.list" || fail "cannot list the refs of $1"
     LC_ALL=C sort "$tmp/ref_map.list" > "$tmp/ref_map.sorted"
     while read -r ref; do

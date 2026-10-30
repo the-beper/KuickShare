@@ -18,7 +18,7 @@ if [ -n "${GPG_KEY_ID:-}" ]; then
     key=$(gpg --export "$GPG_KEY_ID" | base64 -w0)
 else
     sign=
-    key=${GPG_KEY_B64:?set GPG_KEY_ID (to sign) or GPG_KEY_B64 (the public key, nothing is signed)}
+    key=${GPG_KEY_B64:?GPG_KEY_B64 is empty or not set: set it to the base64 of the binary public key (nothing is signed), or set GPG_KEY_ID to sign}
 fi
 
 mkdir -p "$site/repo/refs/heads" "$site/repo/refs/mirrors" "$site/repo/refs/remotes" "$site/repo/tmp"
