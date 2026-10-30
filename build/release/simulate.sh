@@ -44,7 +44,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=19
+total=20
 n=0
 passed=0
 failed=0
@@ -263,6 +263,15 @@ job_sign() {
     drop_secret
     cp "$work/last.out" "$w/sign.out"
 }
+job_prepare() { # the keyless job that finishes the repository unsigned
+    rm -rf "$w/prepared" "$w/prepare.gho"
+    EXPECT_COMMITS_SHA256=$(sha256_of "$w/commits/flatpak-commits.tar")
+    EXPECT_REFS_SHA256=$(sha256_of "$w/commits/refs.txt")
+    export EXPECT_COMMITS_SHA256 EXPECT_REFS_SHA256
+    run env GITHUB_OUTPUT="$w/prepare.gho" "$rel/prepare-flatpak-repo.sh" "$w/commits/flatpak-commits.tar" "$w/prepared"
+}
+prepared_has() { tar -tf "$w/prepared/prepared.tar" | grep -qx -e "$1"; }
+prepared_file() { tar -xOf "$w/prepared/prepared.tar" "$1"; }
 # The same job with another tag, commit or public key (the caller's own values are restored).
 with_tag() { saved=$RELEASE_TAG; RELEASE_TAG=$1; export RELEASE_TAG; "$2"; RELEASE_TAG=$saved; export RELEASE_TAG; }
 with_sha() { saved=$GITHUB_SHA; GITHUB_SHA=$1; export GITHUB_SHA; "$2"; GITHUB_SHA=$saved; export GITHUB_SHA; }
@@ -500,6 +509,96 @@ job_sign
 check "sign refuses when gh-pages moved after the build (stale base)" rc_is 3
 check "(no keyring is left)" no_leftovers
 end_case "failed build and failed sign: nothing exported, wrong parent, wrong key, wrong public key, new key, wrong hash, no secret, stale base; keyring always gone"
+
+# ---- 6b. prepare: the keyless job that finishes the repository unsigned ----
+make_world 20
+build_jobs
+job_prepare
+check "prepare exits 0" rc_is 0
+check "(and leaves no scratch directory behind)" no_leftovers
+check "it writes the prepared site and the list" test -s "$w/prepared/prepared.tar" -a -s "$w/prepared/sign-list.txt"
+check "it reports the hashes and the base" file_has "$w/prepare.gho" "^prepared_sha256=$(sha256_of "$w/prepared/prepared.tar")$"
+check "(the hash of the list too)" file_has "$w/prepare.gho" "^signlist_sha256=$(sha256_of "$w/prepared/sign-list.txt")$"
+check "(and the base)" file_has "$w/prepare.gho" "^base_sha=$base_sha$"
+check "the list has the two refs of the build and the two appstream refs" same "$(cut -f1 "$w/prepared/sign-list.txt" | tr '\n' ' ')" "app/$app_id/x86_64/stable appstream/x86_64 appstream2/x86_64 runtime/$app_id.Locale/x86_64/stable "
+check "the commits of the build are the listed ones" same "$(grep -c "^app/.*	$(awk -F'\t' '$1 ~ /^app\// { print $2 }' "$w/commits/refs.txt")$" "$w/prepared/sign-list.txt")" 1
+check "the prepared site has the repository and the files users add it with" prepared_has "site/repo/summary"
+check "(the .flatpakref too)" prepared_has "site/kuickshare.flatpakref"
+check "the git metadata of the clone is not in it" not prepared_has "site/.git/HEAD"
+check "the summary is not signed yet" not prepared_has "site/repo/summary.sig"
+check "the new commits are not signed" not prepared_has "site/repo/objects/$(awk -F'\t' '$1 ~ /^app\// { print $2 }' "$w/commits/refs.txt").commitmeta"
+check "the GPGKey is byte-identical to the published one" same "$(prepared_file site/kuickshare.flatpakrepo | sed -n 's/^GPGKey=//p')" "$(sed -n 's/^GPGKey=//p' "$site/kuickshare.flatpakrepo")"
+check "(the log says so)" out_has "the GPGKey is the published one"
+# a secret in the environment: refused before anything is read
+use_secret a
+rm -rf "$w/prepared"
+run "$rel/prepare-flatpak-repo.sh" "$w/commits/flatpak-commits.tar" "$w/prepared"
+drop_secret
+check "prepare refuses to run with the secret in its environment" rc_is 2
+check "(the message says so)" out_has "must run without the secret"
+check "(nothing was written)" not test -e "$w/prepared/prepared.tar"
+check "(no scratch directory is left)" no_leftovers
+# changed inputs
+job_prepare
+saved=$EXPECT_COMMITS_SHA256
+EXPECT_COMMITS_SHA256=0
+run env GITHUB_OUTPUT="$w/prepare.gho" "$rel/prepare-flatpak-repo.sh" "$w/commits/flatpak-commits.tar" "$w/prepared2"
+check "prepare refuses commits that are not the ones the build job reported" rc_is 1
+EXPECT_COMMITS_SHA256=$saved
+EXPECT_REFS_SHA256=0
+run env GITHUB_OUTPUT="$w/prepare.gho" "$rel/prepare-flatpak-repo.sh" "$w/commits/flatpak-commits.tar" "$w/prepared2"
+check "prepare refuses a refs.txt that is not the one the build job reported" rc_is 1
+check "(the message names it)" out_has "refs.txt of the commits archive"
+EXPECT_REFS_SHA256=$(sha256_of "$w/commits/refs.txt")
+mkdir "$w/evil"
+tar -xf "$w/commits/flatpak-commits.tar" -C "$w/evil"
+ln -s /etc/passwd "$w/evil/repo/objects/link"
+tar -C "$w/evil" -cf "$w/commits-evil.tar" repo refs.txt
+EXPECT_COMMITS_SHA256=$(sha256_of "$w/commits-evil.tar")
+run env GITHUB_OUTPUT="$w/prepare.gho" "$rel/prepare-flatpak-repo.sh" "$w/commits-evil.tar" "$w/prepared2"
+check "prepare refuses a commits archive with a symlink" rc_is 2
+check "(the message says plain files)" out_has "not a plain file"
+rm -f "$w/evil/repo/objects/link"
+echo surprise > "$w/evil/notes.txt"
+tar -C "$w/evil" -cf "$w/commits-evil.tar" repo refs.txt notes.txt
+EXPECT_COMMITS_SHA256=$(sha256_of "$w/commits-evil.tar")
+run env GITHUB_OUTPUT="$w/prepare.gho" "$rel/prepare-flatpak-repo.sh" "$w/commits-evil.tar" "$w/prepared2"
+check "prepare refuses a commits archive with other files" rc_is 2
+check "(no scratch directory is left)" no_leftovers
+EXPECT_COMMITS_SHA256=$saved
+export EXPECT_COMMITS_SHA256 EXPECT_REFS_SHA256
+SIGNING_PUBKEY=$keys/b/pub.asc
+job_prepare
+SIGNING_PUBKEY=$keys/a/pub.asc
+check "prepare refuses a published GPGKey that is not the key of the public key file" rc_is 2
+check "(the message says clients would stop updating)" out_has "installed clients would stop updating"
+check "(nothing was written)" not test -e "$w/prepared/prepared.tar"
+with_sha 0000000000000000000000000000000000000001 job_prepare
+check "prepare refuses a checkout that is not the commit of the run" rc_is 1
+git clone -q "file://$origin" "$w/other"
+git -C "$w/other" checkout -q gh-pages
+echo other > "$w/other/other.txt"
+git -C "$w/other" add -A
+git -C "$w/other" commit -q -m "Another release"
+git -C "$w/other" push -q origin gh-pages
+job_prepare
+check "prepare refuses when gh-pages moved after the build (stale base)" rc_is 3
+check "(no scratch directory is left)" no_leftovers
+# the first release: no gh-pages yet, so the GPGKey is made from the public key file
+make_world 21
+git -C "$origin" update-ref -d refs/heads/gh-pages
+rm -rf "$w/pages" "$w/commits" "$w/dist"
+mkdir "$w/pages"
+ostree --repo="$w/pages/repo" fake-commit "app/$app_id/x86_64/stable" "first 1.2.3" > /dev/null
+ostree --repo="$w/pages/repo" fake-commit "runtime/$app_id.Locale/x86_64/stable" "first locale 1.2.3" > /dev/null
+run "$rel/export-flatpak-commits.sh" "$w/pages" "$w/commits"
+job_prepare
+check "prepare accepts the first release" rc_is 0
+check "(and reports no base)" file_has "$w/prepare.gho" "^base_sha=-$"
+check "(it says the GPGKey is made from the public key file)" out_has "there was no published .flatpakrepo"
+check "the GPGKey is the key of the public key file" same "$(prepared_file site/kuickshare.flatpakrepo | sed -n 's/^GPGKey=//p' | base64 -d | gpg --batch --show-keys --with-colons 2> /dev/null | awk -F: '$1 == "fpr" { print $10; exit }')" "$(cat "$keys/a/fpr")"
+check "(and the .flatpakref has it too)" same "$(prepared_file site/kuickshare.flatpakref | sed -n 's/^GPGKey=//p')" "$(prepared_file site/kuickshare.flatpakrepo | sed -n 's/^GPGKey=//p')"
+end_case "prepare: unsigned site and list, hashes, GPGKey kept; refuses the secret, wrong hashes, links, other files, another key, stale base"
 
 # ---- 7. an upload fails halfway, then the rerun completes ----
 make_world 8
