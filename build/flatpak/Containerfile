@@ -6,7 +6,11 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         xdg-desktop-portal fuse3 python3-gobject-base \
     && dnf clean all
 
-RUN pip install --no-cache-dir tomlkit
+# For flatpak-cargo-generator.py. Exact version and wheel hash (no dependencies): bump by hand, hash from
+# https://pypi.org/pypi/tomlkit/<version>/json, `urls[].digests.sha256` of the wheel.
+RUN printf 'tomlkit==0.15.2 --hash=sha256:05562412163a3037b94497385fb7f9204c637bc605af7a48199e41cf2272f437\n' > /tmp/requirements.txt \
+    && pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
 
 # Links the ghcr.io package to the repository, so the workflows can pull it with GITHUB_TOKEN.
 LABEL org.opencontainers.image.source="https://github.com/the-beper/KuickShare"

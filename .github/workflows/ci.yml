@@ -1,13 +1,16 @@
 name: CI
 
-# Pull requests, pushes to main and manual runs. Tags do not run it again: a release needs the `required` job green on
-# its commit. There is no path filter on the triggers (a skipped workflow would leave a required check pending): the
-# `changes` job decides what runs, and `required` checks that every skip was intended.
+# Pull requests, pushes to main, manual runs and a weekly run of main that runs only `cargo deny` (new advisories). Tags do
+# not run it again: a release needs the `required` job green on its commit. There is no path filter on the triggers (a
+# skipped workflow would leave a required check pending): the `changes` job decides what runs, and `required` checks that
+# every skip was intended.
 on:
   pull_request:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: "47 5 * * 1" # weekly, only `deny`
 
 permissions: {}
 
@@ -17,7 +20,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Which jobs the change needs (build/ci/changes.sh). Main and manual runs always run everything.
+  # Which jobs the change needs (build/ci/changes.sh). Main and manual runs always run everything; a scheduled run runs
+  # only `deny`.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -40,6 +44,7 @@ jobs:
         run: build/ci/changes.sh
 
   lint:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -56,7 +61,7 @@ jobs:
       - name: shellcheck
         run: |
           shellcheck --version
-          find build scripts -name '*.sh' -print0 | xargs -0 shellcheck --severity=warning
+          find build scripts po \( -name '*.sh' -o -name '*.hook' \) -print0 | xargs -0 shellcheck --severity=warning
 
       # The release scripts against fakes of gh, flatpak and ostree, with ephemeral GnuPG keys (build/release/simulate.sh).
       - name: Release simulation
@@ -178,28 +183,28 @@ jobs:
   flatpak:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
-    runs-on: ubuntu-latest
+    # Pinned, as the release's build-flatpak, sign-flatpak and repo-update: the same podman, flatpak and ostree.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
-    container:
-      image: ghcr.io/the-beper/kuickshare-flatpak:fedora45
-      options: --privileged
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Build Flatpak
+      # On the plain runner, as the release's build job: the scripts run the image from images.yml with rootless podman (no job
+      # container, no --privileged). The release pins the image by digest; CI tests the one the tag points to now.
+      - name: Pull the build image
         run: |
-          touch /run/.containerenv
-          build/flatpak/build-flatpak.sh
+          podman pull ghcr.io/the-beper/kuickshare-flatpak:fedora45
+          podman tag ghcr.io/the-beper/kuickshare-flatpak:fedora45 localhost/kuickshare-flatpak:fedora45
+
+      - name: Build Flatpak
+        run: build/flatpak/build-flatpak.sh
 
       - name: Smoke test
-        run: |
-          mkdir -p /run/user/0
-          chmod 700 /run/user/0
-          XDG_RUNTIME_DIR=/run/user/0 dbus-run-session -- build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
+        run: build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
 
       # The repository this job built, for the update proof below (a tar: empty directories and modes matter to OSTree).
       - name: Pack the repository
@@ -249,7 +254,7 @@ jobs:
 
   deny:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: github.event_name == 'schedule' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -272,6 +277,7 @@ jobs:
     permissions: {}
     env:
       NEEDS: ${{ toJSON(needs) }}
+      EVENT_NAME: ${{ github.event_name }}
     steps:
       - name: Verify the results
         run: |
@@ -281,7 +287,9 @@ jobs:
           import sys
 
           needs = json.loads(os.environ["NEEDS"])
-          # job -> the `changes` output that makes it mandatory (None: always)
+          # A scheduled run is only `cargo deny`: every other job is skipped on purpose.
+          scheduled = os.environ["EVENT_NAME"] == "schedule"
+          # job -> the `changes` output that makes it mandatory (None: always, except on a schedule)
           flag_of = {
               "lint": None,
               "check": "code",
@@ -303,7 +311,9 @@ jobs:
 
           for job, flag in flag_of.items():
               result = needs.get(job, {}).get("result", "missing")
-              if flag is None:
+              if scheduled:
+                  wanted = job == "deny"
+              elif flag is None:
                   wanted = True
               elif flags.get(flag) in ("true", "false"):
                   wanted = flags[flag] == "true"

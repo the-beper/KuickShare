@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds an OSTree repository (dist/flatpak-repo, or $KUICKSHARE_FLATPAK_REPO) and dist/KuickShare-x86_64.flatpak
-# inside a throw-away container. Runtimes and the Flatpak build cache live in the podman volume "kuickshare-flatpak", not on the host.
+# inside a throw-away rootless podman container. Runtimes and the Flatpak build cache live in the podman volume "kuickshare-flatpak", not on the host.
 # Usage: build/flatpak/build-flatpak.sh [flatpak-builder options...]
 # Without --gpg-sign the exported commits are unsigned. The release does that on purpose: this build job has no key, and
 # build/release/sign-flatpak-repo.sh signs the commits in another job (see CONTRIBUTING.md, Releases).
@@ -9,8 +9,13 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 image=localhost/kuickshare-flatpak:fedora45
 
 if [ ! -e /run/.containerenv ]; then
+    # Rootless podman only: root in the container is then the calling user on the host. No --privileged: bubblewrap, the
+    # sandbox of flatpak-builder (and of its icon validation), needs /proc unmasked to mount its own (unmask=ALL) and
+    # SYS_ADMIN and NET_ADMIN to create namespaces as container root. Without NET_ADMIN, "loopback: Failed RTM_NEWADDR".
+    # The capabilities hold inside the container's user namespace only.
+    [ "$(podman info --format '{{.Host.Security.Rootless}}')" = true ] || { echo "build-flatpak.sh needs rootless podman" >&2; exit 1; }
     podman image exists "$image" || podman build -t "$image" -f "$root/build/flatpak/Containerfile" "$root/build/flatpak"
-    exec podman run --rm --privileged --security-opt label=disable --network=host -e KUICKSHARE_FLATPAK_REPO \
+    exec podman run --rm --security-opt unmask=ALL --cap-add SYS_ADMIN --cap-add NET_ADMIN --security-opt label=disable --network=host -e KUICKSHARE_FLATPAK_REPO \
         -v kuickshare-flatpak:/var/lib/flatpak -v "$root:$root" -w "$root" \
         "$image" "$root/build/flatpak/build-flatpak.sh" "$@"
 fi

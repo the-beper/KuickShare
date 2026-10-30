@@ -8,8 +8,9 @@
 #      are missing. An asset that exists with the same SHA-256 is skipped; one that differs fails the run. Never --clobber.
 #   3. Pushes the Flatpak repository to gh-pages as one orphan commit, keeping the old head as gh-pages-previous. Skipped
 #      when gh-pages already has that tree; refused (exit 3) when gh-pages is neither the base the site was built on nor
-#      the new site; the push itself is one `git push --atomic` with a lease on gh-pages and on gh-pages-previous
-#      (exit 3 when either moved meanwhile: nothing is pushed).
+#      the new site; the push itself is one `git push --atomic` with a lease on gh-pages and on gh-pages-previous. When it
+#      reports a failure both branches are read again: gh-pages already at the new commit means the push had landed (the
+#      acknowledgement was lost) and the run goes on; exit 3 if either branch moved to something else, exit 1 if not.
 #   4. Waits until Pages serves the new repo/summary and repo/summary.sig.
 #   5. Publishes the draft (--latest) and checks the release again: exactly the five assets, each with its SHA-256.
 # The release stays a draft until the Flatpak repository is live, so a release that people can see is never incomplete.
@@ -24,7 +25,7 @@
 #   REPO_REMOTE          (optional) git remote of the repository, default https://github.com/$GITHUB_REPOSITORY.git
 #   PAGES_WAIT_SECS, PAGES_POLL_INTERVAL   (optional) how long and how often to look at Pages, default 600 and 15
 #   KUICKSHARE_ROOT      (optional) the checkout the files are checked against
-# Exit codes: 0 done, 1 a check failed, 2 bad input, 3 gh-pages is not where the build left it.
+# Exit codes: 0 done, 1 a check or the push failed, 2 bad input, 3 gh-pages is not where the build left it.
 set -eu
 tools=$(cd "$(dirname "$0")/../.." && pwd)
 root=${KUICKSHARE_ROOT:-$tools}
@@ -37,7 +38,24 @@ site_url=${SITE_URL%/}
 wait_secs=${PAGES_WAIT_SECS:-600}
 interval=${PAGES_POLL_INTERVAL:-15}
 fail() { echo "publish: $*" >&2; exit 1; }
-push_refused() { echo "publish: the push to gh-pages was refused (another writer changed gh-pages or gh-pages-previous, or the server refused it). Nothing was pushed; build again." >&2; exit 3; }
+# After a push that reported a failure: if gh-pages is the commit this run pushed and gh-pages-previous the old head, the
+# push had landed and only the acknowledgement was lost (the atomic push moved both): go on. Exit 3 only if gh-pages or
+# gh-pages-previous is no longer what this run read (a writer got in, and the atomic push moved nothing); otherwise the
+# push failed for another reason (network, server, ruleset): exit 1.
+push_failed() {
+    now=$(git ls-remote "$remote" refs/heads/gh-pages refs/heads/gh-pages-previous) || fail "the push to gh-pages failed and the branches cannot be read again"
+    now_head=$(printf '%s\n' "$now" | awk '$2 == "refs/heads/gh-pages" { print $1 }')
+    now_previous=$(printf '%s\n' "$now" | awk '$2 == "refs/heads/gh-pages-previous" { print $1 }')
+    if [ "$now_head" = "$commit" ] && [ "$now_previous" = "$remote_head" ]; then
+        echo "publish: the push had landed (gh-pages is $commit), only its acknowledgement was lost"
+        return 0
+    fi
+    if [ "$now_head" != "$remote_head" ] || [ "$now_previous" != "$remote_previous" ]; then
+        echo "publish: the push to gh-pages failed because another writer changed gh-pages or gh-pages-previous. Nothing was pushed; build again." >&2
+        exit 3
+    fi
+    fail "the push to gh-pages failed and neither branch has moved (network or server error, or the server refused it): nothing was pushed; run this job again"
+}
 printf '%s\n' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "publish: the tag is not vMAJOR.MINOR.PATCH" >&2; exit 2; }
 printf '%s\n' "$repo" | grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' || { echo "publish: bad repository name" >&2; exit 2; }
 printf '%s\n' "$SITE_BASE_SHA" | grep -Eq '^(-|[0-9a-f]{40})$' || { echo "publish: SITE_BASE_SHA is neither - nor a commit id" >&2; exit 2; }
@@ -201,9 +219,9 @@ elif [ "$remote_head" = "$base" ]; then
         echo "publish: keeping the old gh-pages ($remote_head) as gh-pages-previous"
         git -C "$g" push --quiet --atomic --force-with-lease="refs/heads/gh-pages:$remote_head" \
             --force-with-lease="refs/heads/gh-pages-previous:$remote_previous" \
-            "$remote" "$commit:refs/heads/gh-pages" "$remote_head:refs/heads/gh-pages-previous" || push_refused
+            "$remote" "$commit:refs/heads/gh-pages" "$remote_head:refs/heads/gh-pages-previous" || push_failed
     else
-        git -C "$g" push --quiet --atomic --force-with-lease=refs/heads/gh-pages: "$remote" "$commit:refs/heads/gh-pages" || push_refused
+        git -C "$g" push --quiet --atomic --force-with-lease=refs/heads/gh-pages: "$remote" "$commit:refs/heads/gh-pages" || push_failed
     fi
     echo "publish: gh-pages is now $commit"
 else

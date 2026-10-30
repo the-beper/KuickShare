@@ -31,7 +31,7 @@ build/build-tarball.sh && build/test-tarball.sh dist/KuickShare-x86_64.tar.gz
 build/flatpak/build-flatpak.sh && build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak
 ```
 
-The Flatpak build runs in its own container image (`build/flatpak/Containerfile`, started with `--privileged` for bwrap). The KDE runtime, about 2 GB, and the build cache are kept in the podman volume `kuickshare-flatpak`; `podman volume rm kuickshare-flatpak` removes them. Nothing is installed on the host.
+The Flatpak build runs in its own container image (`build/flatpak/Containerfile`), started by the scripts with rootless podman (they refuse a rootful one) and `--security-opt unmask=ALL --cap-add SYS_ADMIN --cap-add NET_ADMIN` (bwrap mounts its own `/proc` and creates namespaces; the capabilities hold inside the container's user namespace only); there is no `--privileged`. CI and the release job run the same scripts on the plain runner, not in a job container (that would be a rootful, privileged one). The KDE runtime, about 2 GB, and the build cache are kept in the podman volume `kuickshare-flatpak`; `podman volume rm kuickshare-flatpak` removes them. Nothing is installed on the host.
 
 ## Run from the build tree
 
@@ -64,12 +64,12 @@ build/build-env.sh build/check.sh
 | Lint | `cargo clippy --locked --all-targets --all-features -- -D warnings` |
 | Rust tests | `cargo test --locked --all-features` (needs `dbus-daemon`), and `cargo test -p rqs_lib` for the vendored library, which is not a workspace member |
 | Shell | CMake build with `-DBUILD_TESTING=ON` into `dist/tmp/cmake-dev` (the Qt tests are built only then; the AppImage, tarball and Flatpak builds pass `-DBUILD_TESTING=OFF`), `ctest`, `qmllint-qt6` |
-| Data | `xmllint` on the metainfo, `desktop-file-validate`, `msgfmt -c` on every catalog |
-| Flatpak pins | the SDK and runtime pinned in `build/flatpak/build-flatpak.sh` are the runtime version of the manifest, and every pinned commit is a full id |
+| Data | `xmllint` on the metainfo, `desktop-file-validate` on the app's `.desktop`, a structural check of the Dolphin service menu `kuickshare-send.desktop` (`desktop-file-validate` rejects its `Type=Service`), `msgfmt -c` on every catalog |
+| Flatpak pins | the SDK and runtime pinned in `build/flatpak/build-flatpak.sh` are the runtime version of the manifest, and every pinned commit is a full id; CI's tarball job uses the Rust of `release.yml`; `release.yml` names each of the three build images by `@sha256:` digest, never by tag alone |
 
-CI ([`ci.yml`](.github/workflows/ci.yml)) runs the same script in the image built from [`build/Containerfile`](build/Containerfile) and published to `ghcr.io` by [`images.yml`](.github/workflows/images.yml) (which also publishes the Flatpak and the AppImage Arch images; the AppImage and tarball jobs run in parallel and cache the Rust build); a pull request that changes a Containerfile is checked with the previous image until it is merged. A separate job runs `cargo deny check` ([`deny.toml`](deny.toml): advisories, licenses, sources), and a `lint` job runs `shellcheck` on `build/` and `scripts/` and `actionlint` on the workflows. Dependabot proposes Cargo and action updates weekly, waits 7 days after a release before proposing it, keeps at most 3 action and 5 Cargo pull requests open, and groups only patch updates of Cargo (a minor or major update is its own pull request).
+CI ([`ci.yml`](.github/workflows/ci.yml)) runs the same script in the image built from [`build/Containerfile`](build/Containerfile) and published to `ghcr.io` by [`images.yml`](.github/workflows/images.yml) (which also publishes the Flatpak and the AppImage Arch images; the AppImage and tarball jobs run in parallel and cache the Rust build); a pull request that changes a Containerfile is checked with the previous image until it is merged. A separate job runs `cargo deny check` ([`deny.toml`](deny.toml): advisories, licenses, sources), and a `lint` job runs `shellcheck` on the `*.sh` and `*.hook` files of `build/`, `scripts/` and `po/` and `actionlint` on the workflows. Dependabot proposes Cargo and action updates weekly, waits 7 days after a release before proposing it, keeps at most 3 action and 5 Cargo pull requests open, and groups only patch updates of Cargo (a minor or major update is its own pull request).
 
-CI runs on pull requests, on pushes to `main` and on manual runs; a tag does not run it again. The `changes` job ([`build/ci/changes.sh`](build/ci/changes.sh)) skips what a pull request cannot affect: nothing but documentation runs only `lint`, and the AppImage, tarball and Flatpak jobs run only when the build scripts, workflows, `Cargo.*`, the shell's `CMakeLists.txt` or QML, `data/` or `po/LINGUAS` change; pushes to `main` and manual runs run everything. The final `required` job is green only when every job that had to run succeeded, so it is the one check to require.
+CI runs on pull requests, on pushes to `main`, on manual runs and every Monday on `main` (a scheduled run is only `cargo deny`, for new advisories); a tag does not run it again. The `changes` job ([`build/ci/changes.sh`](build/ci/changes.sh)) skips what a pull request cannot affect: nothing but documentation runs only `lint`, and the AppImage, tarball and Flatpak jobs run only when the build scripts, workflows, `Cargo.*`, the shell's `CMakeLists.txt` or QML, `data/` or `po/LINGUAS` change; pushes to `main` and manual runs run everything, and a scheduled run runs only `deny` (`lint` and the rest are skipped on purpose). The final `required` job is green only when every job that had to run succeeded, so it is the one check to require.
 
 ### Hand tests with a phone (Wi-Fi upgrade and Bluetooth)
 
@@ -169,17 +169,18 @@ The tag triggers [`release.yml`](.github/workflows/release.yml), one run for one
 |---|---|---|
 | `validate` | the tag is `vX.Y.Z`, equals the version in `Cargo.toml`, `CMakeLists.txt` and the first metainfo `<release>`, points to the commit of the run, which is on `main`, and is the newest `vX.Y.Z` tag of the repository: a release below an existing one is refused (`build/release/check-version.sh`; other `v*` tags, such as a prerelease, do not count) | read |
 | `ci-gate` | waits up to 20 minutes for the CI run of the push of that commit to `main` to finish green (a pull request's run does not count) | read |
-| `build-appimage`, `build-tarball`, `build-flatpak` | build and smoke-test with the version of the tag; the Flatpak commits are exported unsigned onto an anonymous clone of `gh-pages` | read; no secret |
+| `build-appimage`, `build-tarball`, `build-flatpak` | build and smoke-test with the version of the tag, in the images pinned by digest ([Pinned tools](#pinned-tools)); the Flatpak commits are exported unsigned onto an anonymous clone of `gh-pages` | read; no secret |
 | `verify` | exactly the four files, their hashes against the build jobs, the tarball layout and `VERSION`, the `.zsync` header against the AppImage; writes `SHA256SUMS` (those four files) | read |
 | `sign-flatpak` | after `ci-gate` and `verify`; the only job with the signing key (environment `release-signing`), on the plain runner with flatpak and ostree from Ubuntu's signed packages, not in a container image: signs the commits and finishes the repository in a temporary keyring, checks it as a client, requires the `GPGKey` to be unchanged | read; key |
 | `publish` | draft release, missing assets, `gh-pages`, wait for Pages, then publishes (`build/release/publish.sh`) | write |
 
-`build/release/simulate.sh` runs these scripts against fakes of `gh`, `flatpak`, `ostree` and `curl` with ephemeral GnuPG keys (CI runs it in `lint`). Order and states: assets are uploaded to the draft first, then `gh-pages` is pushed as one orphan commit (the old one stays as the branch `gh-pages-previous`; one `git push --atomic` with a lease on both branches, so a writer that got in meanwhile makes it fail with exit 3 and nothing moves), then Pages is polled until it serves the new `summary` and `summary.sig`, then the draft is published as latest. The Release and the Flatpak repository are not one transaction; the only visible gap is some minutes where Flatpak users have the new version before the Release is public.
+`build/release/simulate.sh` runs these scripts against fakes of `gh`, `flatpak`, `ostree` and `curl` with ephemeral GnuPG keys (CI runs it in `lint`). Order and states: assets are uploaded to the draft first, then `gh-pages` is pushed as one orphan commit (the old one stays as the branch `gh-pages-previous`; one `git push --atomic` with a lease on both branches, so a push that fails moves nothing; both branches are then read again, and exit 3 means a writer got in meanwhile, exit 1 that none did), then Pages is polled until it serves the new `summary` and `summary.sig`, then the draft is published as latest. The Release and the Flatpak repository are not one transaction; the only visible gap is some minutes where Flatpak users have the new version before the Release is public.
 
 ### When a run fails
 
 - Fix a transient problem and use "Re-run failed jobs": `publish` is idempotent (same asset content is skipped, a different one stops the run, nothing is overwritten; `gh-pages` is pushed only if it is not already the new site). To rebuild, "Re-run all jobs".
-- `stale base` (exit 3 in `sign-flatpak` or `publish`), or `the push to gh-pages was refused` (exit 3 in `publish`): another release changed `gh-pages` after the build; re-run all jobs.
+- `stale base` (exit 3 in `sign-flatpak` or `publish`), or `the push to gh-pages failed because another writer changed gh-pages` (exit 3 in `publish`): another release changed `gh-pages` after the build; re-run all jobs.
+- `the push to gh-pages failed and neither branch has moved` (exit 1 in `publish`): a network or server error, or a ruleset refusing the push; nothing was pushed. Fix the cause and use "Re-run failed jobs".
 - `the newest release tag is vX.Y.Z` (`validate`): a newer release tag exists, so this tag cannot be released. If the newer tag was a mistake and has no release, delete it and re-run; otherwise cut the next version.
 - `ci-gate` fails: CI is red or missing on the tagged commit. Fix on `main`, then tag the new commit. Do not move a tag that was pushed: delete it and push a new one only if no release exists for it.
 - An asset with different content on the release (`refusing to overwrite`): look at why; delete that asset by hand only if it is the wrong one, then re-run `publish`.
@@ -194,8 +195,10 @@ The release builds with fixed tool versions, bumped by hand in a pull request. D
 | Rust of the tarball | `1.99.1` | `RUST_VERSION` in `release.yml`, and CI's tarball job (`check.sh` keeps them equal) | run `build/build-env.sh build/check.sh` with that toolchain; the `rustup-init` script itself is not pinned, it only installs this toolchain |
 | Rust of the Flatpak | `org.freedesktop.Sdk.Extension.rust-stable//25.08` at `09784a99…1507` (rustc 1.98.1) | `rust_commit` in `build/flatpak/build-flatpak.sh` | below |
 | KDE SDK and runtime | `org.kde.Sdk//6.11` at `df314f9c…3a86`, `org.kde.Platform//6.11` at `76fa01ac…c473` | `sdk_commit`, `platform_commit` in the same file | below |
+| Build images | `ghcr.io/the-beper/kuickshare-build:fedora45`, `…-flatpak:fedora45`, `…-appimage:arch`, each `@sha256:…` | the image references of the build jobs in `release.yml` (`check.sh` fails on one without a digest) | [Bump the images](#bump-the-build-images) |
+| `tomlkit` of the Flatpak image | exact version and wheel hash (`--require-hashes`) | `build/flatpak/Containerfile` | the hash is `urls[].digests.sha256` of the wheel in `https://pypi.org/pypi/tomlkit/<version>/json`; the `kuickshare-flatpak` digest in `release.yml` carries the pin only once `images.yml` has rebuilt the image on `main` and a digest bump pull request has merged, which must happen before the next release |
 
-The Flatpak build installs the three refs, moves each to its pinned commit and stops if one is elsewhere, before and after `flatpak-builder`, which runs without `--install-deps-from` so it cannot update them. The extension branch (`25.08`) is the freedesktop version of the KDE SDK (`flatpak remote-info --show-metadata flathub org.kde.Sdk//6.11`, `[Extension org.freedesktop.Sdk.Extension]`). The freedesktop runtime and the other extensions the KDE runtime pulls in are not pinned, and neither is the AppImage's Rust (the Arch image has it; images are not pinned by digest).
+The Flatpak build installs the three refs, moves each to its pinned commit and stops if one is elsewhere, before and after `flatpak-builder`, which runs without `--install-deps-from` so it cannot update them. The extension branch (`25.08`) is the freedesktop version of the KDE SDK (`flatpak remote-info --show-metadata flathub org.kde.Sdk//6.11`, `[Extension org.freedesktop.Sdk.Extension]`). The freedesktop runtime and the other extensions the KDE runtime pulls in are not pinned, and neither is the AppImage's Rust (the Arch image has it, at whatever version the image was built with).
 
 Re-check or bump a commit with a throwaway Flatpak directory, so nothing touches the real installation:
 
@@ -206,6 +209,15 @@ flatpak --user remote-info --arch=x86_64 --show-commit flathub org.kde.Sdk//6.11
 ```
 
 After a bump run `build/flatpak/build-flatpak.sh` and `build/flatpak/test-flatpak.sh dist/KuickShare-x86_64.flatpak`.
+
+#### Bump the build images
+
+`images.yml` rebuilds the three images weekly and on a change to a Containerfile, under the same tag; the release names an image by digest, so a rebuild changes nothing in a release until the digest is bumped by hand. Dependabot cannot do it: it is not known to read the `container:` image of a workflow (inferred, not verified). Old digests stay pullable from `ghcr.io` *(inferred)*.
+
+1. After `images.yml` has run on `main`, take the new `image:tag@sha256:…` lines from the `Digest` step of each job summary (Actions, Images). Or ask the registry, read-only and without credentials (`kuickshare-build` and `fedora45` are the image and tag): `curl -fsSI -H "Authorization: Bearer $(curl -fsS 'https://ghcr.io/token?scope=repository:the-beper/kuickshare-build:pull' | jq -r .token)" -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' https://ghcr.io/v2/the-beper/kuickshare-build/manifests/fedora45 | grep -i docker-content-digest`.
+2. Replace the digests in `release.yml` (every occurrence of the three images) in a pull request, and run `build/build-env.sh build/check.sh`.
+
+A change to a Containerfile therefore takes two pull requests: the change, then the digest bump after `images.yml` published it. Until then the release builds in the previous image.
 
 ### One-time setup (needs a repository admin)
 
@@ -218,7 +230,7 @@ These are GitHub settings; nothing in the workflows can do them.
 5. Settings, Actions: keep the default `GITHUB_TOKEN` read-only and the approval for first-time contributors; optionally require full-length commit SHAs for actions.
 6. Settings, Pages: deploy from the `gh-pages` branch (root), after the first release.
 
-Tool versions: the signing job is pinned to `ubuntu-24.04` and uses its flatpak and ostree. CI's `repo-update` job runs `build/flatpak/test-repo-update.sh` on the same runner image with the same apt packages (plus `librsvg2-common`, which only the test's re-export needs), on the repository the `flatpak` job built, so the ephemeral-key proof that installed clients update covers the versions releases use. A runner image or package update can still change them: that job going red is the warning. The first release must still be checked with a real client (below).
+Tool versions: the signing job is pinned to `ubuntu-24.04` and uses its flatpak and ostree. The release's `build-flatpak` job and CI's `flatpak` job run on the same image, and `build-flatpak` also installs Ubuntu's ostree for the commit export, so podman, flatpak and ostree do not change between build, signing and the update test. CI's `repo-update` job runs `build/flatpak/test-repo-update.sh` on the same runner image with the same apt packages (plus `librsvg2-common`, which only the test's re-export needs), on the repository the `flatpak` job built, so the ephemeral-key proof that installed clients update covers the versions releases use. A runner image or package update can still change them: that job going red is the warning. The first release must still be checked with a real client (below).
 
 The `release` concurrency group keeps one running and one pending run: if three tags are pushed in quick succession, GitHub cancels the middle one, and it cannot be released any more (`validate` refuses a tag older than the newest one): cut the next version instead.
 

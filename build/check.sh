@@ -16,9 +16,8 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 
 step "Rust tests"
 cargo test --locked --all-features
-# The vendored library is not a workspace member; its tests leave an untracked Cargo.lock behind.
+# The vendored library is not a workspace member; its Cargo.lock is tracked.
 cargo test -p rqs_lib
-git ls-files --error-unmatch third_party/rqs_lib/Cargo.lock >/dev/null 2>&1 || rm -f third_party/rqs_lib/Cargo.lock
 
 step "Shell build and tests"
 cmake -S src/shell -B dist/tmp/cmake-dev -G Ninja -DBUILD_TESTING=ON
@@ -32,6 +31,21 @@ step "Metainfo and desktop file"
 xmllint --noout data/*.metainfo.xml
 appstreamcli validate --no-net data/*.metainfo.xml
 desktop-file-validate data/io.github.the_beper.KuickShare.desktop
+# The Dolphin service menu is a KDE `Type=Service`, which desktop-file-validate rejects: check what KDE needs instead.
+# Every name in Actions= has a [Desktop Action] group with Name and Exec, and every such group is listed.
+awk -F= '
+    /^\[/ { group = ($0 ~ /^\[Desktop Action /) ? substr($0, 17, length($0) - 17) : ($0 == "[Desktop Entry]" ? "-" : "?"); if (group !~ /^[-?]$/) have[group] = 1; next }
+    group == "-" && $1 == "Type" { type = $2 }
+    group == "-" && $1 == "Actions" { listed = $2 }
+    group !~ /^[-?]$/ && $1 == "Name" { name[group] = 1 }
+    group !~ /^[-?]$/ && $1 == "Exec" { exec_[group] = 1 }
+    END {
+        bad = (type != "Service") || (listed == "")
+        n = split(listed, acts, ";")
+        for (i = 1; i <= n; i++) if (acts[i] != "" && !(acts[i] in have)) bad = 1
+        for (g in have) if (!(g in name) || !(g in exec_) || index(";" listed ";", ";" g ";") == 0) bad = 1
+        exit bad
+    }' data/kuickshare-send.desktop || { echo "data/kuickshare-send.desktop is not a valid service menu" >&2; exit 1; }
 
 step "Catalogs"
 while read -r l; do msgfmt -c --statistics -o /dev/null "po/$l.po"; done < po/LINGUAS
@@ -46,3 +60,8 @@ grep -qx "platform=org.kde.Platform//$runtime" build/flatpak/build-flatpak.sh
 # The tarball job of CI builds with the release's Rust.
 rust_version=$(sed -n 's/^  RUST_VERSION: "\(.*\)"$/\1/p' .github/workflows/release.yml)
 grep -q -- "--default-toolchain $rust_version\$" .github/workflows/ci.yml || { echo "ci.yml does not install the release's Rust $rust_version" >&2; exit 1; }
+# The release builds in images named by digest, never by the tag they carry today (see CONTRIBUTING.md, Pinned tools).
+for img in kuickshare-build kuickshare-flatpak kuickshare-appimage; do
+    grep -Eq "ghcr\.io/the-beper/$img:[a-z0-9]+@sha256:[0-9a-f]{64}" .github/workflows/release.yml || { echo "release.yml does not pin $img by digest" >&2; exit 1; }
+done
+if grep -o 'ghcr\.io/the-beper/[^ "]*' .github/workflows/release.yml | grep -Ev '@sha256:[0-9a-f]{64}$'; then echo "release.yml has an image without a digest" >&2; exit 1; fi
