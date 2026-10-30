@@ -232,6 +232,14 @@ These are GitHub settings; nothing in the workflows can do them.
 5. Settings, Actions: keep the default `GITHUB_TOKEN` read-only and the approval for first-time contributors; optionally require full-length commit SHAs for actions.
 6. Settings, Pages: deploy from the `gh-pages` branch (root), after the first release.
 
+A renewed key (same fingerprint, new bytes, for example a later expiry) is not a new key, but replacing `build/flatpak/signing-key.asc` alone stops every release: `prepare-flatpak` refuses a published `GPGKey` that is not the bytes of the file, and only a release writes `gh-pages`. Before the next tag, with no release in between:
+
+1. Put the renewed secret key into the environment as in step 1 (the job compares the fingerprint only).
+2. Merge the new `signing-key.asc`.
+3. Commit the new bytes to `gh-pages` by hand: in `kuickshare.flatpakrepo` and `kuickshare.flatpakref` replace the value of `GPGKey=` with the output of `gpg --dearmor < build/flatpak/signing-key.asc | base64 -w0`, and change nothing else.
+
+The next release then passes and keeps the bytes (`simulate.sh` runs these steps with fakes). Installed clients keep the key they imported; whether they take the new expiry from the `.flatpakrepo` is not verified.
+
 Tool versions: the jobs that prepare, sign and finish the repository are pinned to `ubuntu-24.04` and use its flatpak and ostree. The release's `build-flatpak` job and CI's `flatpak` job run on the same image, and `build-flatpak` also installs Ubuntu's ostree for the commit export, so podman, flatpak and ostree do not change between build, signing and the update test.
 
 There are no static deltas: a delta carries the signature of its commit and the signed summary has to list it, so deltas would have to be made with the key present or the summary signed twice. An update downloads the changed objects instead; `publish-repo.sh` deletes the deltas of earlier releases before it makes the summary. Bringing deltas back means a keyless job that makes them from the signed repository and a second signing step for the summary only. CI's `repo-update` job runs `build/flatpak/test-repo-update.sh` on the same runner image with the same apt packages (plus `librsvg2-common`, which only the test's re-export needs), on the repository the `flatpak` job built; it makes the new site with the three scripts above and an ephemeral key, so the proof that installed clients update covers the versions releases use. A runner image or package update can still change them: that job going red is the warning. The first release must still be checked with a real client (below).
