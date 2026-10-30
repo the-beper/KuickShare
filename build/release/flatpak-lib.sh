@@ -235,6 +235,22 @@ check_repo_paths() {
 }
 
 # no_commitmeta REPO COMMIT: a commit about to be signed has no signature file (and none inside the repository's metadata).
+# A .commitmeta2 is no signature: flatpak build-update-repo writes one (xa.reachable) for every head, unsigned ones too (tried,
+# flatpak 1.14.6), so it is allowed.
 no_commitmeta() {
     [ ! -e "$1/objects/$(printf '%s' "$2" | cut -c1-2)/${2#??}.commitmeta" ] || fail "commit $2 has a signature file already"
+}
+
+# heads_list REPO: "ref TAB commit" for every file under refs/heads, sorted; shell, find and cat only. Its hash is the pin
+# of prepare-flatpak-repo.sh for the signing job, which does not run ostree to list the refs.
+heads_list() {
+    (cd "$1/refs/heads" && find . -type f | sed 's|^\./||' | LC_ALL=C sort | while read -r hl_ref; do printf '%s\t%s\n' "$hl_ref" "$(cat "$hl_ref")"; done)
+}
+
+# check_commit_names REPO: every commit object of the repository is named by its own SHA-256, which is how ostree names a
+# commit (so a listed id is its content, and an unlisted head cannot have another xa.metadata than its id says). Needs $tmp.
+check_commit_names() {
+    find "$1/objects" -name '*.commit' -print0 | xargs -0 -r sha256sum > "$tmp/commit.sums" || fail "cannot hash the commit objects of $1"
+    cn_bad=$(awk '{ n = split($2, p, "/"); id = p[n - 1] substr(p[n], 1, length(p[n]) - 7); if ($1 != id) print $2 }' "$tmp/commit.sums" | head -n 5)
+    [ -z "$cn_bad" ] || { printf '%s\n' "$cn_bad" | sed 's/^/    /' >&2; fail "$1 has commit objects that do not hash to their names (see above)"; }
 }

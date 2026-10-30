@@ -325,6 +325,7 @@ jobs:
     outputs:
       prepared_sha256: ${{ steps.prepare.outputs.prepared_sha256 }}
       signlist_sha256: ${{ steps.prepare.outputs.signlist_sha256 }}
+      heads_sha256: ${{ steps.prepare.outputs.heads_sha256 }}
       base_sha: ${{ steps.prepare.outputs.base_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -474,6 +475,7 @@ jobs:
           EXPECT_CHECKED_SHA256: ${{ needs.check-flatpak.outputs.checked_sha256 }}
           EXPECT_SIGNLIST_SHA256: ${{ needs.prepare-flatpak.outputs.signlist_sha256 }}
           EXPECT_REFS_SHA256: ${{ needs.build-flatpak.outputs.refs_sha256 }}
+          EXPECT_HEADS_SHA256: ${{ needs.prepare-flatpak.outputs.heads_sha256 }}
         run: build/release/sign-flatpak-repo.sh --unpack flatpak-checked/checked-repo.tar flatpak-checked/sign-list.txt flatpak-refs/refs.txt "$RUNNER_TEMP/flatpak-sign-work"
 
       - name: Sign the Flatpak repository

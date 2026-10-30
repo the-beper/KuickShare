@@ -21,7 +21,8 @@
 # (see the comments where they are checked). GH_TOKEN is read at the start and given to gh only.
 # Refuses to run when FLATPAK_GPG_PRIVATE_KEY is set. The GPGKey of the .flatpakrepo is SIGNING_PUBKEY, dearmored; a published
 # one with other bytes is refused (installed clients would stop updating, and finish requires these bytes).
-# Writes prepared_sha256=, signlist_sha256= and base_sha= to $GITHUB_OUTPUT when it is set.
+# Writes prepared_sha256=, signlist_sha256=, heads_sha256= (the hash of "ref TAB commit" for every file of refs/heads of the
+# repository, which the signing job rebuilds from the archive it gets) and base_sha= to $GITHUB_OUTPUT when it is set.
 # Needs flatpak, ostree, gpg 2.2+, git, tar, base64, gh (GH_TOKEN, to list the releases) and python3. Exit codes: 0 ok, 1 a check failed, 2 bad input or the secret is set,
 # 3 gh-pages is not where the build left it ("stale base").
 # shellcheck disable=SC2154 # $base and $tab come from flatpak-lib.sh
@@ -210,6 +211,8 @@ done
 # ---- the prepared site and the list, as artifacts ----
 tar --sort=name --owner=0 --group=0 --numeric-owner --exclude=site/.git --exclude=site/repo/tmp -C "$tmp" -cf "$out/prepared.tar" site
 cp "$tmp/sign-list.txt" "$out/sign-list.txt"
+heads_list "$repo" > "$tmp/heads.list" || fail "cannot list the refs of the repository"
+heads_sha=$(sha256sum "$tmp/heads.list" | cut -d' ' -f1)
 prepared_sha=$(sha256sum "$out/prepared.tar" | cut -d' ' -f1)
 signlist_sha=$(sha256sum "$out/sign-list.txt" | cut -d' ' -f1)
 echo "$me: prepared.tar $prepared_sha, built on gh-pages $base; to sign:"
@@ -218,6 +221,7 @@ if [ -n "${GITHUB_OUTPUT:-}" ]; then
     {
         echo "prepared_sha256=$prepared_sha"
         echo "signlist_sha256=$signlist_sha"
+        echo "heads_sha256=$heads_sha"
         echo "base_sha=$base"
     } >> "$GITHUB_OUTPUT"
 fi

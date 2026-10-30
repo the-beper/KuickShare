@@ -45,7 +45,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=36
+total=37
 n=0
 passed=0
 failed=0
@@ -280,9 +280,10 @@ job_check() {
 # What the sign job has: the artifact of the check job with the hash of its output, the build's refs.txt, and the hashes that
 # prepare-flatpak and build-flatpak reported for the sign list and refs.txt; not the prepared site, not the environment of the check.
 sign_side() { run env -u EXPECT_PREPARED_SHA256 -u EXPECT_BASE_SHA "$@"; }
-unpack_pinned() { # <checked-repo.tar hash> <sign list hash> [<refs.txt hash>]: the keyless step of the sign job, with the pins it was given
+unpack_pinned() { # <checked-repo.tar hash> <sign list hash> [<refs.txt hash> [<heads hash>]]: the keyless step of the sign job, with the pins it was given
     rm -rf "$w/signwork"
     sign_side EXPECT_CHECKED_SHA256="$1" EXPECT_SIGNLIST_SHA256="$2" EXPECT_REFS_SHA256="${3-$(sha256_of "$w/commits/refs.txt")}" \
+        EXPECT_HEADS_SHA256="${4-$(out_of "$w/prepare.gho" heads_sha256)}" \
         "$rel/sign-flatpak-repo.sh" --unpack "$w/checked/checked-repo.tar" "$w/checked/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
 }
 job_unpack() { unpack_pinned "$(out_of "$w/check.gho" checked_sha256)" "$(out_of "$w/prepare.gho" signlist_sha256)"; }
@@ -1362,6 +1363,7 @@ cp "$w/check.gho" "$w/check.gho.orig"
 orig_pin=$(out_of "$w/check.gho" checked_sha256)
 list_pin=$(out_of "$w/prepare.gho" signlist_sha256)
 refs_pin=$(sha256_of "$w/commits/refs.txt")
+heads_pin=$(out_of "$w/prepare.gho" heads_sha256)
 rt=$work/shim3
 mkdir -p "$rt/bin"
 for t in flatpak gpg ostree git curl tar; do
@@ -1421,11 +1423,11 @@ cp "$w/checked.orig/sign-list.txt" "$w/checked/sign-list.txt"
 
 # the artifact of prepare given to unpack
 : > "$rt/calls"
-with_shims sign_side EXPECT_CHECKED_SHA256="$orig_pin" EXPECT_SIGNLIST_SHA256="$list_pin" EXPECT_REFS_SHA256="$refs_pin" "$rel/sign-flatpak-repo.sh" --unpack "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
+with_shims sign_side EXPECT_CHECKED_SHA256="$orig_pin" EXPECT_SIGNLIST_SHA256="$list_pin" EXPECT_REFS_SHA256="$refs_pin" EXPECT_HEADS_SHA256="$heads_pin" "$rel/sign-flatpak-repo.sh" --unpack "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
 check "unpack refuses the prepared site in place of the checked repository" rc_is 1
 check "(the message says so)" out_has "not the one the earlier job produced"
 check "(nothing was extracted)" not test -e "$w/signwork"
-sign_side EXPECT_CHECKED_SHA256="$(sha256_of "$w/prepared/prepared.tar")" EXPECT_SIGNLIST_SHA256="$list_pin" EXPECT_REFS_SHA256="$refs_pin" "$rel/sign-flatpak-repo.sh" --unpack "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
+sign_side EXPECT_CHECKED_SHA256="$(sha256_of "$w/prepared/prepared.tar")" EXPECT_SIGNLIST_SHA256="$list_pin" EXPECT_REFS_SHA256="$refs_pin" EXPECT_HEADS_SHA256="$heads_pin" "$rel/sign-flatpak-repo.sh" --unpack "$w/prepared/prepared.tar" "$w/prepared/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
 check "unpack refuses the prepared site even under its own hash (it holds site/, not repo/)" rc_is 2
 check "(the message names the folder)" out_has "other than repo/"
 check "(nothing was extracted)" not test -e "$w/signwork"
@@ -1437,10 +1439,13 @@ check "(nothing was extracted)" not test -e "$w/signwork"
 unpack_pinned "$orig_pin" ""
 check "unpack refuses an empty pin of the sign list" rc_is 2
 check "(nothing was extracted)" not test -e "$w/signwork"
-sign_side -u EXPECT_CHECKED_SHA256 -u EXPECT_SIGNLIST_SHA256 -u EXPECT_REFS_SHA256 "$rel/sign-flatpak-repo.sh" --unpack "$w/checked/checked-repo.tar" "$w/checked/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
+sign_side -u EXPECT_CHECKED_SHA256 -u EXPECT_SIGNLIST_SHA256 -u EXPECT_REFS_SHA256 -u EXPECT_HEADS_SHA256 "$rel/sign-flatpak-repo.sh" --unpack "$w/checked/checked-repo.tar" "$w/checked/sign-list.txt" "$w/commits/refs.txt" "$w/signwork"
 check "unpack refuses pins that are not set" rc_is 2
 unpack_pinned "$orig_pin" "$list_pin" ""
 check "unpack refuses an empty pin of refs.txt" rc_is 2
+check "(nothing was extracted)" not test -e "$w/signwork"
+unpack_pinned "$orig_pin" "$list_pin" "$refs_pin" ""
+check "unpack refuses an empty pin of the heads" rc_is 2
 check "(nothing was extracted)" not test -e "$w/signwork"
 unpack_pinned "not-a-hash" "$list_pin"
 check "unpack refuses a pin that is not a hash" rc_is 2
@@ -1470,10 +1475,10 @@ refused_unpack "a sign list of its own, with the hash of its archive (the pin of
 cp "$w/checked.orig/sign-list.txt" "$w/checked/sign-list.txt"
 fresh_y
 printf '%s\n' "$loc_c" > "$w/y/repo/refs/heads/$app_ref"
-refused_unpack "a ref that points to another commit than the listed one" 1 "does not point to the listed commit"
+refused_unpack "a ref that points to another commit than the listed one" 1 "refs of the checked repository"
 fresh_y
 echo '# changed' >> "$w/y/repo/$(objfile "$app_c")"
-refused_unpack "a commit object that does not hash to its id" 1 "does not hash to its id"
+refused_unpack "a commit object that does not hash to its id" 1 "do not hash to their names"
 fresh_y
 rm "$w/y/repo/$(objfile "$app_c")"
 refused_unpack "an archive without a listed commit object" 1 "is not in the checked repository"
@@ -1489,6 +1494,22 @@ refused_unpack "static deltas" 1 "static deltas"
 fresh_y
 echo "<script></script>" > "$w/y/repo/evil.html"
 refused_unpack "a stray file at the top of repo/" 1 "entries at its top"
+fresh_y
+mkdir -p "$w/y/repo/refs/heads/app/evil.app/x86_64"
+printf '%s\n' "$app_c" > "$w/y/repo/refs/heads/app/evil.app/x86_64/stable"
+refused_unpack "a ref that prepare did not make" 1 "refs of the checked repository"
+fresh_y
+app_parent=$(awk -F'\t' -v r="$app_ref" '$1 == r { print $3 }' "$w/commits/refs.txt")
+echo '# changed' >> "$w/y/repo/$(objfile "$app_parent")"
+refused_unpack "an unlisted commit object that does not hash to its name" 1 "do not hash to their names"
+fresh_y
+touch "$w/y/repo/objects/$(printf '%s' "$app_c" | cut -c1-2)/${app_c#??}.commitmeta"
+refused_unpack "a signature file of a listed commit" 1 "signature file already"
+fresh_y
+touch "$w/y/repo/objects/$(printf '%s' "$app_c" | cut -c1-2)/${app_c#??}.commitmeta2"
+tar -C "$w/y" -cf "$w/checked/checked-repo.tar" repo
+unpack_pinned "$(sha256_of "$w/checked/checked-repo.tar")" "$list_pin"
+check "unpack accepts a .commitmeta2 on a listed commit: it is no signature (flatpak build-update-repo writes xa.reachable there)" rc_is 0
 cp "$w/checked.orig/checked-repo.tar" "$w/checked/checked-repo.tar"
 
 # a symlink member under a matching pin
@@ -1516,6 +1537,29 @@ check "--check refuses a public key file it cannot read, before anyone is asked 
 check "(the message says so)" out_has "cannot read the fingerprint"
 check "(nothing was written)" not test -e "$w/checked/checked-repo.tar"
 end_case "check and sign share only the check's output: unpack runs no ostree, flatpak, gpg, git or network; a replaced archive or list, prepare's artifact, empty pins and a symlink are refused before tar"
+
+# ---- 6s. unlisted refs: the summary the key signs lists them, so prepare pins them ----
+make_world 39
+add_published_ref
+build_jobs
+job_check
+check "the check passes with an unlisted published ref" rc_is 0
+check "(the extra ref is not on the sign list)" not file_has "$w/checked/sign-list.txt" "other.app"
+check "prepare reports the hash of every head" test -n "$(out_of "$w/prepare.gho" heads_sha256)"
+cp -a "$w/checked" "$w/checked.orig"
+list_pin=$(out_of "$w/prepare.gho" signlist_sha256)
+job_unpack
+check "unpack accepts the honest archive" rc_is 0
+fresh_y
+printf '%s\n' "$extra_parent" > "$w/y/repo/refs/heads/$extra"
+refused_unpack "an unlisted ref moved back to an older signed commit" 1 "refs of the checked repository"
+fresh_y
+rm "$w/y/repo/refs/heads/$extra"
+refused_unpack "an unlisted ref that was dropped" 1 "refs of the checked repository"
+fresh_y
+echo '# changed' >> "$w/y/repo/$(objfile "$extra_head")"
+refused_unpack "an unlisted head whose commit object was swapped (its xa.metadata would go into the summary)" 1 "do not hash to their names"
+end_case "unlisted refs: a moved, dropped or added ref and a swapped head are refused by the unpack step, before the key"
 
 # ---- 6d. gh-pages moved since the build: the check job refuses, long before the key is imported ----
 make_world 23

@@ -26,11 +26,14 @@
 # repo/ in checked-repo.tar, with a copy of the sign list; the hash of the archive goes to the outputs of the job.
 # --unpack, keyless, with no ostree, gpg, flatpak, git or network (shell, find, grep and hashing only): the three files
 # against pins that do not come from the check job alone (the archive: EXPECT_CHECKED_SHA256 of check-flatpak; the sign list:
-# EXPECT_SIGNLIST_SHA256 of prepare-flatpak; refs.txt: EXPECT_REFS_SHA256 of build-flatpak; 64 hex digits, never empty); the
+# EXPECT_SIGNLIST_SHA256 of prepare-flatpak; refs.txt: EXPECT_REFS_SHA256 of build-flatpak; 64 hex digits, never empty; and
+# EXPECT_HEADS_SHA256 of prepare-flatpak, see below); the
 # archive has only plain files and directories under repo/; the sign list is the shape of one and agrees with refs.txt;
-# the structural checks of --check once more (config, no deltas, the entries and files of repo/, no summary); every listed
-# commit object hashes to its id and refs/heads/<ref> names it. Only then does the archive go into an empty <work-dir>, so a
-# compromised check job alone cannot change what the key signs. It runs apart from --sign: the secret is in the environment
+# the structural checks of --check once more (config, no deltas, the entries and files of repo/, no summary); every commit
+# object of the repository hashes to its name; the heads of the repository are exactly those prepare-flatpak made
+# (EXPECT_HEADS_SHA256, the hash of every "ref TAB commit" of refs/heads, rebuilt here); every listed commit has no signature
+# file and refs/heads/<ref> names it. Only then does the archive go into an empty <work-dir>, so a compromised check job
+# alone cannot change what the key signs or put an unlisted ref, head or commit into the summary. It runs apart from --sign: the secret is in the environment
 # of that step, and any child process could read it there.
 # --sign: the secret is copied into a variable of the shell and removed from its environment before anything else runs, so
 # no child process (gpg, ostree, flatpak) inherits it. The key goes into a keyring in memory (/dev/shm) that holds exactly
@@ -48,6 +51,7 @@
 #   EXPECT_CHECKED_SHA256    as check-flatpak reported it
 #   EXPECT_SIGNLIST_SHA256   as prepare-flatpak reported it
 #   EXPECT_REFS_SHA256       as build-flatpak reported it
+#   EXPECT_HEADS_SHA256      as prepare-flatpak reported it
 # Environment of all:
 #   FLATPAK_GPG_PRIVATE_KEY  (--sign only) the armored secret key, without a passphrase (an environment secret, on that step only)
 #   RUNNER_TEMP              where scratch files go (default $TMPDIR, then /tmp)
@@ -182,8 +186,9 @@ if [ "$mode" = --unpack ]; then
     pin_checked=${EXPECT_CHECKED_SHA256:-}
     pin_signlist=${EXPECT_SIGNLIST_SHA256:-}
     pin_refs=${EXPECT_REFS_SHA256:-}
-    for pin in "$pin_checked" "$pin_signlist" "$pin_refs"; do
-        printf '%s\n' "$pin" | grep -Eq '^[0-9a-f]{64}$' || bad_input "EXPECT_CHECKED_SHA256, EXPECT_SIGNLIST_SHA256 and EXPECT_REFS_SHA256 must be the hashes the earlier jobs reported (64 hex digits, not empty)"
+    pin_heads=${EXPECT_HEADS_SHA256:-}
+    for pin in "$pin_checked" "$pin_signlist" "$pin_refs" "$pin_heads"; do
+        printf '%s\n' "$pin" | grep -Eq '^[0-9a-f]{64}$' || bad_input "EXPECT_CHECKED_SHA256, EXPECT_SIGNLIST_SHA256, EXPECT_REFS_SHA256 and EXPECT_HEADS_SHA256 must be the hashes the earlier jobs reported (64 hex digits, not empty)"
     done
     for f in "$1" "$2" "$3"; do [ -f "$f" ] || bad_input "$f does not exist"; done
     checked=$(readlink -f "$1")
@@ -208,8 +213,13 @@ if [ "$mode" = --unpack ]; then
     for f in summary summary.sig summary.idx summary.idx.sig summaries; do
         [ ! -e "$repo/$f" ] || fail "the checked repository has $f: the summary is made again here"
     done
-    # A listed commit is its content (the id is the SHA-256 of the commit object) and its ref names it.
+    # Every commit is its name (the id is the SHA-256 of the commit object), and the refs are those prepare made, the unlisted
+    # ones too: the summary the key signs lists every head of the repository, with its xa.metadata.
+    check_commit_names "$repo"
+    heads_list "$repo" > "$tmp/heads.list" || fail "cannot list the refs of the checked repository"
+    [ "$(sha256sum "$tmp/heads.list" | cut -d' ' -f1)" = "$pin_heads" ] || fail "the refs of the checked repository are not the ones prepare-flatpak made (a ref was moved, added or dropped)"
     while IFS=$tab read -r ref commit; do
+        no_commitmeta "$repo" "$commit"
         obj=$repo/objects/$(printf '%s' "$commit" | cut -c1-2)/${commit#??}.commit
         [ -f "$obj" ] || fail "$ref: the commit object $commit is not in the checked repository"
         [ "$(sha256sum "$obj" | cut -d' ' -f1)" = "$commit" ] || fail "$ref: the commit object does not hash to its id $commit"

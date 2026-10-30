@@ -121,7 +121,7 @@ EXPECT_PREPARED_SHA256=$EXPECT_PREPARED_SHA256 EXPECT_SIGNLIST_SHA256=$EXPECT_SI
     "$root/build/release/sign-flatpak-repo.sh" --check "$work/prepared/prepared.tar" "$work/prepared/sign-list.txt" "$work/commits/refs.txt" "$work/checked"
 # sign-flatpak: the checked files against the hashes of the check, prepare and build, without the key, then the key in the step that signs
 EXPECT_CHECKED_SHA256=$(sed -n 's/^checked_sha256=//p' "$work/ci/check.out") EXPECT_SIGNLIST_SHA256=$EXPECT_SIGNLIST_SHA256 \
-    EXPECT_REFS_SHA256=$(sha256sum "$work/commits/refs.txt" | cut -d' ' -f1) \
+    EXPECT_REFS_SHA256=$(sha256sum "$work/commits/refs.txt" | cut -d' ' -f1) EXPECT_HEADS_SHA256=$(sed -n 's/^heads_sha256=//p' "$work/ci/prepare.out") \
     "$root/build/release/sign-flatpak-repo.sh" --unpack "$work/checked/checked-repo.tar" "$work/checked/sign-list.txt" "$work/commits/refs.txt" "$work/signwork"
 FLATPAK_GPG_PRIVATE_KEY=$(GNUPGHOME=$work/key-a gpg --batch --pinentry-mode loopback --passphrase '' --armor --export-secret-keys "$fpr_a") \
     GITHUB_OUTPUT=$work/ci/sign.out "$root/build/release/sign-flatpak-repo.sh" --sign "$work/signwork" "$work/signed-repo"
