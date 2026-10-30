@@ -244,7 +244,7 @@ no_commitmeta() {
 # heads_list REPO: the lines that prepare-flatpak-repo.sh pins for the signing job, one per ref and one per .commitmeta2:
 # "ref TAB commit" for every file under refs/heads, then "path TAB sha256" for every .commitmeta2 (flatpak's xa.reachable,
 # which flatpak build-update-repo reads when it signs the summary), each part sorted; find, cat, sha256sum and awk only.
-# Needs $tmp. Returns 1 when anything cannot be read.
+# Needs $tmp. Returns 1 when anything cannot be read, or a ref file holds anything but one commit id.
 heads_list() {
     (
         cd "$1/refs/heads" || exit 1
@@ -252,6 +252,8 @@ heads_list() {
         sed 's|^\./||' "$tmp/hl.files" | LC_ALL=C sort > "$tmp/hl.refs"
         while read -r hl_ref; do
             hl_commit=$(cat "$hl_ref") || exit 1
+            case $hl_commit in *[!0-9a-f]*) exit 1 ;; esac
+            [ "${#hl_commit}" -eq 64 ] || exit 1
             printf '%s\t%s\n' "$hl_ref" "$hl_commit"
         done < "$tmp/hl.refs"
         cd "$1" || exit 1

@@ -557,8 +557,9 @@ check "(no keyring is left)" no_leftovers
 end_case "failed build and failed sign: nothing exported, wrong parent, wrong key, wrong public key, new key, key material, no secret, stale base; keyring always gone"
 
 # ---- 6e. review findings: config, bindings, unlisted refs, tampered base ----
-add_published_ref() { # an extra ref on gh-pages with a parent, signed with key A, summary made again (as an earlier release would)
-    extra=app/other.app/x86_64/stable
+add_published_ref() { # [<ref>]: an extra ref on gh-pages with a parent, signed with key A, summary made again (as an earlier release would)
+    extra=${1:-app/other.app/x86_64/stable}
+    rm -rf "$w/pubx"
     git clone -q "file://$origin" "$w/pubx"
     git -C "$w/pubx" checkout -q gh-pages
     mkdir -p "$w/pubx/repo/refs/heads" "$w/pubx/repo/refs/mirrors" "$w/pubx/repo/refs/remotes" "$w/pubx/repo/tmp"
@@ -1553,6 +1554,7 @@ end_case "check and sign share only the check's output: unpack runs no ostree, f
 # ---- 6s. unlisted refs: the summary the key signs lists them, so prepare pins them ----
 make_world 39
 add_published_ref
+add_published_ref app/other2.app/x86_64/stable
 build_jobs
 job_check
 check "the check passes with an unlisted published ref" rc_is 0
@@ -1571,7 +1573,13 @@ refused_unpack "an unlisted ref that was dropped" 1 "not the ones prepare-flatpa
 fresh_y
 echo '# changed' >> "$w/y/repo/$(objfile "$extra_head")"
 refused_unpack "an unlisted head whose commit object was swapped (its xa.metadata would go into the summary)" 1 "do not hash to their names"
-end_case "unlisted refs: a moved, dropped or added ref and a swapped head are refused by the unpack step, before the key"
+fresh_y
+# two unlisted refs next to each other: B is dropped and its line is appended to the file of A, so that the text "ref TAB commit"
+# of every head, rebuilt from the files, is the honest one
+rm "$w/y/repo/refs/heads/$extra"
+printf '%s\t%s\n' "$extra" "$extra_head" >> "$w/y/repo/refs/heads/app/other.app/x86_64/stable"
+refused_unpack "an unlisted ref dropped and its line hidden in the file of the ref before it" 1 "cannot list the refs"
+end_case "unlisted refs: a moved, dropped or added ref, a swapped head and a ref file that holds more than a commit id are refused by the unpack step, before the key"
 
 # ---- 6d. gh-pages moved since the build: the check job refuses, long before the key is imported ----
 make_world 23
