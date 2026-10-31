@@ -71,6 +71,19 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.6.0" date="2026-10-31">
+      <description>
+        <p>A clearer system requirements check for Wi-Fi Direct, and releases checked before they are signed.</p>
+        <ul>
+          <li>The System requirements dialog lists each component (Bluetooth, NetworkManager, Wi-Fi adapter, dnsmasq, firewall and, in a Flatpak, its permissions) and says right under it what needs attention and what to do.</li>
+          <li>When neither sending nor receiving can work, the Wi-Fi Direct switch stays off and cannot be turned on, and Check system requirements… says why. A switch that is already on can still be turned off.</li>
+          <li>The firewall check asks polkit for the permission firewalld actually requires to open the hotspot port.</li>
+          <li>The Flatpak checks the firewall permission too: it may now ask polkit (system bus name org.freedesktop.PolicyKit1), only to learn without a prompt whether firewalld will accept the port.</li>
+          <li>In the Flatpak, dnsmasq cannot be seen from the sandbox: it no longer makes receiving Unknown and is checked when the first hotspot starts.</li>
+          <li>The Flatpak repository of a release is checked on a machine without the signing key, and the signing approval is asked for only once every check is green.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.5.0" date="2026-10-29">
       <description>
         <p>Safer receiving, a check of what transfers without a shared network need, and a more responsive app while sending.</p>
