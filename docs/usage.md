@@ -345,7 +345,7 @@ Open it with `Ctrl+,`, from the menu, or from the tray. Changes apply at once an
 | History | Delete entries after | Never | Never, 1, 7, 30 or 90 days. Applied at startup, when the history is read and when a transfer is added |
 | Startup | Start at login | Off | Writes the autostart entry; the app starts hidden. The entry points at the running binary, so switch it off and on again after moving the installation |
 | Integration | Show tray icon | On | Without it, closing the window quits the app and nothing can be received until you open it again. At login it still starts hidden, so start KuickShare again to see the window |
-| Integration | Dolphin context menu | On | Adds or removes **Send with KuickShare** |
+| Integration | Dolphin context menu | On | Adds or removes **Send with KuickShare**. Kept in line with the setting: written in your home if on and no copy exists there or in a system folder, removed if off (not in the AppImage, which adds it only when you say so). A package that does not ship the entry still gets the menu. Uninstalling the package leaves the copy in your home: remove `~/.local/share/kio/servicemenus/kuickshare-send.desktop` |
 | Wi-Fi Direct | Receive and send without a shared network | Off | Experimental; see [Without a shared network](#without-a-shared-network-experimental) |
 | Reset | Reset preferences... | | Restores every setting to its default, including autostart off and the Dolphin entry on. History, paired and trusted devices are kept |
 

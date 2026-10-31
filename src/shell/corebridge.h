@@ -336,6 +336,7 @@ private:
     bool m_wifiUpgrade = false;
     bool m_insecureHotspotAllowed = false;
     bool m_dolphinIntegration = true;
+    bool m_dolphinSyncFailed = false;
     bool m_trustedDevicesEnabled = true;
     bool m_trustedDevicesReset = false;
     int m_historyKeepDays = 0;

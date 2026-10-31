@@ -402,15 +402,16 @@ void CoreBridge::refreshProperties()
         const bool dolphinChanged = dolphin != m_dolphinIntegration;
         m_trayIcon = tray;
         m_dolphinIntegration = dolphin;
-        // Turned off in the settings (e.g. before an update put the entry back): make the menu match.
-        if (!dolphin && DolphinMenu::exists())
+        // The setting is the truth: an update can put the entry back, and a package may not ship it (Flatpak, distro packages).
+        // The AppImage only adds it when the user says so (first-start question, Preferences).
+        if (!dolphin || !Launcher::inAppImage())
         {
-            DolphinMenu::setEnabled(false);
-        }
-        // A Flatpak has no installer to write the entry, so the app writes it.
-        if (dolphin && Launcher::inFlatpak() && !DolphinMenu::exists() && !DolphinMenu::setEnabled(true))
-        {
-            qWarning() << "Could not write the Dolphin entry";
+            const bool synced = DolphinMenu::sync(dolphin);
+            if (!synced && !m_dolphinSyncFailed)
+            {
+                qWarning() << "Could not update the Dolphin entry";
+            }
+            m_dolphinSyncFailed = !synced;
         }
         emit visibleChanged();
         if (visibleUntilDiffers) {
