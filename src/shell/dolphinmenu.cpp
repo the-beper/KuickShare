@@ -28,8 +28,8 @@ bool DolphinMenu::sync(bool enabled)
     {
         return true;
     }
-    // A package that ships the entry system-wide needs no copy in the home.
-    if (enabled && !QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("kio/servicemenus/kuickshare-send.desktop")).isEmpty())
+    // A package that ships the entry system-wide needs no copy in the home. Not in a Flatpak: its copy is in the sandbox, which Dolphin does not read.
+    if (enabled && !Launcher::inFlatpak() && !QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("kio/servicemenus/kuickshare-send.desktop")).isEmpty())
     {
         return true;
     }
