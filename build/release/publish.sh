@@ -24,6 +24,8 @@
 #   SITE_URL             where Pages serves the site
 #   REPO_REMOTE          (optional) git remote of the repository, default https://github.com/$GITHUB_REPOSITORY.git
 #   PAGES_WAIT_SECS, PAGES_POLL_INTERVAL   (optional) how long and how often to look at Pages, default 600 and 15
+#   LIST_WAIT_SECS, LIST_POLL_INTERVAL     (optional) how long and how often to look for a new draft in the list of
+#                        releases, which can lag behind its creation, default 60 and 3
 #   KUICKSHARE_ROOT      (optional) the checkout the files are checked against
 # Exit codes: 0 done, 1 a check or the push failed, 2 bad input, 3 gh-pages is not where the build left it.
 set -eu
@@ -37,6 +39,8 @@ remote=${REPO_REMOTE:-https://github.com/$repo.git}
 site_url=${SITE_URL%/}
 wait_secs=${PAGES_WAIT_SECS:-600}
 interval=${PAGES_POLL_INTERVAL:-15}
+list_wait=${LIST_WAIT_SECS:-60}
+list_interval=${LIST_POLL_INTERVAL:-3}
 fail() { echo "publish: $*" >&2; exit 1; }
 # After a push that reported a failure: if gh-pages is the commit this run pushed and gh-pages-previous the old head, the
 # push had landed and only the acknowledgement was lost (the atomic push moved both): go on. Exit 3 only if gh-pages or
@@ -162,8 +166,16 @@ if [ "$info" = none ]; then
     python3 -I "$tools/build/release/release-notes.py" "$root/data/io.github.the_beper.KuickShare.metainfo.xml" "$version" \
         --repo "$repo" > "$tmp/notes.md"
     gh release create "$tag" --repo "$repo" --draft --verify-tag --title "$tag" --notes-file "$tmp/notes.md"
+    # The list of releases can lag behind the creation (seen on v1.6.0): look again for a while.
+    waited=0
     info=$(lookup)
-    [ "$info" != none ] || fail "the release was created but cannot be found"
+    while [ "$info" = none ] && [ "$waited" -lt "$list_wait" ]; do
+        echo "publish: the new draft is not listed yet, looking again in ${list_interval}s"
+        sleep "$list_interval"
+        waited=$((waited + list_interval))
+        info=$(lookup)
+    done
+    [ "$info" != none ] || fail "the release was created but is not listed after ${list_wait}s: run the job again, it finds the draft and goes on"
 fi
 release_id=${info% *}
 if [ "${info#* }" = false ]; then

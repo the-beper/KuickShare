@@ -9,6 +9,7 @@ Environment:
   FAKE_GH_FAIL     comma list: create, edit, upload:NAME (the call exits 1)
   FAKE_GH_PARTIAL  1: a failed upload leaves an unfinished asset behind, as an interrupted upload does
   FAKE_GH_NO_DIGEST 1: assets have no digest, the caller must download them
+  FAKE_GH_LIST_LAG N: the list of releases leaves out a newly created release for the next N reads, as GitHub can
 """
 import hashlib
 import json
@@ -92,7 +93,12 @@ def api(args):
     parts = endpoint.split("/")  # repos/OWNER/REPO/...
     path = "/".join(parts[3:])
     if method == "GET" and path == "releases":
-        print(json.dumps(state["releases"]))
+        if os.environ.get("FAKE_GH_LIST_LAG") and state.get("lag", 0) > 0:
+            state["lag"] -= 1
+            save(state)
+            print(json.dumps(state["releases"][:-1]))
+        else:
+            print(json.dumps(state["releases"]))
     elif method == "GET" and path == "releases/latest":
         for release in state["releases"]:
             if release["id"] == state["latest"] and not release["draft"]:
@@ -134,6 +140,7 @@ def release(args):
                 die("empty notes")
         state["releases"].append({"id": new_id(state), "tag_name": tag, "name": title, "draft": bool(draft), "body": body,
                                   "assets": []})
+        state["lag"] = int(os.environ.get("FAKE_GH_LIST_LAG") or 0)
         log("create %s draft=%s" % (tag, bool(draft)))
     elif sub == "upload":
         if option(args, "--clobber", False):

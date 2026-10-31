@@ -45,7 +45,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=37
+total=38
 n=0
 passed=0
 failed=0
@@ -194,6 +194,9 @@ XML
     GH_TOKEN=ephemeral-test-token
     PAGES_WAIT_SECS=3
     PAGES_POLL_INTERVAL=1
+    LIST_WAIT_SECS=2
+    LIST_POLL_INTERVAL=1
+    FAKE_GH_LIST_LAG=
     FAKE_GH_STATE=$w/gh-state.json
     FAKE_GH_LOG=$w/gh.log
     FAKE_GH_ORIGIN=$origin
@@ -207,7 +210,7 @@ XML
     FAKE_OSTREE_ORPHAN=
     FAKE_FLATPAK_LOG=$w/flatpak.log
     export RELEASE_TAG GITHUB_SHA GITHUB_REPOSITORY KUICKSHARE_ROOT SITE_URL PAGES_REMOTE REPO_REMOTE RUNNER_TEMP SIGNING_PUBKEY GH_TOKEN
-    export PAGES_WAIT_SECS PAGES_POLL_INTERVAL FAKE_GH_STATE FAKE_GH_LOG FAKE_GH_ORIGIN FAKE_GH_FAIL FAKE_GH_PARTIAL FAKE_GH_NO_DIGEST
+    export PAGES_WAIT_SECS PAGES_POLL_INTERVAL LIST_WAIT_SECS LIST_POLL_INTERVAL FAKE_GH_LIST_LAG FAKE_GH_STATE FAKE_GH_LOG FAKE_GH_ORIGIN FAKE_GH_FAIL FAKE_GH_PARTIAL FAKE_GH_NO_DIGEST
     export FAKE_PAGES_ORIGIN FAKE_PAGES_URL FAKE_PAGES_STALE FAKE_OSTREE_LOG FAKE_OSTREE_ORPHAN FAKE_FLATPAK_LOG
     : > "$FAKE_GH_LOG"
     echo '{"next_id": 1, "releases": [], "latest": null}' > "$FAKE_GH_STATE"
@@ -1633,6 +1636,36 @@ check "(it found the finished files by their content)" out_has "already on the r
 check "the release is complete" state_is "published 5 latest"
 check "no file was uploaded twice" same "$(gh_count 'upload KuickShare-x86_64.AppImage')$(gh_count 'upload KuickShare-x86_64.AppImage.zsync')$(gh_count 'upload KuickShare-x86_64.flatpak')" 111
 end_case "upload fails partway: draft stays, rerun finishes without uploading again"
+
+# ---- 7b. the list of releases lags behind the creation of the draft ----
+make_world 41
+build_jobs
+job_verify
+job_sign
+FAKE_GH_LIST_LAG=2
+export FAKE_GH_LIST_LAG
+job_publish
+check "publish waits for the new draft to be listed and completes" rc_is 0
+check "(it said it was waiting)" out_has "not listed yet"
+check "the release is complete" state_is "published 5 latest"
+check "one draft was created" same "$(gh_count "create $RELEASE_TAG draft=True")" 1
+make_world 42
+build_jobs
+job_verify
+job_sign
+FAKE_GH_LIST_LAG=9
+export FAKE_GH_LIST_LAG
+job_publish
+check "publish fails when the draft stays unlisted" rc_fails
+check "(the message says to run the job again)" out_has "run the job again"
+check "gh-pages was not touched" same "$(pages_head)" "$base_sha"
+FAKE_GH_LIST_LAG=
+export FAKE_GH_LIST_LAG
+job_publish
+check "the rerun finds the draft and completes" rc_is 0
+check "the release is complete after the rerun" state_is "published 5 latest"
+check "still one draft created" same "$(gh_count "create $RELEASE_TAG draft=True")" 1
+end_case "the list of releases lags behind a new draft: publish waits; past the wait it fails and the rerun finishes"
 
 # ---- 8. an existing asset differs ----
 make_world 9
