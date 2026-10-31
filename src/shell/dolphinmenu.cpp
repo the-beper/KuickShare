@@ -22,6 +22,20 @@ bool DolphinMenu::exists()
     return QFile::exists(entryPath());
 }
 
+bool DolphinMenu::sync(bool enabled)
+{
+    if (exists() == enabled)
+    {
+        return true;
+    }
+    // A package that ships the entry system-wide needs no copy in the home.
+    if (enabled && !QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("kio/servicemenus/kuickshare-send.desktop")).isEmpty())
+    {
+        return true;
+    }
+    return setEnabled(enabled);
+}
+
 bool DolphinMenu::setEnabled(bool enabled)
 {
     const QString path = entryPath();

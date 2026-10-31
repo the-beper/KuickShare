@@ -71,6 +71,14 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.6.1" date="2026-10-31">
+      <description>
+        <p>Fixes the Dolphin context menu setting when a package does not ship the menu entry.</p>
+        <ul>
+          <li>The Dolphin context menu setting and the entry now agree: when the setting is on and the entry is missing, KuickShare writes it in your home folder at start, unless the package already installs one for all users. Before, the switch showed On with no menu entry in packages that leave the file out.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.6.0" date="2026-10-31">
       <description>
         <p>A clearer system requirements check for Wi-Fi Direct, and releases checked before they are signed.</p>
