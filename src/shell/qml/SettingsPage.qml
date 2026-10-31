@@ -218,6 +218,10 @@ FormCard.FormCardPage {
                 }
                 const statuses = [wifiCard.sending, wifiCard.receiving, wr.capabilities.joinNetwork.status];
                 if (statuses.every(s => s === "available")) {
+                    // An informational row (dnsmasq in a Flatpak) feeds no capability, but was not checked either.
+                    if (wr.components.some(c => c.status === "unknown")) {
+                        return KI18n.i18n("Some items could not be checked");
+                    }
                     return KI18n.i18n("Everything Wi-Fi Direct needs is available");
                 }
                 if (statuses.includes("unknown")) {

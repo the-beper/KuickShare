@@ -41,7 +41,7 @@ The sandbox is deliberately open where the integration needs it:
 | Network | Quick Share and the pairing port |
 | `org.bluez` (system bus) and Bluetooth sockets | Finding devices over Bluetooth, and the Bluetooth channel of a send |
 | `org.freedesktop.NetworkManager`, `org.fedoraproject.FirewallD1` (system bus) | The [Wi-Fi upgrade](wifi-direct.md) (off unless enabled) |
-| `org.freedesktop.PolicyKit1` (system bus) | The [requirements check](#checking-the-requirements) asks, without a prompt, whether firewalld will let you open the hotspot port. polkit answers more than that call, so it is a deliberate widening |
+| `org.freedesktop.PolicyKit1` (system bus) | The [requirements check](#checking-the-requirements) asks, without a prompt, whether firewalld will let you open the hotspot port. The grant reaches all of polkit's interface, not only that call *(inferred: authorization checks for any action, also with a prompt, and registering an authentication agent)*, so it is a deliberate widening |
 | `org.kde.kuickshare` (own name) | Single-instance service of the window |
 | `org.kde.JobViewServer`, `org.freedesktop.Notifications`, `org.kde.StatusNotifierWatcher` | Job progress, Do Not Disturb, tray icon |
 | Downloads folder | Received files. Another download folder is refused with a message until you grant it: `flatpak override --user --filesystem=/path io.github.the_beper.KuickShare` |

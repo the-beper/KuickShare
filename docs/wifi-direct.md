@@ -122,7 +122,7 @@ The shell groups the rows by component (Bluetooth, NetworkManager, Wi-Fi adapter
 | Blocked | polkit denies the change (`permission_denied`); or the firewall refused the port in this session and no consent was given (`denied_this_session`) |
 | Unknown | The permission cannot be verified (`permission_unverifiable`): polkit is not running or is hidden (a Flatpak without its talk permission), the call failed, or the zone list could not be read because the read action was not allowed without asking |
 
-The polkit action ids are `org.fedoraproject.FirewallD1.config`, which firewalld's `addPort` requires, and `org.fedoraproject.FirewallD1.info`, which guards `getZones` (read in firewalld 2.5.2's D-Bus server code; no test runs against a real firewalld). The zone list is read only when the `info` action is allowed without interaction, because the call could otherwise prompt.
+The polkit action ids are `org.fedoraproject.FirewallD1.config`, which firewalld's `addPort` requires, and `org.fedoraproject.FirewallD1.info`, which guards `getZones` *(inferred from firewalld 2.5.2's D-Bus server code; no test runs against a real firewalld)*. The zone list is read only when the `info` action is allowed without interaction, because the call could otherwise prompt.
 
 ### What is never verified
 
@@ -183,7 +183,7 @@ Some things only show when the runtime acts. The core keeps them in memory for t
 `packaging` is `flatpak` when `/.flatpak-info` exists, else `appimage` when `APPIMAGE` or `APPDIR` is set, else `native`. In a Flatpak:
 
 - The sandbox rows come from `/.flatpak-info`: the network, Bluetooth and system-bus talk permissions the sandbox has, user overrides included *(inferred from the file's content as the code reads it, not compared with a real override)*. A missing permission turns the service row into `sandbox_denied` and `sandbox.permissions` into a Warning.
-- `dnsmasq` cannot be looked for on the host: Flatpak reserves `/usr` and only `--filesystem=host-os` shows the host's (flatpak-metadata(5)), and the manifest does not ask for it. `wifi.dhcp` is Unknown (`sandbox_unobservable`) with category `info`, so it does not lower Receiving; the shell reads "Checked when the first hotspot starts". A hotspot that comes up makes it Ready; NetworkManager's sharing failure makes it a critical Warning (`shared_start_failed`).
+- `dnsmasq` cannot be looked for on the host: Flatpak reserves `/usr` and only `--filesystem=host-os` shows the host's (flatpak-metadata(5)), and the manifest does not ask for it. `wifi.dhcp` is Unknown (`sandbox_unobservable`) with category `info`, so it does not lower Receiving; the shell reads "Checked when the first hotspot starts", and the line under the switch says "Some items could not be checked" instead of "Everything Wi-Fi Direct needs is available". A hotspot that comes up makes it Ready; NetworkManager's sharing failure makes it a critical Warning (`shared_start_failed`).
 - polkit is asked as in a native install, through `--system-talk-name=org.freedesktop.PolicyKit1`. An override that removes it hides the name *(inferred: how the proxy answers `NameHasOwner`, as for the other services; not tested in a sandbox)*: `firewall.integration` is then Unknown (`permission_unverifiable`) and `sandbox.permissions` names `polkit`.
 
 ### The gate on turning the setting on

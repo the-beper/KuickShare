@@ -329,7 +329,7 @@ A row:
 | `details` | string | Fixed words, numbers and version strings (for example `network-control=auth`); possibly empty |
 | `device` | string or `null` | An interface or adapter name only |
 | `verification` | string | How the row was checked, in fixed words |
-| `affects` | array of strings | The capabilities the row feeds: `sending`, `receiving`, `join_network`; empty for a row that feeds none |
+| `affects` | array of strings | The capabilities the row feeds: `sending`, `receiving`, `join_network`; empty for a row that feeds none. An `info` row lists the capability it is about but feeds none |
 
 Limits, kept by the core when it writes and checked again by the shell when it reads: at most 64 rows and 64 KiB for the document (the shell treats more of either as an unreadable report); `details` and `verification` at most 200 characters, `device` at most 32 (the shell cuts longer text). The core removes control characters, invisible format characters and `<` `>` from the text fields. `details` and `device` never carry SSIDs, MAC addresses, IP addresses, passwords or names of remote devices; an interface name that contains a run of twelve or more hexadecimal digits (such as `wlx` followed by a MAC address) has the run replaced by an ellipsis.
 
