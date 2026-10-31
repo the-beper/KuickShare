@@ -67,6 +67,9 @@ jobs:
       - name: Release simulation
         run: build/release/simulate.sh
 
+      - name: Version bump
+        run: build/release/version-bump-test.sh
+
       - name: Install actionlint
         run: |
           dir="$RUNNER_TEMP/actionlint"

@@ -5,6 +5,7 @@ Quick Share client for KDE Plasma 6: Rust daemon `kuickshared` (`src/core`, prot
 ## Commands
 - Everything that needs Qt, KF6, ECM or `dbus-daemon` runs through `build/build-env.sh <command>` (podman). A bare `cmake` on the host fails with a missing ECM.
 - Full check: the `/check` skill, which runs `build/build-env.sh build/check.sh` (the list of checks lives in that script, CI runs it too) plus the `po.py` catalog status. `build/Containerfile` is also CI's image (ghcr, `images.yml`): after changing it, rebuild the local one with `podman build -t localhost/kuickshare-build:fedora45 -f build/Containerfile build`.
+- Version bump: only with `build/release/version-bump.sh X.Y.Z NOTES` (it checks the version and writes `Cargo.toml`, `Cargo.lock`, `src/shell/CMakeLists.txt` and the metainfo `<release>`), never by hand; see Making a release in CONTRIBUTING.md.
 - Dev build: `build/build-env.sh cargo build` and `build/build-env.sh cmake --build dist/tmp/cmake-dev`. `dist/` and `target/` are not in git. `scripts/testing/run.sh` starts the build with settings and history in RAM.
 
 ## Conventions that are not obvious
