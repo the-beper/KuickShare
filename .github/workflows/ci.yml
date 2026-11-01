@@ -183,6 +183,89 @@ jobs:
           build/build-tarball.sh
           build/test-tarball.sh dist/KuickShare-x86_64.tar.gz
 
+  rpm:
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The fedora45 image of images.yml, tagged to the name build-env.sh looks for. main's published
+      # image can predate what this branch's recipe needs (rpmbuild first shipped with this packaging
+      # work): when it does, build the image here from this branch's Containerfile — what images.yml
+      # publishes from main after the merge; from then on every run pulls it and only probes.
+      - name: Pull the build image
+        run: |
+          podman pull ghcr.io/the-beper/kuickshare-build:fedora45
+          podman tag ghcr.io/the-beper/kuickshare-build:fedora45 localhost/kuickshare-build:fedora45
+          podman run --rm localhost/kuickshare-build:fedora45 sh -c 'command -v rpmbuild' >/dev/null \
+              || podman build -t localhost/kuickshare-build:fedora45 -f build/Containerfile build
+
+      # The script enters the image itself and works on the repo mount; the smoke test runs in bare
+      # Fedora containers.
+      - name: Build and test the rpm
+        run: |
+          build/packaging/build-rpm.sh
+          version=$(sed -n 's/^project(kuickshare VERSION \([0-9.]*\).*/\1/p' src/shell/CMakeLists.txt)
+          KUICKSHARE_EXPECT_VERSION=$version build/packaging/test-rpm.sh dist/KuickShare-x86_64.rpm
+
+  deb:
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The ubuntu26 image of images.yml (rustc/cargo of the Ubuntu archive: the PPA reality) first
+      # publishes from main: until then, pull requests build this branch's Containerfile instead.
+      - name: Pull the build image
+        run: |
+          if podman pull ghcr.io/the-beper/kuickshare-build:ubuntu26; then
+              podman tag ghcr.io/the-beper/kuickshare-build:ubuntu26 localhost/kuickshare-build:ubuntu26
+          else
+              podman build -t localhost/kuickshare-build:ubuntu26 -f build/deb/Containerfile.ubuntu build/deb
+          fi
+
+      - name: Build and test the deb
+        run: |
+          build/packaging/build-deb.sh
+          version=$(sed -n 's/^project(kuickshare VERSION \([0-9.]*\).*/\1/p' src/shell/CMakeLists.txt)
+          KUICKSHARE_EXPECT_VERSION=$version build/packaging/test-deb.sh dist/KuickShare-x86_64.deb
+
+  arch:
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The Arch image of images.yml, same as the AppImage build (rust and all the depends packages).
+      - name: Pull the build image
+        run: |
+          podman pull ghcr.io/the-beper/kuickshare-appimage:arch
+          podman tag ghcr.io/the-beper/kuickshare-appimage:arch localhost/kuickshare-appimage:arch
+
+      - name: Build and test the Arch package
+        run: |
+          build/packaging/build-arch.sh
+          version=$(sed -n 's/^project(kuickshare VERSION \([0-9.]*\).*/\1/p' src/shell/CMakeLists.txt)
+          KUICKSHARE_EXPECT_VERSION=$version build/packaging/test-arch.sh dist/KuickShare-x86_64.pkg.tar.zst
+
   flatpak:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
@@ -274,7 +357,7 @@ jobs:
   # cancellation fails it.
   required:
     if: always()
-    needs: [changes, lint, check, appimage, tarball, flatpak, repo-update, deny]
+    needs: [changes, lint, check, appimage, tarball, rpm, deb, arch, flatpak, repo-update, deny]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -299,6 +382,9 @@ jobs:
               "deny": "code",
               "tarball": "packaging",
               "appimage": "packaging",
+              "rpm": "packaging",
+              "deb": "packaging",
+              "arch": "packaging",
               "flatpak": "packaging",
               "repo-update": "packaging",
           }
