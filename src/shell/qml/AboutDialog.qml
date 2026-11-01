@@ -11,59 +11,46 @@ Kirigami.Dialog {
 
     required property var core
 
-    // A row with a title and a line under it; with an address it is a link that opens in the browser.
-    component Entry: Item {
+    // A title with a line under it; with an address the title is a link that opens in the browser. A link
+    // is reachable by Tab, opens with Enter or Space, is read as a link, and is underlined and followed by
+    // the external-link icon (`externalLink`, on by default since KF 6.11), so that the colour is not the only cue.
+    component Entry: ColumnLayout {
         id: entry
 
         property string title
         property string description
         property string url
 
-        implicitHeight: content.implicitHeight
+        spacing: 0
         Layout.fillWidth: true
+        // Set, because a layout takes its maximum from its children otherwise: an entry with only the link,
+        // whose maximum is the entry's width, would stay 0 wide.
+        Layout.maximumWidth: Number.POSITIVE_INFINITY
 
-        RowLayout {
-            id: content
-
-            width: parent.width
-            spacing: Kirigami.Units.largeSpacing
-
-            ColumnLayout {
-                spacing: 0
-                Layout.fillWidth: true
-
-                QQC2.Label {
-                    text: entry.title
-                    color: entry.url.length > 0 ? Kirigami.Theme.linkColor : Kirigami.Theme.textColor
-                    font.underline: entry.url.length > 0 && hover.hovered
-                    wrapMode: Text.Wrap
-                    Layout.fillWidth: true
-                }
-                QQC2.Label {
-                    visible: entry.description.length > 0
-                    text: entry.description
-                    opacity: 0.7
-                    wrapMode: Text.Wrap
-                    Layout.fillWidth: true
-                }
-            }
-            Kirigami.Icon {
-                visible: entry.url.length > 0
-                source: "external-link-symbolic"
-                color: Kirigami.Theme.linkColor
-                Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                Layout.alignment: Qt.AlignTop
-            }
+        // Left-aligned like the titles and descriptions (LinkButton centres its text), and only as wide as
+        // its text, so the empty room at its right does not open the link.
+        Kirigami.UrlButton {
+            url: entry.url
+            text: entry.title
+            visible: entry.url.length > 0
+            font.underline: true
+            wrapMode: Text.Wrap
+            horizontalAlignment: Text.AlignLeft
+            Accessible.role: Accessible.Link
+            Layout.maximumWidth: entry.width
         }
-        HoverHandler {
-            id: hover
-            enabled: entry.url.length > 0
-            cursorShape: Qt.PointingHandCursor
+        QQC2.Label {
+            visible: entry.url.length === 0
+            text: entry.title
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
         }
-        TapHandler {
-            enabled: entry.url.length > 0
-            onTapped: Qt.openUrlExternally(entry.url)
+        QQC2.Label {
+            visible: entry.description.length > 0
+            text: entry.description
+            opacity: 0.7
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
         }
     }
 
@@ -107,7 +94,7 @@ Kirigami.Dialog {
                 icon.width: Kirigami.Units.iconSizes.smallMedium
                 icon.height: Kirigami.Units.iconSizes.smallMedium
                 display: QQC2.AbstractButton.IconOnly
-                text: KI18n.i18n("Close")
+                text: KI18n.i18nc("@action:button", "Close")
                 Layout.preferredWidth: dialog.headerSize
                 Layout.preferredHeight: dialog.headerSize
                 onClicked: dialog.close()
@@ -152,7 +139,7 @@ Kirigami.Dialog {
 
                     Kirigami.Heading {
                         level: 2
-                        text: KI18n.i18n("KuickShare %1", dialog.core.version)
+                        text: KI18n.i18nc("@label application name and version", "KuickShare %1", dialog.core.version)
                     }
                     QQC2.Label {
                         text: KI18n.i18n("Quick Share client for KDE Plasma")
@@ -206,15 +193,15 @@ Kirigami.Dialog {
             }
 
             SectionTitle {
-                text: KI18n.i18n("Libraries in use")
+                text: KI18n.i18n("Libraries in Use")
                 Layout.leftMargin: 0
             }
             Entry {
-                title: KI18n.i18n("Qt %1", dialog.core.qtVersion)
+                title: KI18n.i18nc("@label library name and version", "Qt %1", dialog.core.qtVersion)
                 description: KI18n.i18n("Cross-platform application framework")
             }
             Entry {
-                title: KI18n.i18n("KDE Frameworks %1", dialog.core.frameworksVersion)
+                title: KI18n.i18nc("@label library name and version", "KDE Frameworks %1", dialog.core.frameworksVersion)
                 description: KI18n.i18n("Kirigami, notifications, jobs and the other KDE libraries")
             }
         }

@@ -197,7 +197,7 @@ Turning **Receive and send without a shared network** on (it was off) is judged 
 | Either Unknown | Allowed; the result is uncertain |
 | Otherwise (one direction usable, or Limited) | Allowed |
 
-The shell applies the same rule to the last report: while both are Unavailable the switch is off and disabled (a setting that is already on stays enabled, so it can be turned off). The line under it, **Check system requirements…**, says when only one direction works or something could not be checked. It is a gate on what is proven, not a promise: "allowed" does not mean the transfer will work.
+The shell applies the same rule to the last report: while both are Unavailable the switch is off and disabled (a setting that is already on stays enabled, so it can be turned off). The line under it, **Check System Requirements…**, says when only one direction works or something could not be checked. It is a gate on what is proven, not a promise: "allowed" does not mean the transfer will work.
 
 ## Behaviour
 

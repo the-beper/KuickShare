@@ -106,7 +106,7 @@ Kirigami.ApplicationWindow {
     }
     function showError(text) {
         show("send");
-        toasts.show(Kirigami.MessageType.Error, text, 10000);
+        toasts.show(Kirigami.MessageType.Error, text, 0);
     }
     function showSettings() {
         show("settings");
@@ -125,8 +125,20 @@ Kirigami.ApplicationWindow {
         id: quitDialog
         title: KI18n.i18n("Quit KuickShare?")
         subtitle: KI18n.i18n("A transfer is in progress. Quitting stops it")
-        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
-        onAccepted: Qt.quit()
+        // The accepting button is named after what it does, so the footer is made of actions.
+        standardButtons: Kirigami.Dialog.NoButton
+        customFooterActions: [
+            Kirigami.Action {
+                text: KI18n.i18nc("@action:button", "Quit")
+                icon.name: "application-exit"
+                onTriggered: Qt.quit()
+            },
+            Kirigami.Action {
+                text: KI18n.i18nc("@action:button", "Cancel")
+                icon.name: "dialog-cancel"
+                onTriggered: quitDialog.close()
+            }
+        ]
     }
 
     function queueFiles(paths) {
@@ -165,7 +177,7 @@ Kirigami.ApplicationWindow {
     Connections {
         target: root.core
         function onErrorOccurred(message) {
-            toasts.show(Kirigami.MessageType.Error, message, 10000);
+            toasts.show(Kirigami.MessageType.Error, message, 0);
         }
         // The firewall did not allow the computer's hotspot: the transfer stays on Bluetooth.
         function onWifiUpgradeBlocked(reason) {
@@ -176,14 +188,17 @@ Kirigami.ApplicationWindow {
             toasts.show(Kirigami.MessageType.Positive, KI18n.i18n("Connected to %1", ssid), 6000);
         }
         // How a transfer ended, as a toast on whatever page is open: green for success, red for a
-        // failure, blue otherwise.
+        // failure, blue otherwise. Success is not announced on the Transfers page: the row there already shows it. Elsewhere it
+        // offers the details, where a received text or link has its actions.
         function onTransferEnded(id, state) {
             switch (state) {
             case "Finished":
-                toasts.show(Kirigami.MessageType.Positive, KI18n.i18n("Transfer completed"), 4000);
+                if (root.currentPage !== "transfers") {
+                    toasts.show(Kirigami.MessageType.Positive, KI18n.i18n("Transfer completed"), 4000, id);
+                }
                 break;
             case "Disconnected":
-                toasts.show(Kirigami.MessageType.Error, KI18n.i18n("The transfer failed"), 10000);
+                toasts.show(Kirigami.MessageType.Error, KI18n.i18n("The transfer failed. Keep both devices close and awake, then send again"), 0, id);
                 break;
             case "Rejected":
                 toasts.show(Kirigami.MessageType.Information, KI18n.i18n("The transfer was declined"), 6000);
@@ -250,14 +265,14 @@ Kirigami.ApplicationWindow {
 
             actions: [
                 Kirigami.Action {
-                    text: KI18n.i18n("Send")
+                    text: KI18n.i18nc("@title:tab", "Send")
                     icon.name: "document-send"
                     checked: root.currentPage === "send"
                     shortcut: "Ctrl+1"
                     onTriggered: root.show("send")
                 },
                 Kirigami.Action {
-                    text: KI18n.i18n("Transfers")
+                    text: KI18n.i18nc("@title:tab", "Transfers")
                     icon.name: "folder-sync"
                     checked: root.currentPage === "transfers"
                     shortcut: "Ctrl+2"
@@ -275,7 +290,7 @@ Kirigami.ApplicationWindow {
         QQC2.ToolButton {
             id: more
 
-            text: KI18n.i18n("More")
+            text: KI18n.i18nc("@action:button", "More")
             icon.name: "open-menu-symbolic"
             // Only the icon; the text is for screen readers.
             display: QQC2.AbstractButton.IconOnly
@@ -291,35 +306,28 @@ Kirigami.ApplicationWindow {
 
     Kirigami.Action {
         id: settingsAction
-        text: KI18n.i18n("Preferences")
+        text: KI18n.i18nc("@action:inmenu", "Preferences")
         icon.name: "configure"
         shortcut: "Ctrl+,"
         onTriggered: root.show("settings")
     }
     Kirigami.Action {
         id: shortcutsAction
-        text: KI18n.i18n("Shortcuts")
+        text: KI18n.i18nc("@action:inmenu", "Shortcuts")
         icon.name: "input-keyboard-symbolic"
         shortcut: "Ctrl+?"
         onTriggered: shortcutsDialog.open()
     }
     Kirigami.Action {
-        id: quitAction
-        text: KI18n.i18n("Quit")
-        icon.name: "application-exit"
-        shortcut: StandardKey.Quit
-        onTriggered: root.requestQuit()
-    }
-    Kirigami.Action {
         id: helpAction
-        text: KI18n.i18n("Help")
+        text: KI18n.i18nc("@action:inmenu", "Help")
         icon.name: "help-contents"
         shortcut: "Ctrl+H"
         onTriggered: root.show("help")
     }
     Kirigami.Action {
         id: aboutAction
-        text: KI18n.i18n("About")
+        text: KI18n.i18nc("@action:inmenu", "About")
         icon.name: "help-about-symbolic"
         onTriggered: aboutDialog.open()
     }
@@ -341,11 +349,6 @@ Kirigami.ApplicationWindow {
         }
         QQC2.MenuItem {
             action: aboutAction
-        }
-        QQC2.MenuSeparator {
-        }
-        QQC2.MenuItem {
-            action: quitAction
         }
     }
 
@@ -379,10 +382,6 @@ Kirigami.ApplicationWindow {
     }
     ShortcutsDialog {
         id: shortcutsDialog
-    }
-    IntegrationDialog {
-        id: integrationDialog
-        core: root.core
     }
     AboutDialog {
         id: aboutDialog
@@ -430,13 +429,20 @@ Kirigami.ApplicationWindow {
         sequences: [StandardKey.Close]
         onActivated: root.close()
     }
+    // Not in the menu (the HIG keeps Quit out of the hamburger menu); the tray menu has its own.
+    Shortcut {
+        sequences: [StandardKey.Quit]
+        onActivated: root.requestQuit()
+    }
 
     ToastStack {
         id: toasts
+        core: root.core
+        onDetailsRequested: id => root.showTransfer(id)
     }
 
-    // The sharing service is not running (it stopped, or never started): offer to start it.
-    MessageBox {
+    // The messages of the whole app, one under the other so that several can show at once.
+    ColumnLayout {
         parent: root.contentItem
         z: 10
         anchors {
@@ -445,103 +451,129 @@ Kirigami.ApplicationWindow {
             right: parent.right
             margins: Kirigami.Units.largeSpacing
         }
-        visible: !root.core.connected && !root.core.serviceStarting
-        type: Kirigami.MessageType.Error
-        text: KI18n.i18n("The sharing service is not running. Nothing can be sent or received until it is started")
-        actions: [
-            Kirigami.Action {
-                text: KI18n.i18n("Start service")
-                icon.name: "media-playback-start"
-                onTriggered: root.core.startService()
-            }
-        ]
-    }
+        spacing: Kirigami.Units.smallSpacing
 
-    // A newer version was installed while this one runs (Flatpak, AppImage).
-    MessageBox {
-        parent: root.contentItem
-        z: 10
-        anchors {
-            top: parent.top
-            left: parent.left
-            right: parent.right
-            margins: Kirigami.Units.largeSpacing
+        // The sharing service is not running (it stopped, or never started): offer to start it.
+        MessageBox {
+            Layout.fillWidth: true
+            visible: !root.core.connected && !root.core.serviceStarting
+            type: Kirigami.MessageType.Error
+            text: KI18n.i18n("The sharing service is not running. Nothing can be sent or received until it is started")
+            actions: [
+                Kirigami.Action {
+                    text: KI18n.i18nc("@action:button", "Start Service")
+                    icon.name: "media-playback-start"
+                    onTriggered: root.core.startService()
+                }
+            ]
         }
-        visible: root.core.updateInstalled && root.core.connected
-        type: Kirigami.MessageType.Information
-        text: KI18n.i18n("A new version of KuickShare is installed")
-        actions: [
-            Kirigami.Action {
-                text: KI18n.i18n("Restart")
-                icon.name: "view-refresh"
-                enabled: !root.core.transferBusy
-                onTriggered: root.core.restartForUpdate()
-            }
-        ]
-    }
 
-    // Once, after an update: the trusted devices of the older version were removed (the core keeps the
-    // notice until it is acknowledged, so a restart before the user saw it does not lose it).
-    MessageBox {
-        parent: root.contentItem
-        z: 10
-        anchors {
-            top: parent.top
-            left: parent.left
-            right: parent.right
-            margins: Kirigami.Units.largeSpacing
+        // A newer version was installed while this one runs (Flatpak, AppImage).
+        MessageBox {
+            Layout.fillWidth: true
+            visible: root.core.updateInstalled && root.core.connected
+            type: Kirigami.MessageType.Information
+            text: KI18n.i18n("A new version of KuickShare is installed")
+            actions: [
+                Kirigami.Action {
+                    text: KI18n.i18nc("@action:button", "Restart")
+                    icon.name: "view-refresh"
+                    enabled: !root.core.transferBusy
+                    onTriggered: root.core.restartForUpdate()
+                }
+            ]
         }
-        visible: root.core.trustedDevicesReset && root.core.connected
-        type: Kirigami.MessageType.Information
-        text: KI18n.i18n("Trusted devices were removed: they were recognised only by name and network address, which another device on the same network can copy. Trust a device again from its next transfer")
-        actions: [
-            Kirigami.Action {
-                text: KI18n.i18n("Got it")
-                icon.name: "dialog-ok-apply"
-                onTriggered: root.core.acknowledgeTrustedDevicesReset()
-            }
-        ]
-    }
 
-    // The firewall refused the hotspot: say so, and offer the consent for this session (it is the core
-    // that decides and remembers it). Shown by `onWifiUpgradeBlocked`; the close button hides it.
-    MessageBox {
-        id: wifiBlockedBox
-        parent: root.contentItem
-        z: 10
-        anchors {
-            top: parent.top
-            left: parent.left
-            right: parent.right
-            margins: Kirigami.Units.largeSpacing
+        // Once, after an update: the trusted devices of the older version were removed (the core keeps the
+        // notice until it is acknowledged, so a restart before the user saw it does not lose it).
+        MessageBox {
+            Layout.fillWidth: true
+            visible: root.core.trustedDevicesReset && root.core.connected
+            type: Kirigami.MessageType.Information
+            text: KI18n.i18n("Trusted devices were removed: they were recognised only by name and network address, which another device on the same network can copy. Trust a device again from its next transfer")
+            actions: [
+                Kirigami.Action {
+                    text: KI18n.i18n("Got It")
+                    icon.name: "dialog-ok-apply"
+                    onTriggered: root.core.acknowledgeTrustedDevicesReset()
+                }
+            ]
         }
-        visible: false
-        showCloseButton: true
-        type: Kirigami.MessageType.Warning
-        // An unknown code is taken as a refusal.
-        text: root.wifiBlockedReason === "firewall_missing" ? KI18n.i18n("No firewall service that KuickShare can open a port in was found. The transfer continues over Bluetooth, which is very slow") : KI18n.i18n("The firewall did not allow the Wi-Fi link. The transfer continues over Bluetooth, which is very slow")
-        actions: [
-            Kirigami.Action {
-                text: KI18n.i18n("Allow for this session…")
-                icon.name: "security-medium"
-                enabled: root.core.connected
-                onTriggered: wifiConsentDialog.open()
-            }
-        ]
+
+        // The AppImage asks once whether to add itself to the menus; shown by `askIntegration` once the
+        // service is up. Only the two actions hide it, so the question is not dismissed by accident.
+        MessageBox {
+            id: integrationBox
+            Layout.fillWidth: true
+            visible: false
+            type: Kirigami.MessageType.Information
+            text: KI18n.i18n("Add KuickShare to the menus? It will appear in the application menu and in Dolphin’s context menu")
+            actions: [
+                Kirigami.Action {
+                    text: KI18n.i18n("Add to Menus")
+                    icon.name: "list-add"
+                    onTriggered: {
+                        integrationBox.visible = false;
+                        root.core.integrateAppImage();
+                    }
+                },
+                Kirigami.Action {
+                    text: KI18n.i18n("Not Now")
+                    icon.name: "dialog-cancel"
+                    onTriggered: {
+                        integrationBox.visible = false;
+                        root.core.declineIntegration();
+                    }
+                }
+            ]
+        }
+
+        // The firewall refused the hotspot: say so, and offer the consent for this session (it is the core
+        // that decides and remembers it). Shown by `onWifiUpgradeBlocked`; the close button hides it.
+        MessageBox {
+            id: wifiBlockedBox
+            Layout.fillWidth: true
+            visible: false
+            showCloseButton: true
+            type: Kirigami.MessageType.Warning
+            // An unknown code is taken as a refusal.
+            text: root.wifiBlockedReason === "firewall_missing" ? KI18n.i18n("No firewall service that KuickShare can open a port in was found. The transfer continues over Bluetooth, which is very slow") : KI18n.i18n("The firewall did not allow the Wi-Fi link. The transfer continues over Bluetooth, which is very slow")
+            actions: [
+                Kirigami.Action {
+                    text: KI18n.i18n("Allow for This Session…")
+                    icon.name: "security-medium"
+                    enabled: root.core.connected
+                    onTriggered: wifiConsentDialog.open()
+                }
+            ]
+        }
     }
     Kirigami.PromptDialog {
         id: wifiConsentDialog
         title: KI18n.i18n("Allow the hotspot without a firewall rule?")
-        subtitle: KI18n.i18n("If you agree, then until KuickShare is closed, the phone that joins the hotspot can reach every service on this computer. It applies to the next transfer, not to the one in progress")
-        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
-        // The explicit consent, valid for this session only.
-        onAccepted: {
-            // Turned off meanwhile: the consent must not turn it on again.
-            if (root.core.wifiUpgrade) {
-                root.core.requestWifiUpgrade(true, true);
+        subtitle: KI18n.i18n("If you agree, then until KuickShare is closed, the device that joins the hotspot can reach every service on this system. It applies to the next transfer, not to the one in progress")
+        // The accepting button is named after what it does, so the footer is made of actions.
+        standardButtons: Kirigami.Dialog.NoButton
+        customFooterActions: [
+            // The explicit consent, valid for this session only.
+            Kirigami.Action {
+                text: KI18n.i18nc("@action:button", "Allow")
+                icon.name: "security-medium"
+                onTriggered: {
+                    // Turned off meanwhile: the consent must not turn it on again.
+                    if (root.core.wifiUpgrade) {
+                        root.core.requestWifiUpgrade(true, true);
+                    }
+                    wifiBlockedBox.visible = false;
+                    wifiConsentDialog.close();
+                }
+            },
+            Kirigami.Action {
+                text: KI18n.i18nc("@action:button", "Cancel")
+                icon.name: "dialog-cancel"
+                onTriggered: wifiConsentDialog.close()
             }
-            wifiBlockedBox.visible = false;
-        }
+        ]
     }
 
     DropArea {
@@ -555,14 +587,14 @@ Kirigami.ApplicationWindow {
         }
     }
 
-    // Asked once the service is up, because "Not now" changes one of its settings.
+    // Asked once the service is up, because "Not Now" changes one of its settings.
     Connections {
         target: root.core
         enabled: root.askIntegration
         function onConnectedChanged() {
             if (root.core.connected) {
                 root.askIntegration = false;
-                integrationDialog.open();
+                integrationBox.visible = true;
             }
         }
     }
@@ -576,7 +608,7 @@ Kirigami.ApplicationWindow {
         });
         if (askIntegration && core.connected) {
             askIntegration = false;
-            integrationDialog.open();
+            integrationBox.visible = true;
         }
     }
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <KNotification>
 #include <KUiServerV2JobTracker>
 #include <QHash>
@@ -18,6 +20,10 @@ class TransferWatcher : public QObject
 
 public:
     explicit TransferWatcher(CoreBridge *core, QObject *parent = nullptr);
+
+    /// Tells whether the app window is shown and active. The in-app toast reports how a transfer
+    /// ended then, so the end-of-transfer notifications are skipped; prompts that wait for an answer are not.
+    void setWindowActiveCheck(std::function<bool()> check) { m_windowActive = std::move(check); }
 
 Q_SIGNALS:
     // The user clicked "View" on a text or link notification.
@@ -54,4 +60,5 @@ private:
     KUiServerV2JobTracker m_tracker;
     QElapsedTimer m_clock;
     QHash<QString, Tracked> m_tracked;
+    std::function<bool()> m_windowActive;
 };

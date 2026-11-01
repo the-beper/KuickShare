@@ -30,10 +30,10 @@ void TransferJob::setStatus(const QString &status, bool cancellable)
 void TransferJob::emitDescription()
 {
     Q_EMIT description(this,
-                       !m_status.isEmpty() ? m_status : m_outbound ? i18n("Sending files")
-                                                                  : i18n("Receiving files"),
-                       qMakePair(m_outbound ? i18n("To") : i18n("From"), m_device),
-                       m_summary.isEmpty() ? QPair<QString, QString>() : qMakePair(i18n("Files"), m_summary));
+                       !m_status.isEmpty() ? m_status : m_outbound ? i18nc("@title:notification", "Sending Files")
+                                                                  : i18nc("@title:notification", "Receiving Files"),
+                       qMakePair(m_outbound ? i18nc("@label transfer destination", "To") : i18nc("@label transfer source", "From"), m_device),
+                       m_summary.isEmpty() ? QPair<QString, QString>() : qMakePair(i18nc("@label", "Files"), m_summary));
 }
 
 void TransferJob::setProgress(qulonglong processed, qulonglong total)
@@ -64,7 +64,7 @@ void TransferJob::finish(bool success, bool quietly)
     if (!success)
     {
         setError(KJob::UserDefinedError);
-        setErrorText(i18n("The transfer was interrupted"));
+        setErrorText(i18n("The transfer was interrupted; check the connection and try again"));
     }
     if (quietly)
     {

@@ -597,7 +597,7 @@ impl Service {
         self.core.lock().await.set_tray_icon(show);
     }
 
-    /// Whether Dolphin's context menu has the "Send with KuickShare" entry.
+    /// Whether Dolphin's context menu has the "Send With KuickShare" entry.
     #[zbus(property)]
     async fn dolphin_integration(&self) -> bool {
         self.core.lock().await.settings().dolphin_integration

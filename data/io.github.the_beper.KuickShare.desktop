@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=KuickShare
-GenericName=Quick Share client
+GenericName=Nearby File Sharing
 Comment=Share files with nearby devices
 Exec=kuickshare
 Icon=io.github.the_beper.KuickShare

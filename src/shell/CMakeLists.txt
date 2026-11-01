@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(kuickshare VERSION 1.6.1 LANGUAGES CXX)
+project(kuickshare VERSION 1.7.0 LANGUAGES CXX)
 # Defines BUILD_TESTING (ON by default): packages pass -DBUILD_TESTING=OFF, build/check.sh -DBUILD_TESTING=ON.
 include(CTest)
 add_compile_definitions(KUICKSHARE_VERSION="${PROJECT_VERSION}")
@@ -73,7 +73,6 @@ qt_add_qml_module(kuickshare
         qml/MessageBox.qml
         qml/ToastStack.qml
         qml/PairDialog.qml
-        qml/IntegrationDialog.qml
         qml/WifiRequirementsDialog.qml
 )
 

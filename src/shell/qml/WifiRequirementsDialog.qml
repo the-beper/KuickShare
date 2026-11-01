@@ -6,7 +6,7 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.ki18n
 
-// What Wi-Fi Direct needs on this computer, as the core reports it. The dialog only renders the
+// What Wi-Fi Direct needs on this system, as the core reports it. The dialog only renders the
 // report held by the bridge: it never checks anything itself, and checking changes nothing on the system.
 Kirigami.Dialog {
     id: dialog
@@ -20,11 +20,11 @@ Kirigami.Dialog {
     function capabilityTitle(key: string): string {
         switch (key) {
         case "sending":
-            return KI18n.i18n("Sending");
+            return KI18n.i18nc("@label", "Sending");
         case "receiving":
-            return KI18n.i18n("Receiving");
+            return KI18n.i18nc("@label", "Receiving");
         }
-        return KI18n.i18n("Join network");
+        return KI18n.i18nc("@label", "Join network");
     }
 
     // Kirigami builds the footer buttons from the actions: look for Refresh to give it the focus.
@@ -44,8 +44,9 @@ Kirigami.Dialog {
         return null;
     }
 
-    title: KI18n.i18n("System requirements")
-    preferredWidth: Kirigami.Units.gridUnit * 34
+    title: KI18n.i18nc("@title:window", "Check System Requirements")
+    // Wide enough for the commands, but never wider than the (fixed-size) window minus its margins.
+    preferredWidth: Math.min(Kirigami.Units.gridUnit * 34, (parent ? parent.width : Infinity) - Kirigami.Units.gridUnit * 2)
     padding: Kirigami.Units.largeSpacing
     standardButtons: Kirigami.Dialog.NoButton
 
@@ -65,19 +66,19 @@ Kirigami.Dialog {
     customFooterActions: [
         Kirigami.Action {
             id: refreshAction
-            text: KI18n.i18n("Refresh")
+            text: KI18n.i18nc("@action:button", "Refresh")
             icon.name: "view-refresh"
             enabled: !dialog.busy && dialog.core.connected
             onTriggered: dialog.core.refreshWifiRequirements()
         },
         Kirigami.Action {
-            text: KI18n.i18n("Copy diagnostic report")
+            text: KI18n.i18nc("@action:button", "Copy Diagnostic Report")
             icon.name: "edit-copy"
             enabled: dialog.hasReport
             onTriggered: dialog.core.copyWifiRequirementsReport()
         },
         Kirigami.Action {
-            text: KI18n.i18n("Close")
+            text: KI18n.i18nc("@action:button", "Close")
             icon.name: "window-close"
             onTriggered: dialog.close()
         }
@@ -164,7 +165,7 @@ Kirigami.Dialog {
                             Layout.alignment: Qt.AlignTop
                             icon.name: "edit-copy"
                             display: QQC2.AbstractButton.IconOnly
-                            text: KI18n.i18n("Copy command")
+                            text: KI18n.i18nc("@action:button", "Copy Command")
                             onClicked: dialog.core.copyToClipboard(problem.modelData.command)
                         }
                     }
@@ -183,13 +184,13 @@ Kirigami.Dialog {
 
             QQC2.Label {
                 Layout.fillWidth: true
-                text: KI18n.i18n("What Wi-Fi Direct needs on this computer. Checking never changes Bluetooth, Wi-Fi or the firewall")
+                text: KI18n.i18n("What Wi-Fi Direct needs on this system. Checking never changes Bluetooth, Wi-Fi or the firewall")
                 wrapMode: Text.Wrap
             }
             QQC2.BusyIndicator {
                 running: dialog.busy
                 visible: running
-                Accessible.name: KI18n.i18n("Refresh")
+                Accessible.name: KI18n.i18nc("@info:status accessible name of the busy indicator", "Checking")
             }
         }
 

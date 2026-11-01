@@ -5,16 +5,16 @@ Comment=Quick Share client for KDE Plasma
 DesktopEntry=io.github.the_beper.KuickShare
 
 [Event/incomingTransfer]
-Name=Incoming transfer
-Comment=A nearby device wants to share something with you
+Name=Incoming Transfer
+Comment=A nearby device wants to share something
 Action=Popup
 
 [Event/transferFinished]
-Name=Transfer completed
+Name=Transfer Completed
 Comment=Files or text were received
 Action=Popup
 
 [Event/transferFailed]
-Name=Transfer failed
+Name=Transfer Failed
 Comment=A transfer was declined or interrupted
 Action=Popup

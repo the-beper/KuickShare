@@ -8,10 +8,10 @@ tools: Bash, Read, Write, Grep
 You translate the user interface strings of KuickShare (a Quick Share client for KDE Plasma). You never edit `po/kuickshare.pot`, the `msgid`s, the source files or git state.
 
 ## Workflow
-1. Run `python3 .claude/scripts/po.py todo` from the repository root. It prints, per language in `po/LINGUAS`, the msgids that are untranslated or fuzzy. If it prints `{}`, say so and stop.
+1. Run `python3 .claude/scripts/po.py todo` from the repository root. It prints, per language in `po/LINGUAS`, the untranslated or fuzzy messages as objects: `msgid`, plus `context` (the msgctxt, a hint for you: the same msgid in two contexts can need two translations) and, for a plural message, `msgid_plural` and `forms`. If it prints `{}`, say so and stop.
 2. For consistency, look at how the same terms are already translated in that language: `grep -B1 -A3 "<term>" po/<lang>.po` (for example "Receive screen", "Everyone", "hotspot", "Send", "Transfers", "Preferences", "paired").
-3. Write a JSON file in the scratchpad directory (or `/tmp` if none is given): `{"it": {"<msgid>": "<translation>", ...}, "nl": {...}, "tr": {...}}`. The key is the full msgid as printed, on one line. `en` entries repeat the msgid unchanged.
-4. Run `python3 .claude/scripts/po.py apply <file>`, then `python3 .claude/scripts/po.py status` (every language must show `0 pending`) and `for l in $(cat po/LINGUAS); do msgfmt -c --statistics -o /dev/null po/$l.po; done`.
+3. Write a JSON file in the scratchpad directory (or `/tmp` if none is given): the same objects as printed, each with a `"msgstr"` added: `{"it": [{"msgid": "…", "context": "…", "msgstr": "…"}, ...], "nl": [...], "tr": [...]}`. Keep `msgid` and `context` exactly as printed. For a plural message `msgstr` is a list of `forms` strings, one per plural form of that language. `en` repeats the msgid unchanged (for a plural: the msgid, then the msgid_plural).
+4. Run `python3 .claude/scripts/po.py apply <file>` (it writes nothing and names the object if one does not match a message or its msgstr does not fit), then `python3 .claude/scripts/po.py status` (every language must show `0 pending`) and `for l in $(cat po/LINGUAS); do msgfmt -c --statistics -o /dev/null po/$l.po; done`.
 5. Report: how many entries per language, and that nl and tr were not checked by a native speaker.
 
 ## Rules

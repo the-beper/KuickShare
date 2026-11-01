@@ -747,7 +747,7 @@ namespace
             }
         } else if (isId("nm.service")) {
             if (isReason("not_running")) {
-                return {i18n("NetworkManager is not running"), i18n("Wi-Fi Direct needs NetworkManager; start it, or install it if this computer uses another network tool"), QStringLiteral("sudo systemctl enable --now NetworkManager.service")};
+                return {i18n("NetworkManager is not running"), i18n("Wi-Fi Direct needs NetworkManager; start it, or install it if this system uses another network tool"), QStringLiteral("sudo systemctl enable --now NetworkManager.service")};
             }
             if (isReason("not_running_activatable")) {
                 return {i18n("NetworkManager is installed but not running"), i18n("It starts when something needs it; to start it now, use the command"), QStringLiteral("sudo systemctl start NetworkManager.service")};
@@ -765,7 +765,7 @@ namespace
             }
         } else if (isId("nm.hardware_enabled")) {
             if (isReason("switch_off")) {
-                return {i18n("A hardware switch has turned the Wi-Fi radio off"), i18n("Use the Wi-Fi switch or key of this computer"), {}};
+                return {i18n("A hardware switch has turned the Wi-Fi radio off"), i18n("Use the Wi-Fi switch or key of this system"), {}};
             }
         } else if (isId("nm.device")) {
             if (isReason("ok_first_of_many")) {
@@ -780,7 +780,7 @@ namespace
             }
         } else if (isId("nm.firmware")) {
             if (isReason("firmware_missing")) {
-                return {i18n("The Wi-Fi adapter needs firmware that is not installed"), i18n("Install the firmware package for the adapter (often linux-firmware), then restart the computer"), {}};
+                return {i18n("The Wi-Fi adapter needs firmware that is not installed"), i18n("Install the firmware package for the adapter (often linux-firmware), then restart this system"), {}};
             }
         } else if (isId("nm.driver")) {
             if (isReason("plugin_missing")) {
@@ -839,7 +839,7 @@ namespace
                 return {i18n("dnsmasq was not found"), i18n("The hotspot hands out addresses with dnsmasq; install the dnsmasq or dnsmasq-base package"), {}};
             }
             if (isReason("sandbox_unobservable")) {
-                return {i18n("Checked when the first hotspot starts"), i18n("The sandbox cannot look for dnsmasq on this computer"), {}};
+                return {i18n("Checked when the first hotspot starts"), i18n("The sandbox cannot look for dnsmasq on this system"), {}};
             }
             if (isReason("shared_start_failed")) {
                 return {i18n("The hotspot could not start its address service"), i18n("Install the dnsmasq or dnsmasq-base package"), {}};
@@ -886,17 +886,17 @@ namespace
     {
         switch (status) {
         case RR::Status::Ready:
-            return i18n("Ready");
+            return i18nc("@info:status requirement check", "Ready");
         case RR::Status::Warning:
-            return i18n("Warning");
+            return i18nc("@info:status requirement check", "Warning");
         case RR::Status::Blocked:
-            return i18n("Blocked");
+            return i18nc("@info:status requirement check", "Blocked");
         case RR::Status::Checking:
-            return i18n("Checking");
+            return i18nc("@info:status requirement check", "Checking");
         case RR::Status::Unknown:
             break;
         }
-        return i18n("Unknown");
+        return i18nc("@info:status requirement check", "Unknown");
     }
 
     QString statusIcon(RR::Status status)
@@ -920,15 +920,15 @@ namespace
     {
         switch (capability) {
         case RR::Capability::Available:
-            return i18n("Available");
+            return i18nc("@info:status capability", "Available");
         case RR::Capability::Degraded:
-            return i18n("Limited");
+            return i18nc("@info:status capability", "Limited");
         case RR::Capability::Unavailable:
-            return i18n("Unavailable");
+            return i18nc("@info:status capability", "Unavailable");
         case RR::Capability::Unknown:
             break;
         }
-        return i18n("Unknown");
+        return i18nc("@info:status capability", "Unknown");
     }
 
     QString capabilityIcon(RR::Capability capability)
@@ -1221,7 +1221,7 @@ void CoreBridge::setDolphinIntegration(bool enabled)
         return;
     }
     if (!DolphinMenu::setEnabled(enabled)) {
-        emit errorOccurred(i18n("Could not update Dolphin's context menu"));
+        emit errorOccurred(i18n("Could not update Dolphin’s context menu"));
         return;
     }
     m_dolphinIntegration = enabled;

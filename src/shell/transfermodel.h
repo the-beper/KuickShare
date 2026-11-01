@@ -67,6 +67,8 @@ public:
     /// True while a transfer is live (not finished) and not just waiting for the user's approval:
     /// the Send page does not start another one meanwhile.
     bool busy() const { return m_busy; }
+    /// True while an incoming transfer waits for the user's approval.
+    bool waiting() const { return m_waiting; }
     /// Appends a finished transfer from an earlier session (below the live ones).
     void addHistory(const QVariantMap &info);
     /// Removes one row; rows can share an id, so the row number is the key.
@@ -79,6 +81,7 @@ public:
 
 signals:
     void busyChanged();
+    void waitingChanged();
     /// A transfer reached a final state (once per transfer): `state` is Finished, Cancelled, Rejected or Disconnected.
     void transferEnded(const QString &id, const QString &state);
 
@@ -104,5 +107,6 @@ private:
     QTimer m_speedTimer;
     QList<Entry> m_entries;
     bool m_busy = false;
+    bool m_waiting = false;
     QHash<QString, quint64> m_pendingNumber;
 };

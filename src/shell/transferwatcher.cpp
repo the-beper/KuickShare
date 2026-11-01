@@ -241,25 +241,31 @@ void TransferWatcher::onTransferChanged(const QString &id)
     const QString refusal = CoreBridge::refusalText(info.value(QStringLiteral("reason")).toString());
     if (!outbound && !refusal.isEmpty())
     {
-        // The library refused the offer itself (too many files, not enough space, ...).
-        notifyProblem(QStringLiteral("transferFailed"), i18n("Offer refused"), i18n("From %1: %2", who.toHtmlEscaped(), refusal));
+        // The library refused the offer itself (too many files, not enough space, ...). Always shown:
+        // the in-app toast does not give the reason.
+        notifyProblem(QStringLiteral("transferFailed"), i18nc("@title:notification", "Offer Refused"), i18n("From %1: %2", who.toHtmlEscaped(), refusal));
+    }
+    else if (outbound && !tracked.started && (state == QLatin1String("Disconnected") || state == QLatin1String("Rejected")))
+    {
+        // The library reports a refusal by the other device as "Disconnected"; before any data
+        // moved that is the most likely reason (it can also be a full disk or a timeout). Always
+        // shown: the in-app toast does not say what to check.
+        const QString reason = id.startsWith(QLatin1String("ble:"))
+                                   ? i18n("Could not start the transfer to %1 over Bluetooth\nCheck that Bluetooth is on and the device is nearby, then try again", who.toHtmlEscaped())
+                                   : i18n("%1 declined the transfer or could not receive it\nCheck the other device and its free space, then try again", who.toHtmlEscaped());
+        notifyProblem(QStringLiteral("transferFailed"), i18nc("@title:notification", "Transfer Not Accepted"), reason);
+    }
+    else if (m_windowActive && m_windowActive())
+    {
+        // The window is in front: the in-app toast says how the transfer ended (on any page).
     }
     else if (success && !outbound)
     {
         notifyReceived(id, who, info, isText);
     }
-    else if (outbound && !tracked.started && (state == QLatin1String("Disconnected") || state == QLatin1String("Rejected")))
-    {
-        // The library reports a refusal by the other device as "Disconnected"; before any data
-        // moved that is the most likely reason (it can also be a full disk or a timeout).
-        const QString reason = id.startsWith(QLatin1String("ble:"))
-                                   ? i18n("Could not start the transfer to %1 over Bluetooth", who.toHtmlEscaped())
-                                   : i18n("%1 declined the transfer or could not receive it", who.toHtmlEscaped());
-        notifyProblem(QStringLiteral("transferFailed"), i18n("Transfer not accepted"), reason);
-    }
     else if (state == QLatin1String("Disconnected"))
     {
-        notifyProblem(QStringLiteral("transferFailed"), i18n("Transfer interrupted"), i18n("The connection with %1 was lost", who.toHtmlEscaped()));
+        notifyProblem(QStringLiteral("transferFailed"), i18nc("@title:notification", "Transfer Interrupted"), i18n("The connection with %1 was lost\nKeep both devices close and awake, then try again", who.toHtmlEscaped()));
     }
 }
 
@@ -267,13 +273,15 @@ void TransferWatcher::notifyConsent(const QString &id, const QString &device, co
 {
     auto *notification = new KNotification(QStringLiteral("incomingTransfer"), KNotification::Persistent);
     notification->setIconName(QStringLiteral("io.github.the_beper.KuickShare"));
-    notification->setTitle(i18n("Incoming transfer"));
+    notification->setTitle(i18nc("@title:notification", "Incoming Transfer"));
+    // It waits for an answer: Normal, as the HIG asks, and persistent so that it is not missed.
+    notification->setUrgency(KNotification::NormalUrgency);
     const QString who = device.isEmpty() ? i18n("A nearby device") : device.toHtmlEscaped();
     notification->setText(pin.isEmpty() ? i18n("%1 wants to share with you", who) : i18n("%1 wants to share with you\nPIN: %2", who, pin.toHtmlEscaped()));
 
     // Every answer carries the token of this prompt: if the core restarted and gave the id to
     // another transfer, it refuses the answer.
-    auto *accept = notification->addAction(i18n("Accept"));
+    auto *accept = notification->addAction(i18nc("@action:button", "Accept"));
     connect(accept, &KNotificationAction::activated, this, [this, id, token]
             { m_core->answerWithToken(id, token, QStringLiteral("accept")); });
     // Trusting a device is a feature that can be turned off in the settings. It needs the sender's
@@ -282,13 +290,13 @@ void TransferWatcher::notifyConsent(const QString &id, const QString &device, co
     // and refuses (leaving the transfer waiting) when it cannot.
     if (m_core->trustedDevicesEnabled() && !tracked.noTrust && id.contains(QLatin1Char(':')))
     {
-        auto *trust = notification->addAction(i18n("Accept and trust"));
+        auto *trust = notification->addAction(i18nc("@action:button", "Accept and Trust"));
         connect(trust, &KNotificationAction::activated, this, [this, id, token]
                 { m_core->answerWithToken(id, token, QStringLiteral("accept_and_trust")); });
         notification->setText(notification->text() + QLatin1Char('\n')
-                              + i18n("“Accept and trust” recognises this device by its name and network address, which another device on the same network can copy"));
+                              + i18n("“Accept and Trust” recognises this device by its name and network address, which another device on the same network can copy"));
     }
-    auto *decline = notification->addAction(i18n("Decline"));
+    auto *decline = notification->addAction(i18nc("@action:button", "Decline"));
     connect(decline, &KNotificationAction::activated, this, [this, id, token]
             { m_core->answerWithToken(id, token, QStringLiteral("decline")); });
 
@@ -300,6 +308,7 @@ void TransferWatcher::notifyConsent(const QString &id, const QString &device, co
 void TransferWatcher::notifyReceived(const QString &id, const QString &who, const QVariantMap &info, bool isText)
 {
     auto *notification = new KNotification(QStringLiteral("transferFinished"));
+    notification->setUrgency(KNotification::NormalUrgency);
     notification->setIconName(QStringLiteral("io.github.the_beper.KuickShare"));
 
     const QString payloadKind = info.value(QStringLiteral("payload_kind")).toString();
@@ -309,35 +318,35 @@ void TransferWatcher::notifyReceived(const QString &id, const QString &who, cons
     {
         static const QRegularExpression linkPattern(QStringLiteral("^https?://\\S+$"), QRegularExpression::CaseInsensitiveOption);
         const bool isLink = payloadKind == QLatin1String("Url") || linkPattern.match(text.trimmed()).hasMatch();
-        notification->setTitle(isLink ? i18n("Link received") : i18n("Text received"));
+        notification->setTitle(isLink ? i18nc("@title:notification", "Link Received") : i18nc("@title:notification", "Text Received"));
         notification->setText(i18n("From %1:\n%2", who.toHtmlEscaped(), shortened(text).toHtmlEscaped()));
-        auto *copy = notification->addAction(isLink ? i18n("Copy link") : i18n("Copy text"));
+        auto *copy = notification->addAction(isLink ? i18nc("@action:button", "Copy Link") : i18nc("@action:button", "Copy Text"));
         connect(copy, &KNotificationAction::activated, this, [text]
                 { QGuiApplication::clipboard()->setText(text); });
         if (isLink)
         {
-            auto *open = notification->addAction(i18n("Open link"));
+            auto *open = notification->addAction(i18nc("@action:button", "Open Link"));
             connect(open, &KNotificationAction::activated, this, [text]
                     { QDesktopServices::openUrl(QUrl(text.trimmed())); });
         }
-        auto *view = notification->addAction(i18n("View"));
+        auto *view = notification->addAction(i18nc("@action:button", "View"));
         connect(view, &KNotificationAction::activated, this, [this, id]
                 { Q_EMIT viewRequested(id); });
     }
     else
     {
         const QString dir = m_core->downloadDir().isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) : m_core->downloadDir();
-        notification->setTitle(i18n("Files received"));
+        notification->setTitle(i18nc("@title:notification", "Files Received"));
         notification->setText(i18n("From %1", who.toHtmlEscaped()));
         // Several files: only the folder makes sense.
         const QStringList saved = info.value(QStringLiteral("saved_paths")).toString().split(QLatin1Char('\n'), Qt::SkipEmptyParts);
         if (saved.size() == 1)
         {
-            auto *openFile = notification->addAction(i18n("Open file"));
+            auto *openFile = notification->addAction(i18nc("@action:button", "Open File"));
             connect(openFile, &KNotificationAction::activated, this, [path = saved.first()]
                     { QDesktopServices::openUrl(QUrl::fromLocalFile(path)); });
         }
-        auto *open = notification->addAction(i18n("Open folder"));
+        auto *open = notification->addAction(i18nc("@action:button", "Open Folder"));
         connect(open, &KNotificationAction::activated, this, [dir]
                 { QDesktopServices::openUrl(QUrl::fromLocalFile(dir)); });
     }
@@ -347,6 +356,7 @@ void TransferWatcher::notifyReceived(const QString &id, const QString &who, cons
 void TransferWatcher::notifyProblem(const QString &eventId, const QString &title, const QString &text)
 {
     auto *notification = new KNotification(eventId);
+    notification->setUrgency(KNotification::NormalUrgency);
     notification->setIconName(QStringLiteral("dialog-warning"));
     notification->setTitle(title);
     notification->setText(text);

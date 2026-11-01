@@ -382,18 +382,15 @@ int main(int argc, char *argv[])
         startDeviceSend(parser.value(device), queued);
     }
 
-    KStatusNotifierItem tray;
-    tray.setCategory(KStatusNotifierItem::ApplicationStatus);
-    tray.setIconByName(trayIcon);
-    tray.setTitle(QStringLiteral("KuickShare"));
-    auto applyTray = [&tray, &core]
-    {
-        tray.setStatus(core.trayIcon() ? KStatusNotifierItem::Active : KStatusNotifierItem::Passive);
-    };
-    applyTray();
-    QObject::connect(&core, &CoreBridge::trayIconChanged, &tray, applyTray);
-    tray.setStandardActionsEnabled(false);
-    QObject::connect(&tray, &KStatusNotifierItem::activateRequested, &app, openWindow);
+    // The window and its engine exist only while shown.
+    transfers.setWindowActiveCheck([&engine]
+                                   {
+        if (!engine || engine->rootObjects().isEmpty())
+        {
+            return false;
+        }
+        const auto *window = qobject_cast<QQuickWindow *>(engine->rootObjects().constFirst());
+        return window && window->isVisible() && window->isActive(); });
 
     QObject::connect(&transfers, &TransferWatcher::viewRequested, &app, [&](const QString &id)
                      {
@@ -415,57 +412,117 @@ int main(int argc, char *argv[])
         };
     };
 
-    auto *menu = new QMenu();
-    menu->addAction(QIcon::fromTheme(QStringLiteral("window-new")), i18n("Open KuickShare"), openWindow);
-    menu->addSeparator();
-    menu->addAction(QIcon::fromTheme(QStringLiteral("document-send")), i18n("Send files…"), inWindow("openFiles"));
-    menu->addAction(QIcon::fromTheme(QStringLiteral("edit-paste")), i18n("Send clipboard"), inWindow("pasteClipboard"));
-    auto *visible = menu->addAction(QIcon::fromTheme(QStringLiteral("visibility")), i18n("Visible to nearby devices"));
-    visible->setCheckable(true);
-    visible->setChecked(core.visible());
-    QObject::connect(visible, &QAction::triggered, &core, &CoreBridge::setVisible);
-    QObject::connect(&core, &CoreBridge::visibleChanged, visible, [visible, &core]
-                     { visible->setChecked(core.visible()); });
-    auto *visibleFor = menu->addAction(QIcon::fromTheme(QStringLiteral("chronometer")), QString());
-    visibleFor->setCheckable(true);
-    auto *visibleForTimer = new QTimer(visibleFor);
-    visibleForTimer->setInterval(30000);
-    auto updateVisibleFor = [visibleFor, &core]
+    // The tray item is made the first time the setting asks for it (the core reports the setting once
+    // connected). It then stays until exit, Passive while the setting is off: an item removed at runtime
+    // can stay listed in the tray, where it registers with its connection name in a Flatpak (inferred).
+    std::unique_ptr<KStatusNotifierItem> tray;
+    auto createTray = [&]
     {
-        const qint64 left = core.visibleUntil() - QDateTime::currentSecsSinceEpoch();
-        const bool active = core.visibleUntil() > 0 && left > 0;
-        visibleFor->setChecked(active);
-        const int minutes = static_cast<int>((left + 59) / 60);
-        visibleFor->setText(active ? i18np("Visible for %1 more minute (click to stop)", "Visible for %1 more minutes (click to stop)", minutes)
-                                   : i18n("Visible for 10 minutes"));
-    };
-    QObject::connect(visibleForTimer, &QTimer::timeout, visibleFor, updateVisibleFor);
-    QObject::connect(&core, &CoreBridge::visibleUntilChanged, visibleFor, [visibleForTimer, &core, updateVisibleFor]
-                     {
-        core.visibleUntil() > 0 ? visibleForTimer->start() : visibleForTimer->stop();
-        updateVisibleFor(); });
-    QObject::connect(visibleFor, &QAction::triggered, &core, [&core, updateVisibleFor]
-                     {
-        core.makeVisibleFor(core.visibleUntil() > QDateTime::currentSecsSinceEpoch() ? 0 : 600);
-        updateVisibleFor(); // the core's answer fixes the state if the call fails
-    });
-    updateVisibleFor();
-    menu->addSeparator();
-    menu->addAction(QIcon::fromTheme(QStringLiteral("configure")), i18n("Preferences"), inWindow("showSettings"));
+        auto item = std::make_unique<KStatusNotifierItem>();
+        KStatusNotifierItem *sni = item.get();
+        sni->setCategory(KStatusNotifierItem::ApplicationStatus);
+        sni->setIconByName(trayIcon);
+        sni->setAttentionIconByName(trayIcon);
+        sni->setTitle(QStringLiteral("KuickShare"));
+        sni->setStandardActionsEnabled(false);
+        QObject::connect(sni, &KStatusNotifierItem::activateRequested, &app, openWindow);
 
-    auto requestQuit = inWindow("requestQuit");
-    menu->addAction(QIcon::fromTheme(QStringLiteral("application-exit")), i18n("Quit"), [&, requestQuit]
-                    {
-        if (core.transferActive())
+        auto *menu = new QMenu();
+        menu->addAction(QIcon::fromTheme(QStringLiteral("window-new")), i18nc("@action:inmenu", "Open KuickShare"), openWindow);
+        menu->addSeparator();
+        menu->addAction(QIcon::fromTheme(QStringLiteral("document-send")), i18nc("@action:inmenu", "Send Files…"), inWindow("openFiles"));
+        menu->addAction(QIcon::fromTheme(QStringLiteral("edit-paste")), i18nc("@action:inmenu", "Send Clipboard"), inWindow("pasteClipboard"));
+        auto *visible = menu->addAction(QIcon::fromTheme(QStringLiteral("visibility")), i18nc("@action:inmenu", "Visible to Nearby Devices"));
+        visible->setCheckable(true);
+        visible->setChecked(core.visible());
+        QObject::connect(visible, &QAction::triggered, &core, &CoreBridge::setVisible);
+        QObject::connect(&core, &CoreBridge::visibleChanged, visible, [visible, &core]
+                         { visible->setChecked(core.visible()); });
+        // The label stays the same in both states; the time left is in the tray's tooltip.
+        auto *visibleFor = menu->addAction(QIcon::fromTheme(QStringLiteral("chronometer")), i18nc("@action:inmenu", "Visible for 10 Minutes"));
+        visibleFor->setCheckable(true);
+        auto *visibleForTimer = new QTimer(visibleFor);
+        visibleForTimer->setInterval(30000);
+        auto updateVisibleFor = [visibleFor, &core, sni, trayIcon]
         {
-            requestQuit();
+            const qint64 left = core.visibleUntil() - QDateTime::currentSecsSinceEpoch();
+            const bool active = core.visibleUntil() > 0 && left > 0;
+            visibleFor->setChecked(active);
+            const int minutes = static_cast<int>((left + 59) / 60);
+            sni->setToolTip(trayIcon, QStringLiteral("KuickShare"),
+                            active ? i18ncp("@info:tooltip", "Visible for %1 more minute", "Visible for %1 more minutes", minutes) : QString());
+        };
+        QObject::connect(visibleForTimer, &QTimer::timeout, visibleFor, updateVisibleFor);
+        QObject::connect(&core, &CoreBridge::visibleUntilChanged, visibleFor, [visibleForTimer, &core, updateVisibleFor]
+                         {
+            core.visibleUntil() > 0 ? visibleForTimer->start() : visibleForTimer->stop();
+            updateVisibleFor(); });
+        QObject::connect(visibleFor, &QAction::triggered, &core, [&core, updateVisibleFor]
+                         {
+            core.makeVisibleFor(core.visibleUntil() > QDateTime::currentSecsSinceEpoch() ? 0 : 600);
+            updateVisibleFor(); // the core's answer fixes the state if the call fails
+        });
+        // The item can be made while a temporary visibility runs.
+        if (core.visibleUntil() > 0)
+        {
+            visibleForTimer->start();
+        }
+        updateVisibleFor();
+        menu->addSeparator();
+        menu->addAction(QIcon::fromTheme(QStringLiteral("configure")), i18nc("@action:inmenu", "Preferences"), inWindow("showSettings"));
+
+        auto requestQuit = inWindow("requestQuit");
+        menu->addAction(QIcon::fromTheme(QStringLiteral("application-exit")), i18nc("@action:inmenu", "Quit"), [&, sni, requestQuit]
+                        {
+            if (core.transferActive())
+            {
+                requestQuit();
+            }
+            else
+            {
+                sni->setStatus(KStatusNotifierItem::Passive);
+                app.quit();
+            } });
+        sni->setContextMenu(menu);
+        return item;
+    };
+    // As the HIG asks, the icon stands out only when there is something to report: Active during a
+    // transfer or a temporary visibility, NeedsAttention while a request waits for an answer, and
+    // otherwise Passive (among the tray's hidden icons).
+    auto applyTray = [&]
+    {
+        if (!tray && core.trayIcon())
+        {
+            tray = createTray();
+        }
+        if (!tray)
+        {
+            return;
+        }
+        if (!core.trayIcon())
+        {
+            tray->setStatus(KStatusNotifierItem::Passive);
+        }
+        else if (core.transfers()->waiting())
+        {
+            tray->setStatus(KStatusNotifierItem::NeedsAttention);
+        }
+        else if (core.transferBusy() || core.visibleUntil() > QDateTime::currentSecsSinceEpoch())
+        {
+            tray->setStatus(KStatusNotifierItem::Active);
         }
         else
         {
-            tray.setStatus(KStatusNotifierItem::Passive);
-            app.quit();
-        } });
-    tray.setContextMenu(menu);
+            tray->setStatus(KStatusNotifierItem::Passive);
+        }
+    };
+    applyTray();
+    // Declared after `tray`, so it goes first at exit and takes these connections with it.
+    QObject trayContext;
+    QObject::connect(&core, &CoreBridge::trayIconChanged, &trayContext, applyTray);
+    QObject::connect(&core, &CoreBridge::transferBusyChanged, &trayContext, applyTray);
+    QObject::connect(&core, &CoreBridge::visibleUntilChanged, &trayContext, applyTray);
+    QObject::connect(core.transfers(), &TransferModel::waitingChanged, &trayContext, applyTray);
 
     const int code = app.exec();
     // The window outlives the objects its handlers refer to otherwise.

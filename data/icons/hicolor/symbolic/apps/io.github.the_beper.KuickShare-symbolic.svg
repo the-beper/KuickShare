@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
   <style type="text/css" id="current-color-scheme">.ColorScheme-Text { color: #232629; }</style>
   <g class="ColorScheme-Text" fill="currentColor" color="currentColor">
-    <rect x="3.5" y="3" width="3" height="16"/>
-    <path d="M6.5 11 L16.2 5 M6.5 11 L16.2 17" fill="none" stroke="currentColor" stroke-width="2.6"/>
-    <circle cx="16.2" cy="5" r="2.9"/>
-    <circle cx="16.2" cy="17" r="2.9"/>
+    <rect x="3" y="3" width="3" height="16"/>
+    <path d="M6 11 L16 6 M6 11 L16 16" fill="none" stroke="currentColor" stroke-width="2"/>
+    <circle cx="16" cy="6" r="3"/>
+    <circle cx="16" cy="16" r="3"/>
   </g>
 </svg>

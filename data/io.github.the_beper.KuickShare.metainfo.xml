@@ -63,7 +63,7 @@
   </categories>
   <content_rating type="oars-1.1"/>
   <requires>
-    <display_length compare="ge">360</display_length>
+    <display_length compare="ge">468</display_length>
     <internet>offline-only</internet>
   </requires>
   <recommends>
@@ -71,6 +71,24 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.7.0" date="2026-11-01">
+      <description>
+        <p>KuickShare now follows the KDE Human Interface Guidelines more closely: clearer labels, keyboard and screen reader friendly links, errors that stay until read and a quieter tray icon.</p>
+        <ul>
+          <li>Buttons, menus and titles use the KDE capitalization and wording</li>
+          <li>Error messages stay until closed and can be copied</li>
+          <li>The tray icon stands out only during a transfer, a request or a temporary visibility</li>
+          <li>"Keep running in the background" replaces "Show tray icon"</li>
+          <li>Links and the "Trusted" mark work with the keyboard and screen readers</li>
+          <li>A failed pairing can be tried again, and unpairing asks first</li>
+          <li>The AppImage asks about menu entries in a banner instead of a dialog</li>
+          <li>Quit is in the tray menu and on Ctrl+Q, no longer in the window menu</li>
+          <li>No system notification for a finished transfer while the window is in front</li>
+          <li>Refreshed app icons</li>
+          <li>Updated translations</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.6.1" date="2026-10-31">
       <description>
         <p>Fixes the Dolphin context menu setting when a package does not ship the menu entry.</p>

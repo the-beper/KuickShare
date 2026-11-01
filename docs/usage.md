@@ -67,14 +67,14 @@ chmod +x KuickShare-x86_64.AppImage
 
 It can be managed with the usual tools ([Gear Lever](https://github.com/mijorus/gearlever), [AM / AppMan](https://github.com/ivan-hc/AM), [soar](https://github.com/pkgforge/soar)) and updates with `appimageupdatetool` or any updater that reads its embedded update information (zsync, GitHub releases).
 
-On the first start it asks once whether to add KuickShare to the application menu and Dolphin's context menu:
+On the first start an information box at the top of the window asks once "Add KuickShare to the menus?" (application menu and Dolphin's context menu):
 
 | Answer | Effect |
 |---|---|
-| Add | Writes the menu entry and the Dolphin entry, both pointing at the AppImage file. If you move the file, turn the Dolphin entry off and on again in Preferences |
-| Not now | Turns the Dolphin entry off in Preferences |
+| Add to Menus | Writes the menu entry and the Dolphin entry, both pointing at the AppImage file. If you move the file, turn the Dolphin entry off and on again in Preferences |
+| Not Now | Turns the Dolphin entry off in Preferences |
 
-- The Preferences have an "Application menu entry" switch (AppImage only) that adds or removes the menu entry at any time, so it also works where the question is not asked.
+- The Preferences have a "Show in the application menu" switch (AppImage only) that adds or removes the menu entry at any time, so it also works where the question is not asked.
 - Nothing is asked if an installation or those entries already exist, if the app starts with `--background`, or if `XDG_CURRENT_DESKTOP` is not set (a bare session such as Xvfb).
 - The answer is remembered in `~/.config/kuickshare/integration-asked`.
 - To remove the menu entry, delete `~/.local/share/applications/io.github.the_beper.KuickShare.desktop` and the icons it installed.
@@ -109,7 +109,7 @@ What the tarball installer writes, under `XDG_DATA_HOME` and `XDG_CONFIG_HOME` w
 | Command in the shell path | `~/.local/bin/kuickshare` (a link; an existing file or link of yours is left alone) |
 | Installer, uninstaller, version | `~/.local/share/kuickshare/` |
 | Menu entry, app metadata | `~/.local/share/applications/`, `~/.local/share/metainfo/` |
-| Dolphin "Send with KuickShare" | `~/.local/share/kio/servicemenus/kuickshare-send.desktop` |
+| Dolphin "Send With KuickShare" | `~/.local/share/kio/servicemenus/kuickshare-send.desktop` |
 | Notification definitions | `~/.local/share/knotifications6/kuickshare.notifyrc` |
 | Icons | `~/.local/share/icons/hicolor/` |
 | Translations | `~/.local/share/locale/` |
@@ -126,16 +126,18 @@ The window has a fixed size. Closing it hides it in the tray and frees its memor
 | Entry | Effect |
 |---|---|
 | Open KuickShare | Show the window |
-| Send files... | Open the file chooser on the Send page |
-| Send clipboard | Add the clipboard to the Send page |
-| Visible to nearby devices | Same switch as in Preferences |
-| Visible for 10 minutes | Visible even when the switch above is off, then back to it. Shows the time left while active; click again to stop |
+| Send Files… | Open the file chooser on the Send page |
+| Send Clipboard | Add the clipboard to the Send page |
+| Visible to Nearby Devices | Same switch as in Preferences |
+| Visible for 10 Minutes | Checkable. Visible even when the switch above is off, then back to it. The minutes left are in the tray tooltip; click again to stop |
 | Preferences | Open Preferences |
 | Quit | Quit at once; if a transfer is running, opens the window to ask first |
 
-Without the tray icon (a preference), closing the window quits the app. See [Preferences](#preferences).
+The tray item is created when "Keep running in the background" is on (once the service reports the setting) and then stays until the app exits; turning the switch off makes it Passive. Its status is Passive at rest, Active during a transfer or a temporary visibility, and NeedsAttention while an incoming request waits for an answer. Plasma should keep a Passive item among the hidden tray icons and highlight the others; this was not tested on a real Plasma desktop (unverified).
 
-The tabs are Send and Transfers. The icon at their right opens a menu with Preferences, Shortcuts, Help, About and Quit.
+With "Keep running in the background" off, closing the window quits the app. See [Preferences](#preferences).
+
+The tabs are Send and Transfers. The "More" button at their right opens a menu with Preferences, Shortcuts, Help and About. Quit is `Ctrl+Q` or the tray menu.
 
 ## Sending
 
@@ -171,7 +173,7 @@ If the whole text is one link of the form `scheme://host.tld...`, it is sent as 
 
 ### From Dolphin and the command line
 
-Right-click files in Dolphin and choose **Send with KuickShare**. It is a top-level entry and opens the Send page with the files queued. It can be turned off in Preferences.
+Right-click files in Dolphin and choose **Send With KuickShare**. It is a top-level entry and opens the Send page with the files queued. It can be turned off in Preferences.
 
 ```sh
 kuickshare [--background] [--page send|transfers|settings|help] [--device <name>] [files...]
@@ -183,12 +185,12 @@ kuickshare [--background] [--page send|transfers|settings|help] [--device <name>
 
 ## Receiving
 
-When a nearby device wants to send, a persistent notification titled "Incoming transfer" names the sender, shows a PIN if the protocol supplied one, and offers these actions:
+When a nearby device wants to send, a persistent notification titled "Incoming Transfer" names the sender, shows a PIN if the protocol supplied one, and offers these actions. Requests always notify. The end-of-transfer notifications below are skipped while the window is shown and active, because the in-app toast covers them; error toasts stay until closed and have a Copy action.
 
 | Action | Effect |
 |---|---|
 | Accept | Receive the transfer |
-| Accept and trust | Accept, and add the sender to the trusted devices (only if trusted devices are on; see [below](#trusted-devices)). It binds the MAC address read when the request arrived; if that cannot be checked (another network, a changed address, no name) the transfer keeps waiting, now with Accept and Decline only |
+| Accept and Trust | Accept, and add the sender to the trusted devices (only if trusted devices are on; see [below](#trusted-devices)). It binds the MAC address read when the request arrived; if that cannot be checked (another network, a changed address, no name) the transfer keeps waiting, now with Accept and Decline only |
 | Decline | Refuse the transfer |
 
 The same request is also listed on the Transfers page with Accept and Decline buttons. Compare the PIN with the one on the phone before accepting.
@@ -227,7 +229,7 @@ With **Settings → Wi-Fi Direct → Receive and send without a shared network**
 
 ### Checking the requirements
 
-Under **Settings → Wi-Fi Direct**, **Check system requirements…** opens the dialog "System requirements"; it works also when the switch is disabled. Its description sums up the last check: everything is available, only sending or only receiving works, neither works, or some items could not be checked or need attention. Checking only reads: it never changes Bluetooth, Wi-Fi or the firewall. How each requirement is judged, and what is never verified, is in [wifi-direct.md](wifi-direct.md#checking-the-requirements).
+Under **Settings → Wi-Fi Direct**, **Check System Requirements…** opens the dialog "Check System Requirements"; it works also when the switch is disabled. Its description sums up the last check: everything is available, only sending or only receiving works, neither works, or some items could not be checked or need attention. Checking only reads: it never changes Bluetooth, Wi-Fi or the firewall. How each requirement is judged, and what is never verified, is in [wifi-direct.md](wifi-direct.md#checking-the-requirements).
 
 The dialog shows:
 
@@ -240,9 +242,9 @@ An "Available" result is not a promise: the check cannot tell whether a hotspot 
 
 When you turn the switch on:
 
-- If neither sending nor receiving can work, the switch is off and cannot be turned on, and **Check system requirements…** says so. If it was already on, it can still be turned off.
-- If only one direction can work, the switch turns on and **Check system requirements…** says "Only sending works on this computer" or "Only receiving works on this computer".
-- If something could not be checked, the switch turns on and **Check system requirements…** says "Some items could not be checked".
+- If neither sending nor receiving can work, the switch is off and cannot be turned on, and **Check System Requirements…** says so. If it was already on, it can still be turned off.
+- If only one direction can work, the switch turns on and **Check System Requirements…** says "Only sending works on this computer" or "Only receiving works on this computer".
+- If something could not be checked, the switch turns on and **Check System Requirements…** says "Some items could not be checked".
 
 **Visibility**
 
@@ -251,7 +253,7 @@ When you turn the switch on:
 
 **Trust and PIN**
 
-- "Accept and trust" is not offered for Bluetooth transfers.
+- "Accept and Trust" is not offered for Bluetooth transfers.
 - A PIN is shown for each one: compare it with the phone.
 
 **Network changes** (need NetworkManager and the setting on)
@@ -292,7 +294,7 @@ When a transfer ends, a message slides up from the bottom edge of the window, on
 
 Errors the service reports, and "Copied to clipboard" (green, 1.5 s), use the same messages. A message that stays more than 3 s has a close button.
 
-Entries keep at most 200 file names and 10000 characters of text. Wi-Fi credentials received from a phone are saved without the password; the password is never written to disk (it stays in memory for 10 minutes at most, see [Receiving](#receiving)). **Clear history** deletes the whole list, not only the transfers the filters show, and does not touch received files. A banner suggests clearing when the history file gets large.
+Entries keep at most 200 file names and 10000 characters of text. Wi-Fi credentials received from a phone are saved without the password; the password is never written to disk (it stays in memory for 10 minutes at most, see [Receiving](#receiving)). **Clear History** deletes the whole list, not only the transfers the filters show, and does not touch received files. A banner suggests clearing when the history file gets large.
 
 The history is saved in a file on disk, 1000 entries at most (the oldest go first). It is controlled in Preferences: it can be turned off, and entries can expire after 1, 7, 30 or 90 days. With the history off, the page only lists transfers made while the app is open.
 
@@ -302,9 +304,9 @@ Pairing lets two computers running KuickShare send to each other without asking.
 
 ![The pairing dialog showing an 8-digit code](screenshots/pair.png)
 
-1. On both computers open Preferences and choose **Pair a device...**.
+1. On both computers open Preferences and choose **Pair a Device…**.
 2. On one of them, click the other computer in the list. Computers already paired are listed as "Already paired" and cannot be chosen.
-3. Both screens show the same 8-digit code. Check that it is identical, then click **The codes match** on both. If it differs, click **They differ**.
+3. Both screens show the same 8-digit code. Check that it is identical, then click **Confirm Pairing** on both. If it differs, click **Reject Pairing**.
 4. Each computer shows "Paired with ..." when the other side confirmed too.
 
 Closing the dialog before confirming cancels the pairing.
@@ -315,16 +317,16 @@ Once paired, a transfer from the other computer is accepted without a notificati
 
 ## Trusted devices
 
-Phones cannot pair, so KuickShare can remember them instead. Tap **Accept and trust** on the notification of an incoming transfer, and that device is accepted without asking from then on.
+Phones cannot pair, so KuickShare can remember them instead. Tap **Accept and Trust** on the notification of an incoming transfer, and that device is accepted without asking from then on.
 
 A device is recognised by its advertised name **and** its MAC address together. The MAC is read from the kernel's ARP table for the sender's IP address when the request arrives, so this works on the local network only. If the MAC cannot be read, you are asked as usual. Android uses a different MAC for each Wi-Fi network, so the same phone on another network is asked about again.
 
 > [!WARNING]
 > Name and MAC address can both be copied by anyone on your network, and that device is then accepted without asking. Use trusted devices only on networks where you trust every device.
 
-**After an update.** Older versions recognised a device by name and network address only, which is easy to copy. The first start of this version deleted those trusted devices (once, and only if there were any) and shows a notice, "Trusted devices were removed…", until you press **Got it**; the notice survives a restart. Trust each device again with **Accept and trust** on its next transfer. The switch and the feature stay.
+**After an update.** Older versions recognised a device by name and network address only, which is easy to copy. The first start of this version deleted those trusted devices (once, and only if there were any) and shows a notice, "Trusted devices were removed…", until you press **Got it**; the notice survives a restart. Trust each device again with **Accept and Trust** on its next transfer. The switch and the feature stay.
 
-Preferences has a **Trusted devices** section with the list (name and MAC address, each with **Remove**) and a **Trust devices** switch. Switched off, listed devices are asked about again and the notification has no **Accept and trust** action. The list is kept for when the switch is turned on again.
+Preferences has a **Trusted Devices** section with the list (name and MAC address, each with **Remove**) and a **Trust devices** switch. Switched off, listed devices are asked about again and the notification has no **Accept and Trust** action. The list is kept for when the switch is turned on again.
 
 ## Preferences
 
@@ -338,16 +340,16 @@ Open it with `Ctrl+,`, from the menu, or from the tray. Changes apply at once an
 | Visibility | Visible to nearby devices | On | Others can find this computer and send to it. Off means nothing can be received |
 | Visibility | Hide during Do Not Disturb | On | Hidden while Plasma's Do Not Disturb is on. See [Do Not Disturb](#do-not-disturb) |
 | Receiving | Download folder | `~/Downloads` | Where received files are saved. "Use the default folder" resets it |
-| Receiving | Random port / Fixed port | Random | The port for transfers. Random picks a new one at every start; a fixed one (1024 to 65535) can be opened in the firewall. Changing it restarts sharing and fails while a transfer runs |
-| Paired devices | Pair a device... | none paired | Opens the [pairing dialog](#paired-devices); lists paired computers |
+| Receiving | Use a random port / Fixed port | Random | The port for transfers. Random picks a new one at every start; a fixed one (1024 to 65535) can be opened in the firewall. Changing it restarts sharing and fails while a transfer runs |
+| Paired devices | Pair a Device… | none paired | Opens the [pairing dialog](#paired-devices); lists paired computers |
 | Trusted devices | Trust devices | On | Accept [trusted devices](#trusted-devices) without asking; lists them |
 | History | Save transfer history | On | Record finished transfers |
 | History | Delete entries after | Never | Never, 1, 7, 30 or 90 days. Applied at startup, when the history is read and when a transfer is added |
 | Startup | Start at login | Off | Writes the autostart entry; the app starts hidden. The entry points at the running binary, so switch it off and on again after moving the installation |
-| Integration | Show tray icon | On | Without it, closing the window quits the app and nothing can be received until you open it again. At login it still starts hidden, so start KuickShare again to see the window |
-| Integration | Dolphin context menu | On | Adds or removes **Send with KuickShare**. Kept in line with the setting: written in your home if on and no copy exists there or in a system folder, removed if off (not in the AppImage, which adds it only when you say so). A package that does not ship the entry still gets the menu. Uninstalling the package leaves the copy in your home: remove `~/.local/share/kio/servicemenus/kuickshare-send.desktop` |
+| Integration | Keep running in the background | On | Shows the tray icon. Off, closing the window quits the app and nothing can be received until you open it again. At login it still starts hidden, so start KuickShare again to see the window |
+| Integration | Show in Dolphin’s context menu | On | Adds or removes **Send With KuickShare**. Kept in line with the setting: written in your home if on and no copy exists there or in a system folder, removed if off (not in the AppImage, which adds it only when you say so). A package that does not ship the entry still gets the menu. Uninstalling the package leaves the copy in your home: remove `~/.local/share/kio/servicemenus/kuickshare-send.desktop` |
 | Wi-Fi Direct | Receive and send without a shared network | Off | Experimental; see [Without a shared network](#without-a-shared-network-experimental) |
-| Reset | Reset preferences... | | Restores every setting to its default, including autostart off and the Dolphin entry on. History, paired and trusted devices are kept |
+| Reset | Reset Preferences… | | Restores every setting to its default, including autostart off and the Dolphin entry on. History, paired and trusted devices are kept |
 
 ## Do Not Disturb
 
@@ -370,7 +372,7 @@ Also listed in the app under More, Shortcuts.
 | `Ctrl+O` | Choose files to send |
 | `Ctrl+V` | On the Send page: paste files, an image or text from the clipboard |
 | `Ctrl+L` | Clear files and text |
-| `Ctrl+W` | Close the window (hides it, or quits without the tray icon) |
+| `Ctrl+W` | Close the window (hides it, or quits when "Keep running in the background" is off) |
 | `Ctrl+Q` | Quit KuickShare |
 
 ## Troubleshooting

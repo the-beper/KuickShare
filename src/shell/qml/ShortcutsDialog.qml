@@ -11,17 +11,17 @@ Kirigami.Dialog {
     id: dialog
 
     readonly property var rows: [
-        ["Ctrl+1", KI18n.i18n("Send")],
-        ["Ctrl+2", KI18n.i18n("Transfers")],
-        ["Ctrl+F", KI18n.i18n("Search transfers")],
-        ["Ctrl+,", KI18n.i18n("Preferences")],
-        ["Ctrl+H", KI18n.i18n("Help")],
-        ["F1", KI18n.i18n("Help")],
-        ["Ctrl+?", KI18n.i18n("Show the shortcuts")],
-        ["Ctrl+O", KI18n.i18n("Choose files to send")],
-        ["Ctrl+V", KI18n.i18n("Paste files, an image or text from the clipboard")],
-        ["Ctrl+L", KI18n.i18n("Clear files and text")],
-        ["Ctrl+W", KI18n.i18n("Close the window")],
+        ["Ctrl+1", KI18n.i18nc("@item:intable shortcut action", "Send")],
+        ["Ctrl+2", KI18n.i18nc("@item:intable shortcut action", "Transfers")],
+        ["Ctrl+F", KI18n.i18n("Search Transfers")],
+        ["Ctrl+,", KI18n.i18nc("@item:intable shortcut action", "Preferences")],
+        ["Ctrl+H", KI18n.i18nc("@item:intable shortcut action", "Help")],
+        ["F1", KI18n.i18nc("@item:intable shortcut action", "Help")],
+        ["Ctrl+?", KI18n.i18n("Show Shortcuts")],
+        ["Ctrl+O", KI18n.i18n("Choose Files to Send")],
+        ["Ctrl+V", KI18n.i18n("Paste from Clipboard")],
+        ["Ctrl+L", KI18n.i18n("Clear Files and Text")],
+        ["Ctrl+W", KI18n.i18n("Close Window")],
         ["Ctrl+Q", KI18n.i18n("Quit KuickShare")]
     ]
 
@@ -76,7 +76,7 @@ Kirigami.Dialog {
                 icon.width: Kirigami.Units.iconSizes.smallMedium
                 icon.height: Kirigami.Units.iconSizes.smallMedium
                 display: QQC2.AbstractButton.IconOnly
-                text: KI18n.i18n("Close")
+                text: KI18n.i18nc("@action:button", "Close")
                 Layout.preferredWidth: dialog.headerSize
                 Layout.preferredHeight: dialog.headerSize
                 onClicked: dialog.close()
@@ -131,7 +131,7 @@ Kirigami.Dialog {
                                 required property string modelData
                                 readonly property bool plus: modelData === "+"
 
-                                radius: 6
+                                radius: Kirigami.Units.cornerRadius
                                 color: plus ? "transparent" : Qt.alpha(Kirigami.Theme.textColor, 0.06)
                                 border.width: plus ? 0 : 1
                                 border.color: Qt.alpha(Kirigami.Theme.textColor, 0.25)
