@@ -127,7 +127,7 @@ sequenceDiagram
     C->>C: open the consent (token, 300 s, MAC read now)
     C->>C: intent from paired peer, or allowed name+MAC? then accept
     C->>S: signal TransferUpdated (with the consent token)
-    S->>U: notification: Accept / Accept and trust / Decline
+    S->>U: notification: Accept / Accept and Trust / Decline
     U->>S: Accept
     S->>C: AnswerTransfer(id, consent, "accept")
     C->>L: ConsentAccept
@@ -227,7 +227,7 @@ KuickShare takes part in ordinary Quick Share, where the sender is anonymous and
 | --- | --- | --- |
 | Works with | Another KuickShare installation | Any Quick Share sender, e.g. a phone |
 | Identity | Noise static public key | Advertised name plus MAC address |
-| Set up by | Pairing with a code compared on both screens | "Accept and trust" on a notification |
+| Set up by | Pairing with a code compared on both screens | "Accept and Trust" on a notification |
 | Strength | Cryptographic for the announcement; the transfer itself is matched by IP | Weak: both values can be copied by a LAN attacker |
 
 ### Paired computers
@@ -449,7 +449,7 @@ Built the [Anylinux](https://github.com/pkgforge-dev/Anylinux-AppImages) way, in
 - **Core.** `kuickshared` is started by the shell from its own folder. In the bundle it is a small script that runs the real binary (renamed `kuickshared-core`) through `sharun`, so it uses the bundled libc.
 - **`$APPIMAGE`.** The AppImage runs from a temporary mount, so `Launcher::inAppImage()` (`src/shell/launcher.h`) makes the Dolphin, autostart and menu entries point at the `$APPIMAGE` file.
   - Detection: `APPIMAGE` names an existing file and the program is inside `APPDIR`. A tarball installation started from a terminal that inherited `APPIMAGE` is therefore not taken for the AppImage.
-  - Nothing is written by itself: the first start asks once (`src/shell/integration.cpp`, `IntegrationDialog.qml`), and the Preferences toggles write entries on demand.
+  - Nothing is written by itself: the first start asks once (`src/shell/integration.cpp`, an information box in `Main.qml`), and the Preferences toggles write entries on demand.
 - **Updates.** `appimagetool` embeds `gh-releases-zsync|the-beper|KuickShare|latest|KuickShare-x86_64.AppImage.zsync` and writes the `.zsync` file, which the release publishes.
 - **Cache.** The Podman volume `kuickshare-appimage` keeps the cargo registry; each build uses a fresh `TMPDIR` because `quick-sharun` does not re-check cached files.
 - **Test.** `build/appimage/test-appimage.sh` runs the AppImage with `--appimage-extract-and-run` (no FUSE):

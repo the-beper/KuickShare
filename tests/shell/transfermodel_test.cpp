@@ -124,6 +124,20 @@ private Q_SLOTS:
         QVERIFY(!model.busy());
     }
 
+    void waitingFollowsTheRequestsForApproval()
+    {
+        TransferModel model;
+        QSignalSpy spy(&model, &TransferModel::waitingChanged);
+        model.update(QStringLiteral("out"), {{QStringLiteral("kind"), QStringLiteral("outbound")}, {QStringLiteral("state"), QStringLiteral("WaitingForUserConsent")}});
+        QVERIFY(!model.waiting()); // the other device's approval, not ours
+        model.update(QStringLiteral("in"), {{QStringLiteral("kind"), QStringLiteral("inbound")}, {QStringLiteral("state"), QStringLiteral("WaitingForUserConsent")}});
+        QVERIFY(model.waiting());
+        QCOMPARE(spy.count(), 1);
+        model.update(QStringLiteral("in"), {{QStringLiteral("state"), QStringLiteral("ReceivingFiles")}});
+        QVERIFY(!model.waiting());
+        QCOMPARE(spy.count(), 2);
+    }
+
     void transferEndedIsEmittedOncePerTransfer()
     {
         TransferModel model;

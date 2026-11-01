@@ -141,7 +141,7 @@ All properties are read-write except `VisibleUntil`, `InsecureHotspotAllowed` an
 | `HideWhenDnd` | `b` | `true` | yes | Stored only; the shell reads it and sets `Suspended` |
 | `HistoryEnabled` | `b` | `true` | yes | Off: new transfers are not recorded (`history_uid` stays 0); entries already saved stay |
 | `HistoryKeepDays` | `u` | `0` (keep for ever) | yes | Entries older than this are deleted, immediately and each time the history is read or written |
-| `TrayIcon` | `b` | `true` | yes | Stored only; the shell shows or hides its tray icon |
+| `TrayIcon` | `b` | `true` | yes | Stored only; the shell's "Keep running in the background" switch; it shows the tray icon |
 | `DolphinIntegration` | `b` | `true` | yes | Stored only; the shell adds or removes the Dolphin entry |
 | `TrustedDevicesEnabled` | `b` | `true` | yes | Whether the [always-accepted list](#always-accepted-devices) is honoured |
 | `WifiUpgrade` | `b` | `false` | yes | Let transfers move to a temporary Wi-Fi hotspot (see [Wi-Fi upgrade](wifi-direct.md)); needs NetworkManager. A write here is the legacy form of `RequestWifiUpgrade(enabled, false)`: it never grants the firewall consent and takes back any given, so the hotspot is refused when the firewall cannot open its port. The same gate as `RequestWifiUpgrade` applies: turning it on while both directions are proven blocked fails with `org.freedesktop.DBus.Error.AccessDenied` ([errors](#wi-fi-upgrade-errors)) |

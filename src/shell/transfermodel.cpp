@@ -139,20 +139,23 @@ bool TransferModel::hasLive() const
 void TransferModel::updateBusy()
 {
     bool busy = false;
+    bool waiting = false;
     for (const Entry &entry : m_entries)
     {
         const QString state = entry.info.value(QStringLiteral("state")).toString();
         const bool waitsForUs = entry.info.value(QStringLiteral("kind")).toString() == QLatin1String("inbound") && state == QLatin1String("WaitingForUserConsent");
-        if (!isFinal(state) && !waitsForUs)
-        {
-            busy = true;
-            break;
-        }
+        waiting = waiting || waitsForUs;
+        busy = busy || (!isFinal(state) && !waitsForUs);
     }
     if (busy != m_busy)
     {
         m_busy = busy;
         emit busyChanged();
+    }
+    if (waiting != m_waiting)
+    {
+        m_waiting = waiting;
+        emit waitingChanged();
     }
 }
 

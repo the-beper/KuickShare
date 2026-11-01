@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-29 15:55+0000\n"
+"POT-Creation-Date: 2026-10-31 22:56+0000\n"
 "PO-Revision-Date: 2026-10-18 00:00+0000\n"
 "Last-Translator: the-beper <193650145+the-beper@users.noreply.github.com>\n"
 "Language-Team: English\n"
@@ -16,19 +16,19 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: src/shell/corebridge.cpp:573
+#: src/shell/corebridge.cpp:574
 msgid "This transfer is no longer waiting for an answer"
 msgstr "This transfer is no longer waiting for an answer"
 
-#: src/shell/corebridge.cpp:580
+#: src/shell/corebridge.cpp:581
 msgid "This device cannot be trusted: its network address is not known"
 msgstr "This device cannot be trusted: its network address is not known"
 
-#: src/shell/corebridge.cpp:582
+#: src/shell/corebridge.cpp:583
 msgid "This device cannot be trusted: it sent no name"
 msgstr "This device cannot be trusted: it sent no name"
 
-#: src/shell/corebridge.cpp:584
+#: src/shell/corebridge.cpp:585
 msgid ""
 "This device cannot be trusted: its network address now belongs to another "
 "device"
@@ -36,59 +36,59 @@ msgstr ""
 "This device cannot be trusted: its network address now belongs to another "
 "device"
 
-#: src/shell/corebridge.cpp:595
+#: src/shell/corebridge.cpp:596
 msgid "The offer has too many files"
 msgstr "The offer has too many files"
 
-#: src/shell/corebridge.cpp:599
+#: src/shell/corebridge.cpp:600
 msgid "There is not enough free space in the download folder"
 msgstr "There is not enough free space in the download folder"
 
-#: src/shell/corebridge.cpp:603
+#: src/shell/corebridge.cpp:604
 msgid "The download folder cannot be used"
 msgstr "The download folder cannot be used"
 
-#: src/shell/corebridge.cpp:607
+#: src/shell/corebridge.cpp:608
 msgid "A file name in the offer cannot be saved"
 msgstr "A file name in the offer cannot be saved"
 
-#: src/shell/corebridge.cpp:611
+#: src/shell/corebridge.cpp:612
 msgid "The offer is malformed"
 msgstr "The offer is malformed"
 
-#: src/shell/corebridge.cpp:614
+#: src/shell/corebridge.cpp:615
 msgid "The offer was refused"
 msgstr "The offer was refused"
 
-#: src/shell/corebridge.cpp:649
+#: src/shell/corebridge.cpp:650
 msgid "Bluetooth (BlueZ)"
 msgstr "Bluetooth (BlueZ)"
 
-#: src/shell/corebridge.cpp:652
+#: src/shell/corebridge.cpp:653
 msgid "NetworkManager"
 msgstr "NetworkManager"
 
-#: src/shell/corebridge.cpp:655
+#: src/shell/corebridge.cpp:656
 msgid "Wi-Fi adapter"
 msgstr "Wi-Fi adapter"
 
-#: src/shell/corebridge.cpp:658
+#: src/shell/corebridge.cpp:659
 msgid "Hotspot addresses (dnsmasq)"
 msgstr "Hotspot addresses (dnsmasq)"
 
-#: src/shell/corebridge.cpp:661
+#: src/shell/corebridge.cpp:662
 msgid "Firewall (firewalld)"
 msgstr "Firewall (firewalld)"
 
-#: src/shell/corebridge.cpp:664
+#: src/shell/corebridge.cpp:665
 msgid "Flatpak permissions"
 msgstr "Flatpak permissions"
 
-#: src/shell/corebridge.cpp:679
+#: src/shell/corebridge.cpp:680
 msgid "The check took too long"
 msgstr "The check took too long"
 
-#: src/shell/corebridge.cpp:679
+#: src/shell/corebridge.cpp:680
 msgid ""
 "Refresh to check again; if it keeps happening, the service it asks may be "
 "busy or stuck"
@@ -96,69 +96,69 @@ msgstr ""
 "Refresh to check again; if it keeps happening, the service it asks may be "
 "busy or stuck"
 
-#: src/shell/corebridge.cpp:682
+#: src/shell/corebridge.cpp:683
 msgid "The system message bus could not be reached"
 msgstr "The system message bus could not be reached"
 
-#: src/shell/corebridge.cpp:682
+#: src/shell/corebridge.cpp:683
 msgid "The check needs the system D-Bus; refresh to try again"
 msgstr "The check needs the system D-Bus; refresh to try again"
 
-#: src/shell/corebridge.cpp:685
+#: src/shell/corebridge.cpp:686
 msgid "The service gave an answer that could not be understood"
 msgstr "The service gave an answer that could not be understood"
 
-#: src/shell/corebridge.cpp:685
+#: src/shell/corebridge.cpp:686
 msgid "Refresh to try again; if it persists, update the service"
 msgstr "Refresh to try again; if it persists, update the service"
 
-#: src/shell/corebridge.cpp:688
+#: src/shell/corebridge.cpp:689
 msgid "The check failed"
 msgstr "The check failed"
 
-#: src/shell/corebridge.cpp:688
+#: src/shell/corebridge.cpp:689
 msgid "Refresh to try again"
 msgstr "Refresh to try again"
 
-#: src/shell/corebridge.cpp:691
+#: src/shell/corebridge.cpp:692
 msgid "Not checked, because something it depends on is not ready"
 msgstr "Not checked, because something it depends on is not ready"
 
-#: src/shell/corebridge.cpp:691
+#: src/shell/corebridge.cpp:692
 msgid "Fix the items that are blocked or unknown first"
 msgstr "Fix the items that are blocked or unknown first"
 
-#: src/shell/corebridge.cpp:696
+#: src/shell/corebridge.cpp:697
 msgid "The Bluetooth service is not running"
 msgstr "The Bluetooth service is not running"
 
-#: src/shell/corebridge.cpp:696
+#: src/shell/corebridge.cpp:697
 msgid ""
 "Start the Bluetooth service; if BlueZ is not installed, install it first"
 msgstr ""
 "Start the Bluetooth service; if BlueZ is not installed, install it first"
 
-#: src/shell/corebridge.cpp:699
+#: src/shell/corebridge.cpp:700
 msgid "The Bluetooth service is installed but not running"
 msgstr "The Bluetooth service is installed but not running"
 
-#: src/shell/corebridge.cpp:699 src/shell/corebridge.cpp:752
+#: src/shell/corebridge.cpp:700 src/shell/corebridge.cpp:753
 msgid "It starts when something needs it; to start it now, use the command"
 msgstr "It starts when something needs it; to start it now, use the command"
 
-#: src/shell/corebridge.cpp:702
+#: src/shell/corebridge.cpp:703
 msgid "The sandbox hides the Bluetooth service"
 msgstr "The sandbox hides the Bluetooth service"
 
-#: src/shell/corebridge.cpp:702
+#: src/shell/corebridge.cpp:703
 msgid "Allow the sandbox to talk to BlueZ, then restart KuickShare"
 msgstr "Allow the sandbox to talk to BlueZ, then restart KuickShare"
 
-#: src/shell/corebridge.cpp:706
+#: src/shell/corebridge.cpp:707
 msgid "No Bluetooth adapter was found"
 msgstr "No Bluetooth adapter was found"
 
-#: src/shell/corebridge.cpp:706
+#: src/shell/corebridge.cpp:707
 msgid ""
 "Plug in or enable a Bluetooth adapter; if one is installed, check that its "
 "driver is loaded"
@@ -166,11 +166,11 @@ msgstr ""
 "Plug in or enable a Bluetooth adapter; if one is installed, check that its "
 "driver is loaded"
 
-#: src/shell/corebridge.cpp:710
+#: src/shell/corebridge.cpp:711
 msgid "The Bluetooth adapter is turned off"
 msgstr "The Bluetooth adapter is turned off"
 
-#: src/shell/corebridge.cpp:710
+#: src/shell/corebridge.cpp:711
 msgid ""
 "KuickShare turns it on when it needs it; you can also turn Bluetooth on in "
 "the system settings"
@@ -178,35 +178,35 @@ msgstr ""
 "KuickShare turns it on when it needs it; you can also turn Bluetooth on in "
 "the system settings"
 
-#: src/shell/corebridge.cpp:713
+#: src/shell/corebridge.cpp:714
 msgid "Blocked by a radio switch"
 msgstr "Blocked by a radio switch"
 
-#: src/shell/corebridge.cpp:713
+#: src/shell/corebridge.cpp:714
 msgid "Turn Bluetooth on in the system settings"
 msgstr "Turn Bluetooth on in the system settings"
 
-#: src/shell/corebridge.cpp:717
+#: src/shell/corebridge.cpp:718
 msgid "The Bluetooth adapter does not support Bluetooth Low Energy"
 msgstr "The Bluetooth adapter does not support Bluetooth Low Energy"
 
-#: src/shell/corebridge.cpp:717
+#: src/shell/corebridge.cpp:718
 msgid "Use an adapter that supports Bluetooth 4.0 or newer"
 msgstr "Use an adapter that supports Bluetooth 4.0 or newer"
 
-#: src/shell/corebridge.cpp:720
+#: src/shell/corebridge.cpp:721
 msgid "BlueZ does not report what the adapter can do"
 msgstr "BlueZ does not report what the adapter can do"
 
-#: src/shell/corebridge.cpp:720 src/shell/corebridge.cpp:734
+#: src/shell/corebridge.cpp:721 src/shell/corebridge.cpp:735
 msgid "This may still work; a newer BlueZ reports it"
 msgstr "This may still work; a newer BlueZ reports it"
 
-#: src/shell/corebridge.cpp:724
+#: src/shell/corebridge.cpp:725
 msgid "The Bluetooth adapter cannot advertise"
 msgstr "The Bluetooth adapter cannot advertise"
 
-#: src/shell/corebridge.cpp:724
+#: src/shell/corebridge.cpp:725
 msgid ""
 "Receiving by Bluetooth needs an adapter that can advertise; sending is not "
 "affected"
@@ -214,39 +214,39 @@ msgstr ""
 "Receiving by Bluetooth needs an adapter that can advertise; sending is not "
 "affected"
 
-#: src/shell/corebridge.cpp:727
+#: src/shell/corebridge.cpp:728
 msgid "The adapter has no free advertising slot now"
 msgstr "The adapter has no free advertising slot now"
 
-#: src/shell/corebridge.cpp:727
+#: src/shell/corebridge.cpp:728
 msgid "Another program uses them; close it and refresh"
 msgstr "Another program uses them; close it and refresh"
 
-#: src/shell/corebridge.cpp:731
+#: src/shell/corebridge.cpp:732
 msgid "The Bluetooth adapter cannot scan for devices"
 msgstr "The Bluetooth adapter cannot scan for devices"
 
-#: src/shell/corebridge.cpp:731
+#: src/shell/corebridge.cpp:732
 msgid "Sending needs an adapter that can scan; use another one"
 msgstr "Sending needs an adapter that can scan; use another one"
 
-#: src/shell/corebridge.cpp:734
+#: src/shell/corebridge.cpp:735
 msgid "BlueZ does not report how the adapter can scan"
 msgstr "BlueZ does not report how the adapter can scan"
 
-#: src/shell/corebridge.cpp:738
+#: src/shell/corebridge.cpp:739
 msgid "BlueZ offers no GATT services"
 msgstr "BlueZ offers no GATT services"
 
-#: src/shell/corebridge.cpp:738
+#: src/shell/corebridge.cpp:739
 msgid "Update BlueZ to a version with GATT support"
 msgstr "Update BlueZ to a version with GATT support"
 
-#: src/shell/corebridge.cpp:742
+#: src/shell/corebridge.cpp:743
 msgid "The sandbox does not allow Bluetooth sockets"
 msgstr "The sandbox does not allow Bluetooth sockets"
 
-#: src/shell/corebridge.cpp:742
+#: src/shell/corebridge.cpp:743
 msgid ""
 "Transfers still work over a slower path; allow Bluetooth for the Flatpak to "
 "use the faster one"
@@ -254,75 +254,75 @@ msgstr ""
 "Transfers still work over a slower path; allow Bluetooth for the Flatpak to "
 "use the faster one"
 
-#: src/shell/corebridge.cpp:745
+#: src/shell/corebridge.cpp:746
 msgid "The kernel does not report Bluetooth socket support"
 msgstr "The kernel does not report Bluetooth socket support"
 
-#: src/shell/corebridge.cpp:745
+#: src/shell/corebridge.cpp:746
 msgid "Transfers still work over a slower path if it is missing"
 msgstr "Transfers still work over a slower path if it is missing"
 
-#: src/shell/corebridge.cpp:749
+#: src/shell/corebridge.cpp:750
 msgid "NetworkManager is not running"
 msgstr "NetworkManager is not running"
 
-#: src/shell/corebridge.cpp:749
+#: src/shell/corebridge.cpp:750
 msgid ""
-"Wi-Fi Direct needs NetworkManager; start it, or install it if this computer "
+"Wi-Fi Direct needs NetworkManager; start it, or install it if this system "
 "uses another network tool"
 msgstr ""
-"Wi-Fi Direct needs NetworkManager; start it, or install it if this computer "
+"Wi-Fi Direct needs NetworkManager; start it, or install it if this system "
 "uses another network tool"
 
-#: src/shell/corebridge.cpp:752
+#: src/shell/corebridge.cpp:753
 msgid "NetworkManager is installed but not running"
 msgstr "NetworkManager is installed but not running"
 
-#: src/shell/corebridge.cpp:755
+#: src/shell/corebridge.cpp:756
 msgid "The sandbox hides NetworkManager"
 msgstr "The sandbox hides NetworkManager"
 
-#: src/shell/corebridge.cpp:755
+#: src/shell/corebridge.cpp:756
 msgid "Allow the sandbox to talk to NetworkManager, then restart KuickShare"
 msgstr "Allow the sandbox to talk to NetworkManager, then restart KuickShare"
 
-#: src/shell/corebridge.cpp:759
+#: src/shell/corebridge.cpp:760
 msgid "Networking is turned off in NetworkManager"
 msgstr "Networking is turned off in NetworkManager"
 
-#: src/shell/corebridge.cpp:759
+#: src/shell/corebridge.cpp:760
 msgid "Turn networking on in the network settings"
 msgstr "Turn networking on in the network settings"
 
-#: src/shell/corebridge.cpp:763
+#: src/shell/corebridge.cpp:764
 msgid "Wi-Fi is turned off"
 msgstr "Wi-Fi is turned off"
 
-#: src/shell/corebridge.cpp:763
+#: src/shell/corebridge.cpp:764
 msgid "Turn Wi-Fi on in the system settings"
 msgstr "Turn Wi-Fi on in the system settings"
 
-#: src/shell/corebridge.cpp:767
+#: src/shell/corebridge.cpp:768
 msgid "A hardware switch has turned the Wi-Fi radio off"
 msgstr "A hardware switch has turned the Wi-Fi radio off"
 
-#: src/shell/corebridge.cpp:767
-msgid "Use the Wi-Fi switch or key of this computer"
-msgstr "Use the Wi-Fi switch or key of this computer"
+#: src/shell/corebridge.cpp:768
+msgid "Use the Wi-Fi switch or key of this system"
+msgstr "Use the Wi-Fi switch or key of this system"
 
-#: src/shell/corebridge.cpp:771
+#: src/shell/corebridge.cpp:772
 msgid "There are several Wi-Fi adapters; the first one is used"
 msgstr "There are several Wi-Fi adapters; the first one is used"
 
-#: src/shell/corebridge.cpp:771
+#: src/shell/corebridge.cpp:772
 msgid "If transfers fail, turn off the adapters you do not need"
 msgstr "If transfers fail, turn off the adapters you do not need"
 
-#: src/shell/corebridge.cpp:774
+#: src/shell/corebridge.cpp:775
 msgid "No Wi-Fi adapter was found"
 msgstr "No Wi-Fi adapter was found"
 
-#: src/shell/corebridge.cpp:774
+#: src/shell/corebridge.cpp:775
 msgid ""
 "Plug in a Wi-Fi adapter, or check that the driver of the built-in one is "
 "loaded"
@@ -330,11 +330,11 @@ msgstr ""
 "Plug in a Wi-Fi adapter, or check that the driver of the built-in one is "
 "loaded"
 
-#: src/shell/corebridge.cpp:778
+#: src/shell/corebridge.cpp:779
 msgid "NetworkManager does not manage the Wi-Fi adapter"
 msgstr "NetworkManager does not manage the Wi-Fi adapter"
 
-#: src/shell/corebridge.cpp:778
+#: src/shell/corebridge.cpp:779
 msgid ""
 "Let NetworkManager manage it: another network tool or an unmanaged-devices "
 "setting may be holding it"
@@ -342,23 +342,23 @@ msgstr ""
 "Let NetworkManager manage it: another network tool or an unmanaged-devices "
 "setting may be holding it"
 
-#: src/shell/corebridge.cpp:782
+#: src/shell/corebridge.cpp:783
 msgid "The Wi-Fi adapter needs firmware that is not installed"
 msgstr "The Wi-Fi adapter needs firmware that is not installed"
 
-#: src/shell/corebridge.cpp:782
+#: src/shell/corebridge.cpp:783
 msgid ""
 "Install the firmware package for the adapter (often linux-firmware), then "
-"restart the computer"
+"restart this system"
 msgstr ""
 "Install the firmware package for the adapter (often linux-firmware), then "
-"restart the computer"
+"restart this system"
 
-#: src/shell/corebridge.cpp:786
+#: src/shell/corebridge.cpp:787
 msgid "The NetworkManager plugin for the Wi-Fi adapter is missing"
 msgstr "The NetworkManager plugin for the Wi-Fi adapter is missing"
 
-#: src/shell/corebridge.cpp:786
+#: src/shell/corebridge.cpp:787
 msgid ""
 "Install the NetworkManager Wi-Fi plugin package of your distribution, then "
 "restart NetworkManager"
@@ -366,19 +366,19 @@ msgstr ""
 "Install the NetworkManager Wi-Fi plugin package of your distribution, then "
 "restart NetworkManager"
 
-#: src/shell/corebridge.cpp:789
+#: src/shell/corebridge.cpp:790
 msgid "NetworkManager reports the Wi-Fi adapter as unavailable"
 msgstr "NetworkManager reports the Wi-Fi adapter as unavailable"
 
-#: src/shell/corebridge.cpp:789
+#: src/shell/corebridge.cpp:790
 msgid "Check that its driver loaded and its radio is on"
 msgstr "Check that its driver loaded and its radio is on"
 
-#: src/shell/corebridge.cpp:793
+#: src/shell/corebridge.cpp:794
 msgid "NetworkManager asks for authentication to control the network"
 msgstr "NetworkManager asks for authentication to control the network"
 
-#: src/shell/corebridge.cpp:793
+#: src/shell/corebridge.cpp:794
 msgid ""
 "The hotspot may prompt for a password or be refused; allow network control "
 "for your user in the PolicyKit settings"
@@ -386,11 +386,11 @@ msgstr ""
 "The hotspot may prompt for a password or be refused; allow network control "
 "for your user in the PolicyKit settings"
 
-#: src/shell/corebridge.cpp:796
+#: src/shell/corebridge.cpp:797
 msgid "NetworkManager does not allow this user to control the network"
 msgstr "NetworkManager does not allow this user to control the network"
 
-#: src/shell/corebridge.cpp:796
+#: src/shell/corebridge.cpp:797
 msgid ""
 "Ask the administrator to allow network control and changes to system "
 "connections for your user"
@@ -398,15 +398,15 @@ msgstr ""
 "Ask the administrator to allow network control and changes to system "
 "connections for your user"
 
-#: src/shell/corebridge.cpp:800
+#: src/shell/corebridge.cpp:801
 msgid "Joining Wi-Fi cannot work: something it needs is blocked"
 msgstr "Joining Wi-Fi cannot work: something it needs is blocked"
 
-#: src/shell/corebridge.cpp:800
+#: src/shell/corebridge.cpp:801
 msgid "Fix the blocked items of NetworkManager and the Wi-Fi adapter"
 msgstr "Fix the blocked items of NetworkManager and the Wi-Fi adapter"
 
-#: src/shell/corebridge.cpp:803
+#: src/shell/corebridge.cpp:804
 msgid ""
 "It is not known whether joining Wi-Fi works: something it needs could not be "
 "checked"
@@ -414,23 +414,23 @@ msgstr ""
 "It is not known whether joining Wi-Fi works: something it needs could not be "
 "checked"
 
-#: src/shell/corebridge.cpp:803
+#: src/shell/corebridge.cpp:804
 msgid "Refresh when the items above are sorted out"
 msgstr "Refresh when the items above are sorted out"
 
-#: src/shell/corebridge.cpp:806 src/shell/corebridge.cpp:828
+#: src/shell/corebridge.cpp:807 src/shell/corebridge.cpp:829
 msgid "The sandbox has no network access"
 msgstr "The sandbox has no network access"
 
-#: src/shell/corebridge.cpp:806 src/shell/corebridge.cpp:828
+#: src/shell/corebridge.cpp:807 src/shell/corebridge.cpp:829
 msgid "Allow the network for the Flatpak"
 msgstr "Allow the network for the Flatpak"
 
-#: src/shell/corebridge.cpp:810
+#: src/shell/corebridge.cpp:811
 msgid "The Wi-Fi adapter cannot create a hotspot"
 msgstr "The Wi-Fi adapter cannot create a hotspot"
 
-#: src/shell/corebridge.cpp:810
+#: src/shell/corebridge.cpp:811
 msgid ""
 "Receiving by Wi-Fi needs an adapter with access point mode; Bluetooth still "
 "works"
@@ -438,35 +438,35 @@ msgstr ""
 "Receiving by Wi-Fi needs an adapter with access point mode; Bluetooth still "
 "works"
 
-#: src/shell/corebridge.cpp:813
+#: src/shell/corebridge.cpp:814
 msgid "The Wi-Fi adapter cannot protect a hotspot with WPA2"
 msgstr "The Wi-Fi adapter cannot protect a hotspot with WPA2"
 
-#: src/shell/corebridge.cpp:813
+#: src/shell/corebridge.cpp:814
 msgid "Receiving by Wi-Fi needs WPA2 on the adapter; Bluetooth still works"
 msgstr "Receiving by Wi-Fi needs WPA2 on the adapter; Bluetooth still works"
 
-#: src/shell/corebridge.cpp:816
+#: src/shell/corebridge.cpp:817
 msgid "The Wi-Fi adapter reports no 2.4 GHz or 5 GHz band for a hotspot"
 msgstr "The Wi-Fi adapter reports no 2.4 GHz or 5 GHz band for a hotspot"
 
-#: src/shell/corebridge.cpp:816
+#: src/shell/corebridge.cpp:817
 msgid "Receiving by Wi-Fi needs one of them; Bluetooth still works"
 msgstr "Receiving by Wi-Fi needs one of them; Bluetooth still works"
 
-#: src/shell/corebridge.cpp:819
+#: src/shell/corebridge.cpp:820
 msgid "The Wi-Fi driver does not report what the adapter can do"
 msgstr "The Wi-Fi driver does not report what the adapter can do"
 
-#: src/shell/corebridge.cpp:819
+#: src/shell/corebridge.cpp:820
 msgid "The hotspot may still work; it could not be checked"
 msgstr "The hotspot may still work; it could not be checked"
 
-#: src/shell/corebridge.cpp:822
+#: src/shell/corebridge.cpp:823
 msgid "NetworkManager asks for authentication to share a connection"
 msgstr "NetworkManager asks for authentication to share a connection"
 
-#: src/shell/corebridge.cpp:822
+#: src/shell/corebridge.cpp:823
 msgid ""
 "The hotspot may prompt for a password or be refused; allow it in the "
 "PolicyKit settings"
@@ -474,27 +474,27 @@ msgstr ""
 "The hotspot may prompt for a password or be refused; allow it in the "
 "PolicyKit settings"
 
-#: src/shell/corebridge.cpp:825
+#: src/shell/corebridge.cpp:826
 msgid "This user may not share a connection"
 msgstr "This user may not share a connection"
 
-#: src/shell/corebridge.cpp:825
+#: src/shell/corebridge.cpp:826
 msgid "Ask the administrator to allow sharing connections in NetworkManager"
 msgstr "Ask the administrator to allow sharing connections in NetworkManager"
 
-#: src/shell/corebridge.cpp:832
+#: src/shell/corebridge.cpp:833
 msgid "dnsmasq is installed"
 msgstr "dnsmasq is installed"
 
-#: src/shell/corebridge.cpp:835
+#: src/shell/corebridge.cpp:836
 msgid "The hotspot already handed out addresses in this session"
 msgstr "The hotspot already handed out addresses in this session"
 
-#: src/shell/corebridge.cpp:838
+#: src/shell/corebridge.cpp:839
 msgid "dnsmasq was not found"
 msgstr "dnsmasq was not found"
 
-#: src/shell/corebridge.cpp:838
+#: src/shell/corebridge.cpp:839
 msgid ""
 "The hotspot hands out addresses with dnsmasq; install the dnsmasq or dnsmasq-"
 "base package"
@@ -502,27 +502,27 @@ msgstr ""
 "The hotspot hands out addresses with dnsmasq; install the dnsmasq or dnsmasq-"
 "base package"
 
-#: src/shell/corebridge.cpp:841
+#: src/shell/corebridge.cpp:842
 msgid "Checked when the first hotspot starts"
 msgstr "Checked when the first hotspot starts"
 
-#: src/shell/corebridge.cpp:841
-msgid "The sandbox cannot look for dnsmasq on this computer"
-msgstr "The sandbox cannot look for dnsmasq on this computer"
+#: src/shell/corebridge.cpp:842
+msgid "The sandbox cannot look for dnsmasq on this system"
+msgstr "The sandbox cannot look for dnsmasq on this system"
 
-#: src/shell/corebridge.cpp:844
+#: src/shell/corebridge.cpp:845
 msgid "The hotspot could not start its address service"
 msgstr "The hotspot could not start its address service"
 
-#: src/shell/corebridge.cpp:844
+#: src/shell/corebridge.cpp:845
 msgid "Install the dnsmasq or dnsmasq-base package"
 msgstr "Install the dnsmasq or dnsmasq-base package"
 
-#: src/shell/corebridge.cpp:848
+#: src/shell/corebridge.cpp:849
 msgid "The firewall service (firewalld) is not running"
 msgstr "The firewall service (firewalld) is not running"
 
-#: src/shell/corebridge.cpp:848
+#: src/shell/corebridge.cpp:849
 msgid ""
 "KuickShare cannot open the hotspot port by itself; it asks you before the "
 "hotspot uses an open zone"
@@ -530,134 +530,147 @@ msgstr ""
 "KuickShare cannot open the hotspot port by itself; it asks you before the "
 "hotspot uses an open zone"
 
-#: src/shell/corebridge.cpp:851
+#: src/shell/corebridge.cpp:852
 msgid "The sandbox hides the firewall service"
 msgstr "The sandbox hides the firewall service"
 
-#: src/shell/corebridge.cpp:851
+#: src/shell/corebridge.cpp:852
 msgid "Allow the sandbox to talk to firewalld, then restart KuickShare"
 msgstr "Allow the sandbox to talk to firewalld, then restart KuickShare"
 
-#: src/shell/corebridge.cpp:854
+#: src/shell/corebridge.cpp:855
 msgid "The firewall has no zone for the hotspot (nm-shared)"
 msgstr "The firewall has no zone for the hotspot (nm-shared)"
 
-#: src/shell/corebridge.cpp:854
+#: src/shell/corebridge.cpp:855
 msgid "The hotspot may be blocked or open; add the zone or check its rules"
 msgstr "The hotspot may be blocked or open; add the zone or check its rules"
 
-#: src/shell/corebridge.cpp:857
+#: src/shell/corebridge.cpp:858
 msgid "Changing the firewall asks for authentication"
 msgstr "Changing the firewall asks for authentication"
 
-#: src/shell/corebridge.cpp:857
+#: src/shell/corebridge.cpp:858
 msgid "Opening the hotspot port may prompt for a password or be refused"
 msgstr "Opening the hotspot port may prompt for a password or be refused"
 
-#: src/shell/corebridge.cpp:860
+#: src/shell/corebridge.cpp:861
 msgid "This user may not change the firewall"
 msgstr "This user may not change the firewall"
 
-#: src/shell/corebridge.cpp:860
+#: src/shell/corebridge.cpp:861
 msgid "The hotspot port cannot be opened; ask the administrator to allow it"
 msgstr "The hotspot port cannot be opened; ask the administrator to allow it"
 
-#: src/shell/corebridge.cpp:863
+#: src/shell/corebridge.cpp:864
 msgid "It cannot be checked whether this user may change the firewall"
 msgstr "It cannot be checked whether this user may change the firewall"
 
-#: src/shell/corebridge.cpp:863
+#: src/shell/corebridge.cpp:864
 msgid "polkit could not be asked without a prompt; the hotspot is tried anyway"
 msgstr ""
 "polkit could not be asked without a prompt; the hotspot is tried anyway"
 
-#: src/shell/corebridge.cpp:866
+#: src/shell/corebridge.cpp:867
 msgid "The firewall refused the hotspot in this session"
 msgstr "The firewall refused the hotspot in this session"
 
-#: src/shell/corebridge.cpp:866
+#: src/shell/corebridge.cpp:867
 msgid ""
 "Allow the hotspot in the firewall, or let it use an open zone when asked"
 msgstr ""
 "Allow the hotspot in the firewall, or let it use an open zone when asked"
 
-#: src/shell/corebridge.cpp:869
+#: src/shell/corebridge.cpp:870
 msgid "You allowed the hotspot to use an open firewall zone in this session"
 msgstr "You allowed the hotspot to use an open firewall zone in this session"
 
-#: src/shell/corebridge.cpp:869
+#: src/shell/corebridge.cpp:870
 msgid "Turning the setting off takes this back"
 msgstr "Turning the setting off takes this back"
 
-#: src/shell/corebridge.cpp:874
+#: src/shell/corebridge.cpp:875
 msgid "The Flatpak lacks permissions it needs"
 msgstr "The Flatpak lacks permissions it needs"
 
-#: src/shell/corebridge.cpp:874
+#: src/shell/corebridge.cpp:875
 msgid "Allow them, then restart KuickShare"
 msgstr "Allow them, then restart KuickShare"
 
-#: src/shell/corebridge.cpp:877
+#: src/shell/corebridge.cpp:878
 msgid "The Flatpak can see the whole file system"
 msgstr "The Flatpak can see the whole file system"
 
-#: src/shell/corebridge.cpp:877
+#: src/shell/corebridge.cpp:878
 msgid "It does not need to; take that permission away"
 msgstr "It does not need to; take that permission away"
 
-#: src/shell/corebridge.cpp:881
+#: src/shell/corebridge.cpp:882
 msgid "No more information is available"
 msgstr "No more information is available"
 
-#: src/shell/corebridge.cpp:888 src/shell/qml/SendPage.qml:224
+#: src/shell/corebridge.cpp:889
+msgctxt "@info:status requirement check"
 msgid "Ready"
 msgstr "Ready"
 
-#: src/shell/corebridge.cpp:890
+#: src/shell/corebridge.cpp:891
+msgctxt "@info:status requirement check"
 msgid "Warning"
 msgstr "Warning"
 
-#: src/shell/corebridge.cpp:892
+#: src/shell/corebridge.cpp:893
+msgctxt "@info:status requirement check"
 msgid "Blocked"
 msgstr "Blocked"
 
-#: src/shell/corebridge.cpp:894
+#: src/shell/corebridge.cpp:895
+msgctxt "@info:status requirement check"
 msgid "Checking"
 msgstr "Checking"
 
-#: src/shell/corebridge.cpp:898 src/shell/corebridge.cpp:930
+#: src/shell/corebridge.cpp:899
+msgctxt "@info:status requirement check"
 msgid "Unknown"
 msgstr "Unknown"
 
-#: src/shell/corebridge.cpp:922
+#: src/shell/corebridge.cpp:923
+msgctxt "@info:status capability"
 msgid "Available"
 msgstr "Available"
 
-#: src/shell/corebridge.cpp:924
+#: src/shell/corebridge.cpp:925
+msgctxt "@info:status capability"
 msgid "Limited"
 msgstr "Limited"
 
-#: src/shell/corebridge.cpp:926
+#: src/shell/corebridge.cpp:927
+msgctxt "@info:status capability"
 msgid "Unavailable"
 msgstr "Unavailable"
 
-#: src/shell/corebridge.cpp:1223
-msgid "Could not update Dolphin's context menu"
-msgstr "Could not update Dolphin's context menu"
+#: src/shell/corebridge.cpp:931
+msgctxt "@info:status capability"
+msgid "Unknown"
+msgstr "Unknown"
 
-#: src/shell/corebridge.cpp:1247
+#: src/shell/corebridge.cpp:1224
+msgid "Could not update Dolphin’s context menu"
+msgstr "Could not update Dolphin’s context menu"
+
+#: src/shell/corebridge.cpp:1248
 msgid "Could not update the application menu"
 msgstr "Could not update the application menu"
 
-#: src/shell/corebridge.cpp:1258
+#: src/shell/corebridge.cpp:1259
 msgid "Could not add KuickShare to the menus"
 msgstr "Could not add KuickShare to the menus"
 
-#: src/shell/corebridge.cpp:1315 src/shell/corebridge.cpp:1322
+#: src/shell/corebridge.cpp:1316 src/shell/corebridge.cpp:1323
 msgid "The sharing service did not accept the request"
 msgstr "The sharing service did not accept the request"
 
-#: src/shell/corebridge.cpp:1419
+#: src/shell/corebridge.cpp:1420
 msgid ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
@@ -665,23 +678,23 @@ msgstr ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
 
-#: src/shell/corebridge.cpp:1466
+#: src/shell/corebridge.cpp:1467
 msgid "Could not update the autostart entry"
 msgstr "Could not update the autostart entry"
 
-#: src/shell/corebridge.cpp:1580
+#: src/shell/corebridge.cpp:1581
 msgid "The folder %1 has more than %2 files"
 msgstr "The folder %1 has more than %2 files"
 
-#: src/shell/corebridge.cpp:1584
+#: src/shell/corebridge.cpp:1585
 msgid "The folder %1 has no files to send"
 msgstr "The folder %1 has no files to send"
 
-#: src/shell/corebridge.cpp:1619
+#: src/shell/corebridge.cpp:1620
 msgid "Only local files and folders can be shared"
 msgstr "Only local files and folders can be shared"
 
-#: src/shell/main.cpp:50 src/shell/qml/AboutDialog.qml:158
+#: src/shell/main.cpp:50 src/shell/qml/AboutDialog.qml:139
 msgid "Quick Share client for KDE Plasma"
 msgstr "Quick Share client for KDE Plasma"
 
@@ -701,7 +714,7 @@ msgstr "Send the files to the nearby device with this name"
 msgid "Quit a running instance and take its place"
 msgstr "Quit a running instance and take its place"
 
-#: src/shell/main.cpp:70 src/shell/qml/SendPage.qml:150
+#: src/shell/main.cpp:70
 msgid "Files to send"
 msgstr "Files to send"
 
@@ -713,7 +726,7 @@ msgstr "Several devices are named %1"
 msgid "No device named %1 found"
 msgstr "No device named %1 found"
 
-#: src/shell/main.cpp:314 src/shell/qml/SendPage.qml:517
+#: src/shell/main.cpp:314 src/shell/qml/SendPage.qml:495
 msgid "A transfer is in progress. You can send again when it ends"
 msgstr "A transfer is in progress. You can send again when it ends"
 
@@ -721,144 +734,153 @@ msgstr "A transfer is in progress. You can send again when it ends"
 msgid "No files to send"
 msgstr "No files to send"
 
-#: src/shell/main.cpp:419
+#: src/shell/main.cpp:431
+msgctxt "@action:inmenu"
 msgid "Open KuickShare"
 msgstr "Open KuickShare"
 
-#: src/shell/main.cpp:421
-msgid "Send files…"
-msgstr "Send files…"
+#: src/shell/main.cpp:433
+msgctxt "@action:inmenu"
+msgid "Send Files…"
+msgstr "Send Files…"
 
-#: src/shell/main.cpp:422
-msgid "Send clipboard"
-msgstr "Send clipboard"
+#: src/shell/main.cpp:434
+msgctxt "@action:inmenu"
+msgid "Send Clipboard"
+msgstr "Send Clipboard"
 
-#: src/shell/main.cpp:423 src/shell/qml/SettingsPage.qml:88
-msgid "Visible to nearby devices"
-msgstr "Visible to nearby devices"
+#: src/shell/main.cpp:435
+msgctxt "@action:inmenu"
+msgid "Visible to Nearby Devices"
+msgstr "Visible to Nearby Devices"
 
-#: src/shell/main.cpp:439
-msgid "Visible for %1 more minute (click to stop)"
-msgid_plural "Visible for %1 more minutes (click to stop)"
-msgstr[0] "Visible for %1 more minute (click to stop)"
-msgstr[1] "Visible for %1 more minutes (click to stop)"
+#: src/shell/main.cpp:442
+msgctxt "@action:inmenu"
+msgid "Visible for 10 Minutes"
+msgstr "Visible for 10 Minutes"
 
-#: src/shell/main.cpp:440
-msgid "Visible for 10 minutes"
-msgstr "Visible for 10 minutes"
+#: src/shell/main.cpp:453
+msgctxt "@info:tooltip"
+msgid "Visible for %1 more minute"
+msgid_plural "Visible for %1 more minutes"
+msgstr[0] "Visible for %1 more minute"
+msgstr[1] "Visible for %1 more minutes"
 
-#: src/shell/main.cpp:454 src/shell/qml/Main.qml:294
-#: src/shell/qml/SettingsPage.qml:16 src/shell/qml/ShortcutsDialog.qml:17
+#: src/shell/main.cpp:472 src/shell/qml/Main.qml:309
+msgctxt "@action:inmenu"
 msgid "Preferences"
 msgstr "Preferences"
 
-#: src/shell/main.cpp:457 src/shell/qml/Main.qml:308
+#: src/shell/main.cpp:475
+msgctxt "@action:inmenu"
 msgid "Quit"
 msgstr "Quit"
 
-#: src/shell/qml/AboutDialog.qml:75 src/shell/qml/Main.qml:322
+#: src/shell/qml/AboutDialog.qml:56
 msgid "About"
 msgstr "About"
 
-#: src/shell/qml/AboutDialog.qml:110 src/shell/qml/PairDialog.qml:72
+#: src/shell/qml/AboutDialog.qml:91 src/shell/qml/PairDialog.qml:81
 #: src/shell/qml/ShortcutsDialog.qml:79
-#: src/shell/qml/WifiRequirementsDialog.qml:80
+#: src/shell/qml/WifiRequirementsDialog.qml:81
+msgctxt "@action:button"
 msgid "Close"
 msgstr "Close"
 
-#: src/shell/qml/AboutDialog.qml:155
+#: src/shell/qml/AboutDialog.qml:136
+msgctxt "@label application name and version"
 msgid "KuickShare %1"
 msgstr "KuickShare %1"
 
-#: src/shell/qml/AboutDialog.qml:176
+#: src/shell/qml/AboutDialog.qml:157
 msgid "Homepage"
 msgstr "Homepage"
 
-#: src/shell/qml/AboutDialog.qml:180
+#: src/shell/qml/AboutDialog.qml:161
 msgid "Report a Bug"
 msgstr "Report a Bug"
 
-#: src/shell/qml/AboutDialog.qml:185
+#: src/shell/qml/AboutDialog.qml:166
 msgid "License"
 msgstr "License"
 
-#: src/shell/qml/AboutDialog.qml:189
+#: src/shell/qml/AboutDialog.qml:170
 msgid "GPL-3.0-or-later"
 msgstr "GPL-3.0-or-later"
 
-#: src/shell/qml/AboutDialog.qml:194
+#: src/shell/qml/AboutDialog.qml:175
 msgid "Built on"
 msgstr "Built on"
 
-#: src/shell/qml/AboutDialog.qml:198
+#: src/shell/qml/AboutDialog.qml:179
 msgid "Packet"
 msgstr "Packet"
 
-#: src/shell/qml/AboutDialog.qml:199
+#: src/shell/qml/AboutDialog.qml:180
 msgid "The Quick Share client this started from, by nozwock"
 msgstr "The Quick Share client this started from, by nozwock"
 
-#: src/shell/qml/AboutDialog.qml:203
+#: src/shell/qml/AboutDialog.qml:184
 msgid "rquickshare"
 msgstr "rquickshare"
 
-#: src/shell/qml/AboutDialog.qml:204
+#: src/shell/qml/AboutDialog.qml:185
 msgid "The Quick Share protocol library (rqs_lib), by nozwock and Martichou"
 msgstr "The Quick Share protocol library (rqs_lib), by nozwock and Martichou"
 
-#: src/shell/qml/AboutDialog.qml:209
-msgid "Libraries in use"
-msgstr "Libraries in use"
+#: src/shell/qml/AboutDialog.qml:190
+msgid "Libraries in Use"
+msgstr "Libraries in Use"
 
-#: src/shell/qml/AboutDialog.qml:213
+#: src/shell/qml/AboutDialog.qml:194
+msgctxt "@label library name and version"
 msgid "Qt %1"
 msgstr "Qt %1"
 
-#: src/shell/qml/AboutDialog.qml:214
+#: src/shell/qml/AboutDialog.qml:195
 msgid "Cross-platform application framework"
 msgstr "Cross-platform application framework"
 
-#: src/shell/qml/AboutDialog.qml:217
+#: src/shell/qml/AboutDialog.qml:198
+msgctxt "@label library name and version"
 msgid "KDE Frameworks %1"
 msgstr "KDE Frameworks %1"
 
-#: src/shell/qml/AboutDialog.qml:218
+#: src/shell/qml/AboutDialog.qml:199
 msgid "Kirigami, notifications, jobs and the other KDE libraries"
 msgstr "Kirigami, notifications, jobs and the other KDE libraries"
 
-#: src/shell/qml/HelpPage.qml:11 src/shell/qml/Main.qml:315
-#: src/shell/qml/ShortcutsDialog.qml:18 src/shell/qml/ShortcutsDialog.qml:19
+#: src/shell/qml/HelpPage.qml:11
 msgid "Help"
 msgstr "Help"
 
 #: src/shell/qml/HelpPage.qml:24
-msgid "Getting started"
-msgstr "Getting started"
+msgid "Getting Started"
+msgstr "Getting Started"
 
-#: src/shell/qml/HelpPage.qml:30 src/shell/qml/Main.qml:253
-#: src/shell/qml/SendPage.qml:39 src/shell/qml/ShortcutsDialog.qml:14
+#: src/shell/qml/HelpPage.qml:30
 msgid "Send"
 msgstr "Send"
 
 #: src/shell/qml/HelpPage.qml:31
 msgid ""
 "Choose or drop files, or type some text, on the Send page, then pick a "
-"device. On the phone, open Quick Share."
+"device. On the other device, open Quick Share."
 msgstr ""
 "Choose or drop files, or type some text, on the Send page, then pick a "
-"device. On the phone, open Quick Share."
+"device. On the other device, open Quick Share."
 
 #: src/shell/qml/HelpPage.qml:35
-msgid "Be found"
-msgstr "Be found"
+msgid "Be Found"
+msgstr "Be Found"
 
 #: src/shell/qml/HelpPage.qml:36
 msgid ""
-"Keep “Visible to nearby devices” on in Preferences. The phone must be set to "
-"Everyone to be found, and Android sets it back after 10 minutes."
+"Keep “Visible to nearby devices” on in Preferences. The other device must be "
+"set to Everyone to be found, and Android sets it back after 10 minutes."
 msgstr ""
-"Keep “Visible to nearby devices” on in Preferences. The phone must be set to "
-"Everyone to be found, and Android sets it back after 10 minutes."
+"Keep “Visible to nearby devices” on in Preferences. The other device must be "
+"set to Everyone to be found, and Android sets it back after 10 minutes."
 
 #: src/shell/qml/HelpPage.qml:40
 msgid "Receive"
@@ -873,120 +895,112 @@ msgstr ""
 "files go to the download folder chosen in Preferences."
 
 #: src/shell/qml/HelpPage.qml:46
-msgid "Paired and trusted devices"
-msgstr "Paired and trusted devices"
+msgid "Paired and Trusted Devices"
+msgstr "Paired and Trusted Devices"
 
 #: src/shell/qml/HelpPage.qml:52
-msgid "Paired computers"
-msgstr "Paired computers"
+msgid "Paired Devices"
+msgstr "Paired Devices"
 
 #: src/shell/qml/HelpPage.qml:53
 msgid ""
-"Two computers running KuickShare can pair with an 8-digit code, then send to "
+"Two systems running KuickShare can pair with an 8-digit code, then send to "
 "each other without asking. The port 47891 must be reachable."
 msgstr ""
-"Two computers running KuickShare can pair with an 8-digit code, then send to "
+"Two systems running KuickShare can pair with an 8-digit code, then send to "
 "each other without asking. The port 47891 must be reachable."
 
-#: src/shell/qml/HelpPage.qml:57 src/shell/qml/SettingsPage.qml:282
-msgid "Trusted devices"
-msgstr "Trusted devices"
+#: src/shell/qml/HelpPage.qml:57
+msgid "Trusted Devices"
+msgstr "Trusted Devices"
 
 #: src/shell/qml/HelpPage.qml:58
 msgid ""
-"“Accept and trust” on a notification accepts a phone without asking from "
+"“Accept and Trust” on a notification accepts a device without asking from "
 "then on. It is recognised by name and network address, so only on the same "
 "network, never for transfers over Bluetooth, which always ask. Another "
 "device on the same network can copy both, so use it only where you trust "
 "every device."
 msgstr ""
-"“Accept and trust” on a notification accepts a phone without asking from "
+"“Accept and Trust” on a notification accepts a device without asking from "
 "then on. It is recognised by name and network address, so only on the same "
 "network, never for transfers over Bluetooth, which always ask. Another "
 "device on the same network can copy both, so use it only where you trust "
 "every device."
 
 #: src/shell/qml/HelpPage.qml:63
-msgid "Wi-Fi Direct (experimental)"
-msgstr "Wi-Fi Direct (experimental)"
+msgid "Wi-Fi Direct (Experimental)"
+msgstr "Wi-Fi Direct (Experimental)"
 
 #: src/shell/qml/HelpPage.qml:69
-msgid "Without a shared network"
-msgstr "Without a shared network"
+msgid "Without a Shared Network"
+msgstr "Without a Shared Network"
 
 #: src/shell/qml/HelpPage.qml:70
 msgid ""
 "The transfer starts over Bluetooth and moves to a temporary Wi-Fi link: this "
-"computer hosts a hotspot to receive, and joins the phone's Wi-Fi Direct "
+"system hosts a hotspot to receive, and joins the other device’s Wi-Fi Direct "
 "group to send. Turn it on in Preferences; it needs NetworkManager, its "
 "dnsmasq package and Bluetooth."
-msgstr ""
-"The transfer starts over Bluetooth and moves to a temporary Wi-Fi link: this "
-"computer hosts a hotspot to receive, and joins the phone's Wi-Fi Direct "
-"group to send. Turn it on in Preferences; it needs NetworkManager, its "
-"dnsmasq package and Bluetooth."
+msgstr "The transfer starts over Bluetooth and moves to a temporary Wi-Fi link: this system hosts a hotspot to receive, and joins the other device’s Wi-Fi Direct group to send. Turn it on in Preferences; it needs NetworkManager, its dnsmasq package and Bluetooth."
 
 #: src/shell/qml/HelpPage.qml:74
-msgid "On the phone"
-msgstr "On the phone"
+msgid "On Android"
+msgstr "On Android"
 
 #: src/shell/qml/HelpPage.qml:75
 msgid ""
-"Keep Quick Share's Receive screen open and set to Everyone. A phone on the "
-"same network as this computer is reached over the network instead."
-msgstr ""
-"Keep Quick Share's Receive screen open and set to Everyone. A phone on the "
-"same network as this computer is reached over the network instead."
+"Keep Quick Share’s Receive screen open and set to Everyone. A device on the "
+"same network as this system is reached over the network instead."
+msgstr "Keep Quick Share’s Receive screen open and set to Everyone. A device on the same network as this system is reached over the network instead."
 
 #: src/shell/qml/HelpPage.qml:79
-msgid "Wi-Fi connection and firewall"
-msgstr "Wi-Fi connection and firewall"
+msgid "Wi-Fi Connection and Firewall"
+msgstr "Wi-Fi Connection and Firewall"
 
 #: src/shell/qml/HelpPage.qml:80
 msgid ""
-"With one Wi-Fi card, the normal connection of this computer may drop while "
-"the temporary link is active. Without firewalld, the phone that joins the "
-"hotspot can reach every service on this computer."
+"With one Wi-Fi card, the normal connection of this system may drop while the "
+"temporary link is active. Without firewalld, the device that joins the "
+"hotspot can reach every service on this system."
 msgstr ""
-"With one Wi-Fi card, the normal connection of this computer may drop while "
-"the temporary link is active. Without firewalld, the phone that joins the "
-"hotspot can reach every service on this computer."
+"With one Wi-Fi card, the normal connection of this system may drop while the "
+"temporary link is active. Without firewalld, the device that joins the "
+"hotspot can reach every service on this system."
 
 #: src/shell/qml/HelpPage.qml:85
 msgid "Troubleshooting"
 msgstr "Troubleshooting"
 
 #: src/shell/qml/HelpPage.qml:91
-msgid "The phone does not see this computer"
-msgstr "The phone does not see this computer"
+msgid "The other device does not see this system"
+msgstr "The other device does not see this system"
 
 #: src/shell/qml/HelpPage.qml:92
 msgid ""
 "Check that “Visible to nearby devices” is on, that Do Not Disturb is off (it "
-"hides this computer) and that both are on the same network."
+"hides this system) and that both are on the same network."
 msgstr ""
 "Check that “Visible to nearby devices” is on, that Do Not Disturb is off (it "
-"hides this computer) and that both are on the same network."
+"hides this system) and that both are on the same network."
 
 #: src/shell/qml/HelpPage.qml:96
-msgid "This computer does not see the phone"
-msgstr "This computer does not see the phone"
+msgid "This system does not see the other device"
+msgstr "This system does not see the other device"
 
 #: src/shell/qml/HelpPage.qml:97
-msgid "Set the phone to Everyone and keep its Quick Share screen open."
-msgstr "Set the phone to Everyone and keep its Quick Share screen open."
+msgid "Set the other device to Everyone and keep its Quick Share screen open."
+msgstr "Set the other device to Everyone and keep its Quick Share screen open."
 
 #: src/shell/qml/HelpPage.qml:101
-msgid "The phone is not found over Bluetooth"
-msgstr "The phone is not found over Bluetooth"
+msgid "The other device is not found over Bluetooth"
+msgstr "The other device is not found over Bluetooth"
 
 #: src/shell/qml/HelpPage.qml:102
 msgid ""
-"Open Quick Share's Receive screen on the phone, set it to Everyone and use "
-"“Search again” on the Send page."
-msgstr ""
-"Open Quick Share's Receive screen on the phone, set it to Everyone and use "
-"“Search again” on the Send page."
+"Open Quick Share’s Receive screen on the other device, set it to Everyone "
+"and use “Search Again” on the Send page."
+msgstr "Open Quick Share’s Receive screen on the other device, set it to Everyone and use “Search Again” on the Send page."
 
 #: src/shell/qml/HelpPage.qml:106
 msgid "Firewall"
@@ -994,19 +1008,10 @@ msgstr "Firewall"
 
 #: src/shell/qml/HelpPage.qml:107
 msgid ""
-"Discovery uses mDNS. The transfer port is random unless you fix one in "
-"Preferences: open that port in the firewall."
-msgstr ""
-"Discovery uses mDNS. The transfer port is random unless you fix one in "
-"Preferences: open that port in the firewall."
-
-#: src/shell/qml/IntegrationDialog.qml:11
-msgid "Add KuickShare to the menus?"
-msgstr "Add KuickShare to the menus?"
-
-#: src/shell/qml/IntegrationDialog.qml:13
-msgid "It will appear in the application menu and in Dolphin's context menu"
-msgstr "It will appear in the application menu and in Dolphin's context menu"
+"Nearby devices are found through announcements on the local network (mDNS). "
+"The transfer port is random unless you fix one in Preferences: open that "
+"port in the firewall."
+msgstr "Nearby devices are found through announcements on the local network (mDNS). The transfer port is random unless you fix one in Preferences: open that port in the firewall."
 
 #: src/shell/qml/Main.qml:28
 msgid "KuickShare"
@@ -1020,40 +1025,71 @@ msgstr "Quit KuickShare?"
 msgid "A transfer is in progress. Quitting stops it"
 msgstr "A transfer is in progress. Quitting stops it"
 
-#: src/shell/qml/Main.qml:176
+#: src/shell/qml/Main.qml:132
+msgctxt "@action:button"
+msgid "Quit"
+msgstr "Quit"
+
+#: src/shell/qml/Main.qml:137 src/shell/qml/Main.qml:572
+#: src/shell/qml/SettingsPage.qml:471 src/shell/qml/SettingsPage.qml:494
+#: src/shell/qml/SettingsPage.qml:516 src/shell/qml/TransfersPage.qml:144
+#: src/shell/qml/TransfersPage.qml:174
+msgctxt "@action:button"
+msgid "Cancel"
+msgstr "Cancel"
+
+#: src/shell/qml/Main.qml:188
 msgid "Connected to %1"
 msgstr "Connected to %1"
 
-#: src/shell/qml/Main.qml:183
+#: src/shell/qml/Main.qml:197
 msgid "Transfer completed"
 msgstr "Transfer completed"
 
-#: src/shell/qml/Main.qml:186
-msgid "The transfer failed"
-msgstr "The transfer failed"
+#: src/shell/qml/Main.qml:201
+msgid "The transfer failed. Keep both devices close and awake, then send again"
+msgstr ""
+"The transfer failed. Keep both devices close and awake, then send again"
 
-#: src/shell/qml/Main.qml:189
+#: src/shell/qml/Main.qml:204
 msgid "The transfer was declined"
 msgstr "The transfer was declined"
 
-#: src/shell/qml/Main.qml:192
+#: src/shell/qml/Main.qml:207
 msgid "The transfer was cancelled"
 msgstr "The transfer was cancelled"
 
-#: src/shell/qml/Main.qml:260 src/shell/qml/ShortcutsDialog.qml:15
-#: src/shell/qml/TransfersPage.qml:15
+#: src/shell/qml/Main.qml:268
+msgctxt "@title:tab"
+msgid "Send"
+msgstr "Send"
+
+#: src/shell/qml/Main.qml:275
+msgctxt "@title:tab"
 msgid "Transfers"
 msgstr "Transfers"
 
-#: src/shell/qml/Main.qml:278
+#: src/shell/qml/Main.qml:293
+msgctxt "@action:button"
 msgid "More"
 msgstr "More"
 
-#: src/shell/qml/Main.qml:301 src/shell/qml/ShortcutsDialog.qml:44
+#: src/shell/qml/Main.qml:316
+msgctxt "@action:inmenu"
 msgid "Shortcuts"
 msgstr "Shortcuts"
 
-#: src/shell/qml/Main.qml:450
+#: src/shell/qml/Main.qml:323
+msgctxt "@action:inmenu"
+msgid "Help"
+msgstr "Help"
+
+#: src/shell/qml/Main.qml:330
+msgctxt "@action:inmenu"
+msgid "About"
+msgstr "About"
+
+#: src/shell/qml/Main.qml:461
 msgid ""
 "The sharing service is not running. Nothing can be sent or received until it "
 "is started"
@@ -1061,33 +1097,51 @@ msgstr ""
 "The sharing service is not running. Nothing can be sent or received until it "
 "is started"
 
-#: src/shell/qml/Main.qml:453
-msgid "Start service"
-msgstr "Start service"
+#: src/shell/qml/Main.qml:464
+msgctxt "@action:button"
+msgid "Start Service"
+msgstr "Start Service"
 
-#: src/shell/qml/Main.qml:472
+#: src/shell/qml/Main.qml:476
 msgid "A new version of KuickShare is installed"
 msgstr "A new version of KuickShare is installed"
 
-#: src/shell/qml/Main.qml:475
+#: src/shell/qml/Main.qml:479
+msgctxt "@action:button"
 msgid "Restart"
 msgstr "Restart"
 
+#: src/shell/qml/Main.qml:493
+msgid ""
+"Trusted devices were removed: they were recognised only by name and network "
+"address, which another device on the same network can copy. Trust a device "
+"again from its next transfer"
+msgstr ""
+"Trusted devices were removed: they were recognised only by name and network "
+"address, which another device on the same network can copy. Trust a device "
+"again from its next transfer"
+
 #: src/shell/qml/Main.qml:496
+msgid "Got It"
+msgstr "Got It"
+
+#: src/shell/qml/Main.qml:510
 msgid ""
-"Trusted devices were removed: they were recognised only by name and network "
-"address, which another device on the same network can copy. Trust a device "
-"again from its next transfer"
+"Add KuickShare to the menus? It will appear in the application menu and in "
+"Dolphin’s context menu"
 msgstr ""
-"Trusted devices were removed: they were recognised only by name and network "
-"address, which another device on the same network can copy. Trust a device "
-"again from its next transfer"
+"Add KuickShare to the menus? It will appear in the application menu and in "
+"Dolphin’s context menu"
 
-#: src/shell/qml/Main.qml:499
-msgid "Got it"
-msgstr "Got it"
+#: src/shell/qml/Main.qml:513
+msgid "Add to Menus"
+msgstr "Add to Menus"
 
-#: src/shell/qml/Main.qml:522
+#: src/shell/qml/Main.qml:521
+msgid "Not Now"
+msgstr "Not Now"
+
+#: src/shell/qml/Main.qml:540
 msgid ""
 "No firewall service that KuickShare can open a port in was found. The "
 "transfer continues over Bluetooth, which is very slow"
@@ -1095,7 +1149,7 @@ msgstr ""
 "No firewall service that KuickShare can open a port in was found. The "
 "transfer continues over Bluetooth, which is very slow"
 
-#: src/shell/qml/Main.qml:522
+#: src/shell/qml/Main.qml:540
 msgid ""
 "The firewall did not allow the Wi-Fi link. The transfer continues over "
 "Bluetooth, which is very slow"
@@ -1103,112 +1157,146 @@ msgstr ""
 "The firewall did not allow the Wi-Fi link. The transfer continues over "
 "Bluetooth, which is very slow"
 
-#: src/shell/qml/Main.qml:525
-msgid "Allow for this session…"
-msgstr "Allow for this session…"
+#: src/shell/qml/Main.qml:543
+msgid "Allow for This Session…"
+msgstr "Allow for This Session…"
 
-#: src/shell/qml/Main.qml:534
+#: src/shell/qml/Main.qml:553
 msgid "Allow the hotspot without a firewall rule?"
 msgstr "Allow the hotspot without a firewall rule?"
 
-#: src/shell/qml/Main.qml:535
+#: src/shell/qml/Main.qml:554
 msgid ""
-"If you agree, then until KuickShare is closed, the phone that joins the "
-"hotspot can reach every service on this computer. It applies to the next "
+"If you agree, then until KuickShare is closed, the device that joins the "
+"hotspot can reach every service on this system. It applies to the next "
 "transfer, not to the one in progress"
 msgstr ""
-"If you agree, then until KuickShare is closed, the phone that joins the "
-"hotspot can reach every service on this computer. It applies to the next "
+"If you agree, then until KuickShare is closed, the device that joins the "
+"hotspot can reach every service on this system. It applies to the next "
 "transfer, not to the one in progress"
+
+#: src/shell/qml/Main.qml:560
+msgctxt "@action:button"
+msgid "Allow"
+msgstr "Allow"
 
 #: src/shell/qml/PairDialog.qml:22
-msgid "Pair a device"
-msgstr "Pair a device"
+msgctxt "@title:window"
+msgid "Pair a Device"
+msgstr "Pair a Device"
 
-#: src/shell/qml/PairDialog.qml:57
-msgid "The codes match"
-msgstr "The codes match"
+#: src/shell/qml/PairDialog.qml:60
+msgctxt "@action:button"
+msgid "Confirm Pairing"
+msgstr "Confirm Pairing"
 
-#: src/shell/qml/PairDialog.qml:66
-msgid "They differ"
-msgstr "They differ"
+#: src/shell/qml/PairDialog.qml:69
+msgctxt "@action:button"
+msgid "Reject Pairing"
+msgstr "Reject Pairing"
 
-#: src/shell/qml/PairDialog.qml:84
+#: src/shell/qml/PairDialog.qml:75
+msgctxt "@action:button"
+msgid "Try Again"
+msgstr "Try Again"
+
+#: src/shell/qml/PairDialog.qml:93
 msgid ""
-"Open Preferences → Pair a device on the other computer as well, then choose "
-"it here"
+"Open Preferences → Pair a Device on the other device as well, then choose it "
+"here"
 msgstr ""
-"Open Preferences → Pair a device on the other computer as well, then choose "
-"it here"
+"Open Preferences → Pair a Device on the other device as well, then choose it "
+"here"
 
-#: src/shell/qml/PairDialog.qml:112
+#: src/shell/qml/PairDialog.qml:121
 msgid "Already paired"
 msgstr "Already paired"
 
-#: src/shell/qml/PairDialog.qml:112
-msgid "Waiting for the other computer"
-msgstr "Waiting for the other computer"
+#: src/shell/qml/PairDialog.qml:121
+msgid "Waiting for the other device"
+msgstr "Waiting for the other device"
 
-#: src/shell/qml/PairDialog.qml:133
-msgid "Looking for computers running KuickShare…"
-msgstr "Looking for computers running KuickShare…"
+#: src/shell/qml/PairDialog.qml:144
+msgid "Looking for devices running KuickShare…"
+msgstr "Looking for devices running KuickShare…"
 
-#: src/shell/qml/PairDialog.qml:147
+#: src/shell/qml/PairDialog.qml:158
 msgid "Waiting for %1…"
 msgstr "Waiting for %1…"
 
-#: src/shell/qml/PairDialog.qml:147
+#: src/shell/qml/PairDialog.qml:158
 msgid "Waiting…"
 msgstr "Waiting…"
 
-#: src/shell/qml/PairDialog.qml:161
+#: src/shell/qml/PairDialog.qml:172
 msgid "Check that %1 shows exactly this code:"
 msgstr "Check that %1 shows exactly this code:"
 
-#: src/shell/qml/PairDialog.qml:179
+#: src/shell/qml/PairDialog.qml:190
 msgid "Paired with %1"
 msgstr "Paired with %1"
 
-#: src/shell/qml/PairDialog.qml:180
-msgid "Transfers between these computers are accepted without asking."
-msgstr "Transfers between these computers are accepted without asking."
+#: src/shell/qml/PairDialog.qml:191
+msgid "Transfers between these devices are accepted without asking."
+msgstr "Transfers between these devices are accepted without asking."
 
-#: src/shell/qml/PairDialog.qml:186
+#: src/shell/qml/PairDialog.qml:197
 msgid "Pairing did not complete"
 msgstr "Pairing did not complete"
 
-#: src/shell/qml/SendPage.qml:142 src/shell/qml/SettingsPage.qml:257
-#: src/shell/qml/SettingsPage.qml:307
-msgid "Remove"
-msgstr "Remove"
+#: src/shell/qml/SendPage.qml:39
+msgctxt "@title"
+msgid "Send"
+msgstr "Send"
 
-#: src/shell/qml/SendPage.qml:190 src/shell/qml/ShortcutsDialog.qml:21
-msgid "Choose files to send"
-msgstr "Choose files to send"
+#: src/shell/qml/SendPage.qml:143
+msgctxt "@action:button %1 is a file name"
+msgid "Remove %1"
+msgstr "Remove %1"
 
-#: src/shell/qml/SendPage.qml:224
+#: src/shell/qml/SendPage.qml:145
+msgctxt "@info:tooltip"
+msgid "Remove from the list of files to send"
+msgstr "Remove from the list of files to send"
+
+#: src/shell/qml/SendPage.qml:153
+msgid "Files to Send"
+msgstr "Files to Send"
+
+#: src/shell/qml/SendPage.qml:193 src/shell/qml/ShortcutsDialog.qml:21
+msgid "Choose Files to Send"
+msgstr "Choose Files to Send"
+
+#: src/shell/qml/SendPage.qml:227
+msgctxt "@info:status"
 msgid "Starting…"
 msgstr "Starting…"
 
-#: src/shell/qml/SendPage.qml:224
+#: src/shell/qml/SendPage.qml:227
+msgctxt "@info:status"
 msgid "Hidden"
 msgstr "Hidden"
 
-#: src/shell/qml/SendPage.qml:224
+#: src/shell/qml/SendPage.qml:227
 msgid "Do Not Disturb"
 msgstr "Do Not Disturb"
 
-#: src/shell/qml/SendPage.qml:229
+#: src/shell/qml/SendPage.qml:227
+msgctxt "@info:status"
+msgid "Ready"
+msgstr "Ready"
+
+#: src/shell/qml/SendPage.qml:232
 msgid "Turn on visibility in Preferences to receive files"
 msgstr "Turn on visibility in Preferences to receive files"
 
-#: src/shell/qml/SendPage.qml:229
+#: src/shell/qml/SendPage.qml:232
 msgid "Hidden until Do Not Disturb ends"
 msgstr "Hidden until Do Not Disturb ends"
 
-#: src/shell/qml/SendPage.qml:229
-msgid "Visible as \"%1\""
-msgstr "Visible as \"%1\""
+#: src/shell/qml/SendPage.qml:232
+msgid "Visible as “%1”"
+msgstr "Visible as “%1”"
 
 #: src/shell/qml/SendPage.qml:263
 msgid "Drop to share"
@@ -1218,145 +1306,176 @@ msgstr "Drop to share"
 msgid "Drop files here"
 msgstr "Drop files here"
 
-#: src/shell/qml/SendPage.qml:268
-msgid "or click to choose them"
-msgstr "or click to choose them"
+#: src/shell/qml/SendPage.qml:264
+msgid "Or click to choose them"
+msgstr "Or click to choose them"
 
-#: src/shell/qml/SendPage.qml:275
-msgid "Paste from clipboard"
-msgstr "Paste from clipboard"
+#: src/shell/qml/SendPage.qml:267 src/shell/qml/ShortcutsDialog.qml:22
+msgid "Paste from Clipboard"
+msgstr "Paste from Clipboard"
 
-#: src/shell/qml/SendPage.qml:290 src/shell/qml/TransfersPage.qml:405
+#: src/shell/qml/SendPage.qml:281 src/shell/qml/TransfersPage.qml:435
 #: src/shell/transferwatcher.cpp:103 src/shell/transferwatcher.cpp:202
 msgid "%1 file"
 msgid_plural "%1 files"
 msgstr[0] "%1 file"
 msgstr[1] "%1 files"
 
-#: src/shell/qml/SendPage.qml:299
+#: src/shell/qml/SendPage.qml:290
+msgctxt "@action:button add files to the list to send"
 msgid "Add"
 msgstr "Add"
 
-#: src/shell/qml/SendPage.qml:304 src/shell/qml/SendPage.qml:360
+#: src/shell/qml/SendPage.qml:295
+msgctxt "@action:button remove all files from the list to send"
 msgid "Clear"
 msgstr "Clear"
 
-#: src/shell/qml/SendPage.qml:323
-msgid "Show all %1 file"
-msgid_plural "Show all %1 files"
-msgstr[0] "Show all %1 files"
-msgstr[1] "Show all %1 files"
+#: src/shell/qml/SendPage.qml:314
+msgid "Show All %1 File"
+msgid_plural "Show All %1 Files"
+msgstr[0] "Show All %1 File"
+msgstr[1] "Show All %1 Files"
 
-#: src/shell/qml/SendPage.qml:347
-msgid "Text or link"
-msgstr "Text or link"
+#: src/shell/qml/SendPage.qml:338
+msgid "Text or Link"
+msgstr "Text or Link"
 
-#: src/shell/qml/SendPage.qml:366
+#: src/shell/qml/SendPage.qml:351
+msgctxt "@action:button empty the text box"
+msgid "Clear"
+msgstr "Clear"
+
+#: src/shell/qml/SendPage.qml:357
+msgctxt "@action:button paste text from the clipboard"
 msgid "Paste"
 msgstr "Paste"
 
-#: src/shell/qml/SendPage.qml:394
-msgid "Type or paste something to send…"
-msgstr "Type or paste something to send…"
+#: src/shell/qml/SendPage.qml:385
+msgid "Type or paste something to send"
+msgstr "Type or paste something to send"
 
-#: src/shell/qml/SendPage.qml:429
-msgid "A string can only be sent as a link when it is the only content"
-msgstr "A string can only be sent as a link when it is the only content"
-
-#: src/shell/qml/SendPage.qml:429
-msgid "No valid link"
-msgstr "No valid link"
-
-#: src/shell/qml/SendPage.qml:435
+#: src/shell/qml/SendPage.qml:416
 msgid "Send as text"
 msgstr "Send as text"
 
-#: src/shell/qml/SendPage.qml:468
+#: src/shell/qml/SendPage.qml:425
+msgid "A string can only be sent as a link when it is the only content"
+msgstr "A string can only be sent as a link when it is the only content"
+
+#: src/shell/qml/SendPage.qml:425
+msgid "No valid link"
+msgstr "No valid link"
+
+#: src/shell/qml/SendPage.qml:434
+msgctxt ""
+"@info:status characters typed out of the most allowed, %1 and %2 are numbers"
+msgid "%1/%2"
+msgstr "%1/%2"
+
+#: src/shell/qml/SendPage.qml:454
 msgid "Send to"
 msgstr "Send to"
 
-#: src/shell/qml/SendPage.qml:477
-msgid "Search again"
-msgstr "Search again"
+#: src/shell/qml/SendPage.qml:463
+msgid "Search Again"
+msgstr "Search Again"
 
-#: src/shell/qml/SendPage.qml:480
-msgid "Search for nearby phones over Bluetooth again"
-msgstr "Search for nearby phones over Bluetooth again"
+#: src/shell/qml/SendPage.qml:466
+msgid "Search for nearby devices over Bluetooth again"
+msgstr "Search for nearby devices over Bluetooth again"
 
-#: src/shell/qml/SendPage.qml:501
+#: src/shell/qml/SendPage.qml:483
 msgid "Looking for nearby devices…"
 msgstr "Looking for nearby devices…"
 
-#: src/shell/qml/SendPage.qml:523
+#: src/shell/qml/SendPage.qml:501
 msgid "Choose or drop something to send, then pick a device"
 msgstr "Choose or drop something to send, then pick a device"
 
-#: src/shell/qml/SendPage.qml:571
+#: src/shell/qml/SendPage.qml:549
 msgid "Bluetooth device"
 msgstr "Bluetooth device"
 
-#: src/shell/qml/SendPage.qml:584
+#: src/shell/qml/SendPage.qml:562
 msgid "Bluetooth"
 msgstr "Bluetooth"
 
-#: src/shell/qml/SendPage.qml:597
+#: src/shell/qml/SendPage.qml:575
 msgid "Paired"
 msgstr "Paired"
 
-#: src/shell/qml/SettingsPage.qml:31
-msgid "Choose the download folder"
-msgstr "Choose the download folder"
+#: src/shell/qml/SettingsPage.qml:16
+msgctxt "@title"
+msgid "Preferences"
+msgstr "Preferences"
 
-#: src/shell/qml/SettingsPage.qml:74
+#: src/shell/qml/SettingsPage.qml:35
+msgctxt "@title:window"
+msgid "Choose Download Folder"
+msgstr "Choose Download Folder"
+
+#: src/shell/qml/SettingsPage.qml:78
+msgctxt "@title:group"
 msgid "Visibility"
 msgstr "Visibility"
 
-#: src/shell/qml/SettingsPage.qml:81
+#: src/shell/qml/SettingsPage.qml:85
+msgctxt "@label:textbox"
 msgid "Device name"
 msgstr "Device name"
 
-#: src/shell/qml/SettingsPage.qml:89
-msgid "Others can find this computer and send to it"
-msgstr "Others can find this computer and send to it"
+#: src/shell/qml/SettingsPage.qml:92
+msgid "Visible to nearby devices"
+msgstr "Visible to nearby devices"
 
-#: src/shell/qml/SettingsPage.qml:96
+#: src/shell/qml/SettingsPage.qml:93
+msgid "Others can find this system and send to it"
+msgstr "Others can find this system and send to it"
+
+#: src/shell/qml/SettingsPage.qml:100
+msgctxt "@option:check"
 msgid "Hide during Do Not Disturb"
 msgstr "Hide during Do Not Disturb"
 
-#: src/shell/qml/SettingsPage.qml:97
-msgid "Not visible while Do Not Disturb is on"
-msgstr "Not visible while Do Not Disturb is on"
+#: src/shell/qml/SettingsPage.qml:101
+msgid "Nearby devices stop seeing this system while Do Not Disturb is on"
+msgstr "Nearby devices stop seeing this system while Do Not Disturb is on"
 
-#: src/shell/qml/SettingsPage.qml:105
-#: src/shell/qml/WifiRequirementsDialog.qml:25
+#: src/shell/qml/SettingsPage.qml:109
+msgctxt "@title:group"
 msgid "Receiving"
 msgstr "Receiving"
 
-#: src/shell/qml/SettingsPage.qml:111
-msgid "Download folder"
-msgstr "Download folder"
+#: src/shell/qml/SettingsPage.qml:115
+msgctxt "@action:button"
+msgid "Choose Download Folder…"
+msgstr "Choose Download Folder…"
 
-#: src/shell/qml/SettingsPage.qml:112
+#: src/shell/qml/SettingsPage.qml:116
 msgid "Default (Downloads)"
 msgstr "Default (Downloads)"
 
-#: src/shell/qml/SettingsPage.qml:119
-msgid "Use the default folder"
-msgstr "Use the default folder"
+#: src/shell/qml/SettingsPage.qml:123
+msgctxt "@action:button"
+msgid "Use the Default Folder"
+msgstr "Use the Default Folder"
 
-#: src/shell/qml/SettingsPage.qml:125
-msgid "Random port"
-msgstr "Random port"
+#: src/shell/qml/SettingsPage.qml:129
+msgctxt "@option:check"
+msgid "Use a random port"
+msgstr "Use a random port"
 
-#: src/shell/qml/SettingsPage.qml:126
+#: src/shell/qml/SettingsPage.qml:130
 msgid "A different port at every start"
 msgstr "A different port at every start"
 
-#: src/shell/qml/SettingsPage.qml:139
+#: src/shell/qml/SettingsPage.qml:143
+msgctxt "@label:spinbox"
 msgid "Fixed port"
 msgstr "Fixed port"
 
-#: src/shell/qml/SettingsPage.qml:156
+#: src/shell/qml/SettingsPage.qml:160
 msgid ""
 "A fixed port (1024–65535) can be opened in the firewall. Changing the name "
 "or the port restarts sharing."
@@ -1364,118 +1483,143 @@ msgstr ""
 "A fixed port (1024–65535) can be opened in the firewall. Changing the name "
 "or the port restarts sharing."
 
-#: src/shell/qml/SettingsPage.qml:160
+#: src/shell/qml/SettingsPage.qml:164
+msgctxt "@title:group"
 msgid "Wi-Fi Direct"
 msgstr "Wi-Fi Direct"
 
-#: src/shell/qml/SettingsPage.qml:177
+#: src/shell/qml/SettingsPage.qml:181
+msgctxt "@option:check"
 msgid "Receive and send without a shared network"
 msgstr "Receive and send without a shared network"
 
-#: src/shell/qml/SettingsPage.qml:178
+#: src/shell/qml/SettingsPage.qml:182
 msgid "Be found over Bluetooth and move the transfer to a temporary Wi-Fi link"
 msgstr ""
 "Be found over Bluetooth and move the transfer to a temporary Wi-Fi link"
 
-#: src/shell/qml/SettingsPage.qml:196
-msgid "Check system requirements…"
-msgstr "Check system requirements…"
-
 #: src/shell/qml/SettingsPage.qml:200
-#: src/shell/qml/WifiRequirementsDialog.qml:253
+msgctxt "@action:button"
+msgid "Check System Requirements…"
+msgstr "Check System Requirements…"
+
+#: src/shell/qml/SettingsPage.qml:204
+#: src/shell/qml/WifiRequirementsDialog.qml:254
 msgid "KuickShare service unavailable"
 msgstr "KuickShare service unavailable"
 
-#: src/shell/qml/SettingsPage.qml:203
-#: src/shell/qml/WifiRequirementsDialog.qml:256
+#: src/shell/qml/SettingsPage.qml:207
+#: src/shell/qml/WifiRequirementsDialog.qml:257
 msgid "The result could not be read. Refresh to try again"
 msgstr "The result could not be read. Refresh to try again"
 
-#: src/shell/qml/SettingsPage.qml:206
-msgid "See what this computer needs for Wi-Fi Direct"
-msgstr "See what this computer needs for Wi-Fi Direct"
+#: src/shell/qml/SettingsPage.qml:210
+msgid "See what this system needs for Wi-Fi Direct"
+msgstr "See what this system needs for Wi-Fi Direct"
 
-#: src/shell/qml/SettingsPage.qml:209
-msgid "Neither sending nor receiving can work on this computer"
-msgstr "Neither sending nor receiving can work on this computer"
+#: src/shell/qml/SettingsPage.qml:213
+msgid "Neither sending nor receiving can work on this system"
+msgstr "Neither sending nor receiving can work on this system"
 
-#: src/shell/qml/SettingsPage.qml:214
-msgid "Only sending works on this computer"
-msgstr "Only sending works on this computer"
-
-#: src/shell/qml/SettingsPage.qml:217
-msgid "Only receiving works on this computer"
-msgstr "Only receiving works on this computer"
+#: src/shell/qml/SettingsPage.qml:218
+msgid "Only sending works on this system"
+msgstr "Only sending works on this system"
 
 #: src/shell/qml/SettingsPage.qml:221
-msgid "Everything Wi-Fi Direct needs is available"
-msgstr "Everything Wi-Fi Direct needs is available"
+msgid "Only receiving works on this system"
+msgstr "Only receiving works on this system"
 
-#: src/shell/qml/SettingsPage.qml:224
+#: src/shell/qml/SettingsPage.qml:227 src/shell/qml/SettingsPage.qml:232
 msgid "Some items could not be checked"
 msgstr "Some items could not be checked"
 
-#: src/shell/qml/SettingsPage.qml:226
+#: src/shell/qml/SettingsPage.qml:229
+msgid "Everything Wi-Fi Direct needs is available"
+msgstr "Everything Wi-Fi Direct needs is available"
+
+#: src/shell/qml/SettingsPage.qml:234
 msgid "Some items need attention"
 msgstr "Some items need attention"
 
-#: src/shell/qml/SettingsPage.qml:234
+#: src/shell/qml/SettingsPage.qml:242
 msgid ""
 "Experimental. Needs NetworkManager, its dnsmasq package and Bluetooth. While "
-"on, this computer is visible over Bluetooth to devices in range, and its Wi-"
-"Fi connection may drop while the temporary Wi-Fi link is active. See the "
-"documentation"
+"on, this system is visible over Bluetooth to devices in range, and its Wi-Fi "
+"connection may drop while the temporary Wi-Fi link is active"
 msgstr ""
 "Experimental. Needs NetworkManager, its dnsmasq package and Bluetooth. While "
-"on, this computer is visible over Bluetooth to devices in range, and its Wi-"
-"Fi connection may drop while the temporary Wi-Fi link is active. See the "
-"documentation"
+"on, this system is visible over Bluetooth to devices in range, and its Wi-Fi "
+"connection may drop while the temporary Wi-Fi link is active"
 
-#: src/shell/qml/SettingsPage.qml:240
-msgid "Paired devices"
-msgstr "Paired devices"
+#: src/shell/qml/SettingsPage.qml:249
+msgctxt "@label link to the documentation"
+msgid "Wi-Fi Direct documentation"
+msgstr "Wi-Fi Direct documentation"
 
-#: src/shell/qml/SettingsPage.qml:253
-msgid "Fingerprint %1"
-msgstr "Fingerprint %1"
-
-#: src/shell/qml/SettingsPage.qml:264
-msgid "No paired computers yet"
-msgstr "No paired computers yet"
-
-#: src/shell/qml/SettingsPage.qml:265
-msgid "Paired computers can send to each other without asking"
-msgstr "Paired computers can send to each other without asking"
+#: src/shell/qml/SettingsPage.qml:256
+msgctxt "@title:group"
+msgid "Paired Devices"
+msgstr "Paired Devices"
 
 #: src/shell/qml/SettingsPage.qml:269
-msgid "Pair a device…"
-msgstr "Pair a device…"
+msgctxt "@info %1 is a shortened identifier of the device"
+msgid "Device identifier: %1"
+msgstr "Device identifier: %1"
 
-#: src/shell/qml/SettingsPage.qml:276
-msgid "Pairing works only between computers on the same local network"
-msgstr "Pairing works only between computers on the same local network"
+#: src/shell/qml/SettingsPage.qml:273
+msgctxt "@action:button %1 is a device name"
+msgid "Unpair %1"
+msgstr "Unpair %1"
 
-#: src/shell/qml/SettingsPage.qml:288
+#: src/shell/qml/SettingsPage.qml:284
+msgid "No paired devices yet"
+msgstr "No paired devices yet"
+
+#: src/shell/qml/SettingsPage.qml:285
+msgid "Paired devices can send to each other without asking"
+msgstr "Paired devices can send to each other without asking"
+
+#: src/shell/qml/SettingsPage.qml:289
+msgctxt "@action:button"
+msgid "Pair a Device…"
+msgstr "Pair a Device…"
+
+#: src/shell/qml/SettingsPage.qml:296
+msgid "Pairing works only between devices on the same local network"
+msgstr "Pairing works only between devices on the same local network"
+
+#: src/shell/qml/SettingsPage.qml:302
+msgctxt "@title:group"
+msgid "Trusted Devices"
+msgstr "Trusted Devices"
+
+#: src/shell/qml/SettingsPage.qml:308
 msgid "Trust devices"
 msgstr "Trust devices"
 
-#: src/shell/qml/SettingsPage.qml:289
+#: src/shell/qml/SettingsPage.qml:309
 msgid "Accept transfers from trusted devices without asking"
 msgstr "Accept transfers from trusted devices without asking"
 
-#: src/shell/qml/SettingsPage.qml:303
-msgid "MAC address %1"
-msgstr "MAC address %1"
+#: src/shell/qml/SettingsPage.qml:323
+msgctxt "@info %1 is the hardware address of the network adapter (MAC address)"
+msgid "Hardware address: %1"
+msgstr "Hardware address: %1"
 
-#: src/shell/qml/SettingsPage.qml:314
+#: src/shell/qml/SettingsPage.qml:327
+msgctxt "@action:button %1 is a device name"
+msgid "Remove %1"
+msgstr "Remove %1"
+
+#: src/shell/qml/SettingsPage.qml:334
 msgid "No devices yet"
 msgstr "No devices yet"
 
-#: src/shell/qml/SettingsPage.qml:315
-msgid "Use “Accept and trust” on an incoming transfer notification to add one"
-msgstr "Use “Accept and trust” on an incoming transfer notification to add one"
+#: src/shell/qml/SettingsPage.qml:335
+msgid "Use “Accept and Trust” on an incoming transfer notification to add one"
+msgstr "Use “Accept and Trust” on an incoming transfer notification to add one"
 
-#: src/shell/qml/SettingsPage.qml:322
+#: src/shell/qml/SettingsPage.qml:342
 msgid ""
 "Devices are recognised by name and network address, which another device on "
 "the same network can copy: it would be accepted without asking too. Use only "
@@ -1485,43 +1629,45 @@ msgstr ""
 "the same network can copy: it would be accepted without asking too. Use only "
 "on a network where you trust every device"
 
-#: src/shell/qml/SettingsPage.qml:328
+#: src/shell/qml/SettingsPage.qml:348
+msgctxt "@title:group"
 msgid "History"
 msgstr "History"
 
-#: src/shell/qml/SettingsPage.qml:334
+#: src/shell/qml/SettingsPage.qml:354
 msgid "Save transfer history"
 msgstr "Save transfer history"
 
-#: src/shell/qml/SettingsPage.qml:335
+#: src/shell/qml/SettingsPage.qml:355
 msgid "Keep a list of sent and received transfers"
 msgstr "Keep a list of sent and received transfers"
 
-#: src/shell/qml/SettingsPage.qml:357
+#: src/shell/qml/SettingsPage.qml:377
 msgid "Delete entries after"
 msgstr "Delete entries after"
 
-#: src/shell/qml/SettingsPage.qml:365
+#: src/shell/qml/SettingsPage.qml:385
+msgctxt "@item:inlistbox delete entries after"
 msgid "Never"
 msgstr "Never"
 
-#: src/shell/qml/SettingsPage.qml:365
+#: src/shell/qml/SettingsPage.qml:385
 msgid "1 day"
 msgstr "1 day"
 
-#: src/shell/qml/SettingsPage.qml:365
+#: src/shell/qml/SettingsPage.qml:385
 msgid "7 days"
 msgstr "7 days"
 
-#: src/shell/qml/SettingsPage.qml:365
+#: src/shell/qml/SettingsPage.qml:385
 msgid "30 days"
 msgstr "30 days"
 
-#: src/shell/qml/SettingsPage.qml:365
+#: src/shell/qml/SettingsPage.qml:385
 msgid "90 days"
 msgstr "90 days"
 
-#: src/shell/qml/SettingsPage.qml:374
+#: src/shell/qml/SettingsPage.qml:394
 msgid ""
 "With the history turned off nothing is saved. Entries already saved stay "
 "until they expire or you clear them."
@@ -1529,75 +1675,105 @@ msgstr ""
 "With the history turned off nothing is saved. Entries already saved stay "
 "until they expire or you clear them."
 
-#: src/shell/qml/SettingsPage.qml:378
+#: src/shell/qml/SettingsPage.qml:398
+msgctxt "@title:group"
 msgid "Startup"
 msgstr "Startup"
 
-#: src/shell/qml/SettingsPage.qml:384
+#: src/shell/qml/SettingsPage.qml:404
 msgid "Start at login"
 msgstr "Start at login"
 
-#: src/shell/qml/SettingsPage.qml:385
+#: src/shell/qml/SettingsPage.qml:405
 msgid "Starts hidden, in the system tray if it is shown"
 msgstr "Starts hidden, in the system tray if it is shown"
 
-#: src/shell/qml/SettingsPage.qml:391
+#: src/shell/qml/SettingsPage.qml:411
+msgctxt "@title:group"
 msgid "Integration"
 msgstr "Integration"
 
-#: src/shell/qml/SettingsPage.qml:397
-msgid "Show tray icon"
-msgstr "Show tray icon"
+#: src/shell/qml/SettingsPage.qml:417
+msgid "Keep running in the background"
+msgstr "Keep running in the background"
 
-#: src/shell/qml/SettingsPage.qml:398
-msgid "Keep KuickShare in the system tray"
-msgstr "Keep KuickShare in the system tray"
+#: src/shell/qml/SettingsPage.qml:418
+msgid ""
+"Closing the window leaves KuickShare in the system tray, ready to receive. "
+"Its icon stands out during a transfer or a request"
+msgstr ""
+"Closing the window leaves KuickShare in the system tray, ready to receive. "
+"Its icon stands out during a transfer or a request"
 
-#: src/shell/qml/SettingsPage.qml:405
-msgid "Dolphin context menu"
-msgstr "Dolphin context menu"
+#: src/shell/qml/SettingsPage.qml:425
+msgctxt "@option:check"
+msgid "Show in Dolphin’s context menu"
+msgstr "Show in Dolphin’s context menu"
 
-#: src/shell/qml/SettingsPage.qml:406
-msgid "Add “Send with KuickShare” to the menu of files"
-msgstr "Add “Send with KuickShare” to the menu of files"
+#: src/shell/qml/SettingsPage.qml:426
+msgid "Add “Send With KuickShare” to the menu of files"
+msgstr "Add “Send With KuickShare” to the menu of files"
 
-#: src/shell/qml/SettingsPage.qml:414
-msgid "Application menu entry"
-msgstr "Application menu entry"
+#: src/shell/qml/SettingsPage.qml:434
+msgctxt "@option:check"
+msgid "Show in the application menu"
+msgstr "Show in the application menu"
 
-#: src/shell/qml/SettingsPage.qml:415
+#: src/shell/qml/SettingsPage.qml:435
 msgid "Add KuickShare to the application menu"
 msgstr "Add KuickShare to the application menu"
 
-#: src/shell/qml/SettingsPage.qml:423
+#: src/shell/qml/SettingsPage.qml:443
 msgid ""
-"Without the tray icon, closing the window quits KuickShare, and nothing can "
-"be received until you open it again. At login it starts hidden: open "
+"Closing the window quits KuickShare, and nothing can be received until you "
+"open it again. At login it starts hidden, without a tray icon: open "
 "KuickShare again to show the window"
 msgstr ""
-"Without the tray icon, closing the window quits KuickShare, and nothing can "
-"be received until you open it again. At login it starts hidden: open "
+"Closing the window quits KuickShare, and nothing can be received until you "
+"open it again. At login it starts hidden, without a tray icon: open "
 "KuickShare again to show the window"
 
-#: src/shell/qml/SettingsPage.qml:436
+#: src/shell/qml/SettingsPage.qml:456
 msgid "Turn on without a firewall?"
 msgstr "Turn on without a firewall?"
 
-#: src/shell/qml/SettingsPage.qml:437
+#: src/shell/qml/SettingsPage.qml:457
 msgid ""
 "firewalld is not running, so the firewall cannot be opened for a single "
-"port. If you agree, then until KuickShare is closed, the phone that joins "
-"the hotspot can reach every service on this computer"
+"port. If you agree, then until KuickShare is closed, the device that joins "
+"the hotspot can reach every service on this system"
 msgstr ""
 "firewalld is not running, so the firewall cannot be opened for a single "
-"port. If you agree, then until KuickShare is closed, the phone that joins "
-"the hotspot can reach every service on this computer"
+"port. If you agree, then until KuickShare is closed, the device that joins "
+"the hotspot can reach every service on this system"
 
-#: src/shell/qml/SettingsPage.qml:446
+#: src/shell/qml/SettingsPage.qml:463
+msgctxt "@action:button"
+msgid "Turn On"
+msgstr "Turn On"
+
+#: src/shell/qml/SettingsPage.qml:481
+msgid "Unpair %1?"
+msgstr "Unpair %1?"
+
+#: src/shell/qml/SettingsPage.qml:482
+msgid ""
+"Transfers from this device will no longer be accepted without asking. Pair "
+"the devices again to undo this"
+msgstr ""
+"Transfers from this device will no longer be accepted without asking. Pair "
+"the devices again to undo this"
+
+#: src/shell/qml/SettingsPage.qml:486
+msgctxt "@action:button"
+msgid "Unpair"
+msgstr "Unpair"
+
+#: src/shell/qml/SettingsPage.qml:502
 msgid "Reset preferences?"
 msgstr "Reset preferences?"
 
-#: src/shell/qml/SettingsPage.qml:447
+#: src/shell/qml/SettingsPage.qml:503
 msgid ""
 "Every setting goes back to its default. The history and the paired and "
 "trusted devices are kept"
@@ -1605,56 +1781,101 @@ msgstr ""
 "Every setting goes back to its default. The history and the paired and "
 "trusted devices are kept"
 
-#: src/shell/qml/SettingsPage.qml:453
+#: src/shell/qml/SettingsPage.qml:508
+msgctxt "@action:button"
 msgid "Reset"
 msgstr "Reset"
 
-#: src/shell/qml/SettingsPage.qml:459
-msgid "Reset preferences…"
-msgstr "Reset preferences…"
+#: src/shell/qml/SettingsPage.qml:524
+msgctxt "@title:group"
+msgid "Reset"
+msgstr "Reset"
 
-#: src/shell/qml/SettingsPage.qml:460
+#: src/shell/qml/SettingsPage.qml:530
+msgctxt "@action:button"
+msgid "Reset Preferences…"
+msgstr "Reset Preferences…"
+
+#: src/shell/qml/SettingsPage.qml:531
 msgid "Go back to the default preferences"
 msgstr "Go back to the default preferences"
 
-#: src/shell/qml/ShortcutsDialog.qml:16 src/shell/qml/TransfersPage.qml:39
-#: src/shell/qml/TransfersPage.qml:40
-msgid "Search transfers"
-msgstr "Search transfers"
+#: src/shell/qml/ShortcutsDialog.qml:14
+msgctxt "@item:intable shortcut action"
+msgid "Send"
+msgstr "Send"
+
+#: src/shell/qml/ShortcutsDialog.qml:15
+msgctxt "@item:intable shortcut action"
+msgid "Transfers"
+msgstr "Transfers"
+
+#: src/shell/qml/ShortcutsDialog.qml:16
+msgid "Search Transfers"
+msgstr "Search Transfers"
+
+#: src/shell/qml/ShortcutsDialog.qml:17
+msgctxt "@item:intable shortcut action"
+msgid "Preferences"
+msgstr "Preferences"
+
+#: src/shell/qml/ShortcutsDialog.qml:18 src/shell/qml/ShortcutsDialog.qml:19
+msgctxt "@item:intable shortcut action"
+msgid "Help"
+msgstr "Help"
 
 #: src/shell/qml/ShortcutsDialog.qml:20
-msgid "Show the shortcuts"
-msgstr "Show the shortcuts"
-
-#: src/shell/qml/ShortcutsDialog.qml:22
-msgid "Paste files, an image or text from the clipboard"
-msgstr "Paste files, an image or text from the clipboard"
+msgid "Show Shortcuts"
+msgstr "Show Shortcuts"
 
 #: src/shell/qml/ShortcutsDialog.qml:23
-msgid "Clear files and text"
-msgstr "Clear files and text"
+msgid "Clear Files and Text"
+msgstr "Clear Files and Text"
 
 #: src/shell/qml/ShortcutsDialog.qml:24
-msgid "Close the window"
-msgstr "Close the window"
+msgid "Close Window"
+msgstr "Close Window"
 
 #: src/shell/qml/ShortcutsDialog.qml:25
 msgid "Quit KuickShare"
 msgstr "Quit KuickShare"
 
-#: src/shell/qml/TransfersPage.qml:49 src/shell/qml/TransfersPage.qml:452
-msgid "Clear history"
-msgstr "Clear history"
+#: src/shell/qml/ShortcutsDialog.qml:44
+msgid "Shortcuts"
+msgstr "Shortcuts"
+
+#: src/shell/qml/ToastStack.qml:140
+msgid "Show Details"
+msgstr "Show Details"
+
+#: src/shell/qml/ToastStack.qml:150
+msgctxt "@action:button"
+msgid "Copy"
+msgstr "Copy"
+
+#: src/shell/qml/TransfersPage.qml:15
+msgid "Transfers"
+msgstr "Transfers"
+
+#: src/shell/qml/TransfersPage.qml:39 src/shell/qml/TransfersPage.qml:40
+msgid "Search transfers"
+msgstr "Search transfers"
+
+#: src/shell/qml/TransfersPage.qml:49 src/shell/qml/TransfersPage.qml:482
+msgid "Clear History"
+msgstr "Clear History"
 
 #: src/shell/qml/TransfersPage.qml:68
 msgid "All transfers"
 msgstr "All transfers"
 
-#: src/shell/qml/TransfersPage.qml:69 src/shell/qml/TransfersPage.qml:390
+#: src/shell/qml/TransfersPage.qml:69
+msgctxt "@item:inlistbox filter for transfers received"
 msgid "Received"
 msgstr "Received"
 
-#: src/shell/qml/TransfersPage.qml:70 src/shell/qml/TransfersPage.qml:390
+#: src/shell/qml/TransfersPage.qml:70
+msgctxt "@item:inlistbox filter for transfers sent"
 msgid "Sent"
 msgstr "Sent"
 
@@ -1683,8 +1904,8 @@ msgid "Filter by status"
 msgstr "Filter by status"
 
 #: src/shell/qml/TransfersPage.qml:114
-msgid "Reset filters"
-msgstr "Reset filters"
+msgid "Reset Filters"
+msgstr "Reset Filters"
 
 #: src/shell/qml/TransfersPage.qml:130
 msgid "Clear history?"
@@ -1702,123 +1923,147 @@ msgstr ""
 msgid "Files you received are not touched"
 msgstr "Files you received are not touched"
 
-#: src/shell/qml/TransfersPage.qml:145
+#: src/shell/qml/TransfersPage.qml:136
+msgctxt "@action:button"
+msgid "Clear History"
+msgstr "Clear History"
+
+#: src/shell/qml/TransfersPage.qml:160
 msgid "Join this network?"
 msgstr "Join this network?"
 
-#: src/shell/qml/TransfersPage.qml:146
+#: src/shell/qml/TransfersPage.qml:161
 msgid ""
-"Connect this computer to “%1” and save it, so it connects again by itself. "
-"The current Wi-Fi connection is replaced"
+"Connect this system to “%1” and save it, so it connects again by itself. The "
+"current Wi-Fi connection is replaced"
 msgstr ""
-"Connect this computer to “%1” and save it, so it connects again by itself. "
-"The current Wi-Fi connection is replaced"
+"Connect this system to “%1” and save it, so it connects again by itself. The "
+"current Wi-Fi connection is replaced"
 
-#: src/shell/qml/TransfersPage.qml:204
-msgid "Transfer details"
-msgstr "Transfer details"
+#: src/shell/qml/TransfersPage.qml:166
+msgctxt "@action:button"
+msgid "Join Network"
+msgstr "Join Network"
 
-#: src/shell/qml/TransfersPage.qml:227
+#: src/shell/qml/TransfersPage.qml:234
+msgid "Transfer Details"
+msgstr "Transfer Details"
+
+#: src/shell/qml/TransfersPage.qml:257
 msgid "Result"
 msgstr "Result"
 
-#: src/shell/qml/TransfersPage.qml:227
+#: src/shell/qml/TransfersPage.qml:257
 msgid "Size"
 msgstr "Size"
 
-#: src/shell/qml/TransfersPage.qml:253 src/shell/transferwatcher.cpp:319
-msgid "Open link"
-msgstr "Open link"
+#: src/shell/qml/TransfersPage.qml:283
+msgid "Open Link"
+msgstr "Open Link"
 
-#: src/shell/qml/TransfersPage.qml:260 src/shell/qml/TransfersPage.qml:793
+#: src/shell/qml/TransfersPage.qml:290 src/shell/qml/TransfersPage.qml:861
+msgctxt "@action:button copy the text to the clipboard"
 msgid "Copy"
 msgstr "Copy"
 
-#: src/shell/qml/TransfersPage.qml:265 src/shell/qml/TransfersPage.qml:797
+#: src/shell/qml/TransfersPage.qml:295 src/shell/qml/TransfersPage.qml:865
 msgid "Copied to clipboard"
 msgstr "Copied to clipboard"
 
-#: src/shell/qml/TransfersPage.qml:302 src/shell/qml/TransfersPage.qml:335
+#: src/shell/qml/TransfersPage.qml:332 src/shell/qml/TransfersPage.qml:365
+msgctxt "@action:button open a received file"
 msgid "Open"
 msgstr "Open"
 
-#: src/shell/qml/TransfersPage.qml:379 src/shell/transferwatcher.cpp:104
+#: src/shell/qml/TransfersPage.qml:409 src/shell/transferwatcher.cpp:104
 msgid "Looking for the device…"
 msgstr "Looking for the device…"
 
-#: src/shell/qml/TransfersPage.qml:379 src/shell/qml/TransfersPage.qml:385
-#: src/shell/qml/TransfersPage.qml:399 src/shell/transferwatcher.cpp:104
+#: src/shell/qml/TransfersPage.qml:409 src/shell/qml/TransfersPage.qml:415
+#: src/shell/qml/TransfersPage.qml:429 src/shell/transferwatcher.cpp:104
 #: src/shell/transferwatcher.cpp:173
 msgid "Connecting…"
 msgstr "Connecting…"
 
-#: src/shell/qml/TransfersPage.qml:381
+#: src/shell/qml/TransfersPage.qml:411
 msgid "Waiting for your approval"
 msgstr "Waiting for your approval"
 
-#: src/shell/qml/TransfersPage.qml:383
+#: src/shell/qml/TransfersPage.qml:413
 msgid "Receiving…"
 msgstr "Receiving…"
 
-#: src/shell/qml/TransfersPage.qml:385 src/shell/transferwatcher.cpp:173
+#: src/shell/qml/TransfersPage.qml:415 src/shell/transferwatcher.cpp:173
 msgid "Waiting for the other device to accept"
 msgstr "Waiting for the other device to accept"
 
-#: src/shell/qml/TransfersPage.qml:388 src/shell/transferwatcher.cpp:189
+#: src/shell/qml/TransfersPage.qml:418 src/shell/transferwatcher.cpp:189
 msgid "Switching to Wi-Fi…"
 msgstr "Switching to Wi-Fi…"
 
-#: src/shell/qml/TransfersPage.qml:388
+#: src/shell/qml/TransfersPage.qml:418
 msgid "Sending…"
 msgstr "Sending…"
 
-#: src/shell/qml/TransfersPage.qml:392
+#: src/shell/qml/TransfersPage.qml:420
+msgctxt "@info:status transfer result"
+msgid "Sent"
+msgstr "Sent"
+
+#: src/shell/qml/TransfersPage.qml:420
+msgctxt "@info:status transfer result"
+msgid "Received"
+msgstr "Received"
+
+#: src/shell/qml/TransfersPage.qml:422
+msgctxt "@info:status transfer result"
 msgid "Cancelled"
 msgstr "Cancelled"
 
-#: src/shell/qml/TransfersPage.qml:394
+#: src/shell/qml/TransfersPage.qml:424
 msgid "Declined"
 msgstr "Declined"
 
-#: src/shell/qml/TransfersPage.qml:394
+#: src/shell/qml/TransfersPage.qml:424
 msgid "You declined"
 msgstr "You declined"
 
-#: src/shell/qml/TransfersPage.qml:397
+#: src/shell/qml/TransfersPage.qml:427
 msgid "Not accepted"
 msgstr "Not accepted"
 
-#: src/shell/qml/TransfersPage.qml:397
+#: src/shell/qml/TransfersPage.qml:427
 msgid "Interrupted"
 msgstr "Interrupted"
 
-#: src/shell/qml/TransfersPage.qml:412
+#: src/shell/qml/TransfersPage.qml:442
+msgctxt "@info:status two parts of a status line, %1 and %2 are texts"
 msgid "%1 · %2"
 msgstr "%1 · %2"
 
-#: src/shell/qml/TransfersPage.qml:418
+#: src/shell/qml/TransfersPage.qml:448
 msgid "%1 second left"
 msgid_plural "%1 seconds left"
 msgstr[0] "%1 second left"
 msgstr[1] "%1 seconds left"
 
-#: src/shell/qml/TransfersPage.qml:421
+#: src/shell/qml/TransfersPage.qml:451
 msgid "%1 minute left"
 msgid_plural "%1 minutes left"
 msgstr[0] "%1 minute left"
 msgstr[1] "%1 minutes left"
 
-#: src/shell/qml/TransfersPage.qml:423
+#: src/shell/qml/TransfersPage.qml:453
 msgid "%1 hour left"
 msgid_plural "%1 hours left"
 msgstr[0] "%1 hour left"
 msgstr[1] "%1 hours left"
 
-#: src/shell/qml/TransfersPage.qml:449
+#: src/shell/qml/TransfersPage.qml:479
 msgid "The history is large (%1) and may slow KuickShare down"
 msgstr "The history is large (%1) and may slow KuickShare down"
 
-#: src/shell/qml/TransfersPage.qml:464
+#: src/shell/qml/TransfersPage.qml:494
 msgid ""
 "History is turned off: new transfers are not saved. You can turn it on in "
 "Preferences"
@@ -1826,27 +2071,27 @@ msgstr ""
 "History is turned off: new transfers are not saved. You can turn it on in "
 "Preferences"
 
-#: src/shell/qml/TransfersPage.qml:474
+#: src/shell/qml/TransfersPage.qml:504
 msgid "No matching transfers"
 msgstr "No matching transfers"
 
-#: src/shell/qml/TransfersPage.qml:474
+#: src/shell/qml/TransfersPage.qml:504
 msgid "No transfers yet"
 msgstr "No transfers yet"
 
-#: src/shell/qml/TransfersPage.qml:474
+#: src/shell/qml/TransfersPage.qml:504
 msgid "Starting the sharing service…"
 msgstr "Starting the sharing service…"
 
-#: src/shell/qml/TransfersPage.qml:475
+#: src/shell/qml/TransfersPage.qml:505
 msgid ""
-"Sent and received transfers are listed here. Make sure this computer is "
+"Sent and received transfers are listed here. Make sure this system is "
 "visible in Preferences to receive."
 msgstr ""
-"Sent and received transfers are listed here. Make sure this computer is "
+"Sent and received transfers are listed here. Make sure this system is "
 "visible in Preferences to receive."
 
-#: src/shell/qml/TransfersPage.qml:475
+#: src/shell/qml/TransfersPage.qml:505
 msgid ""
 "Transfers are only listed while the app is open, because the history is "
 "turned off."
@@ -1854,165 +2099,220 @@ msgstr ""
 "Transfers are only listed while the app is open, because the history is "
 "turned off."
 
-#: src/shell/qml/TransfersPage.qml:607
+#: src/shell/qml/TransfersPage.qml:637
+msgctxt "@info:status transfer speed, %1 is a size"
 msgid "%1/s"
 msgstr "%1/s"
 
-#: src/shell/qml/TransfersPage.qml:659
+#: src/shell/qml/TransfersPage.qml:689
 msgid "Unknown device"
 msgstr "Unknown device"
 
-#: src/shell/qml/TransfersPage.qml:684
+#: src/shell/qml/TransfersPage.qml:716
+msgctxt "@info:status the sender is trusted"
 msgid "Trusted"
 msgstr "Trusted"
 
-#: src/shell/qml/TransfersPage.qml:693
+#: src/shell/qml/TransfersPage.qml:727
+msgctxt "@info:progress percent of a transfer, %1 is a number"
 msgid "%1%"
 msgstr "%1%"
 
-#: src/shell/qml/TransfersPage.qml:700
-msgid "Cancel"
-msgstr "Cancel"
+#: src/shell/qml/TransfersPage.qml:735
+msgctxt "@action:button %1 is a device name"
+msgid "Cancel Transfer with %1"
+msgstr "Cancel Transfer with %1"
 
-#: src/shell/qml/TransfersPage.qml:707
+#: src/shell/qml/TransfersPage.qml:737
+msgctxt "@info:tooltip"
+msgid "Cancel transfer"
+msgstr "Cancel transfer"
+
+#: src/shell/qml/TransfersPage.qml:744
+msgctxt "@action:button %1 is a device name"
+msgid "Remove Transfer with %1 from List"
+msgstr "Remove Transfer with %1 from List"
+
+#: src/shell/qml/TransfersPage.qml:746
 msgid "Remove from list"
 msgstr "Remove from list"
 
-#: src/shell/qml/TransfersPage.qml:717
+#: src/shell/qml/TransfersPage.qml:756
 msgid "Wants to share with you · PIN %1"
 msgstr "Wants to share with you · PIN %1"
 
-#: src/shell/qml/TransfersPage.qml:726
-msgid "More details"
-msgstr "More details"
+#: src/shell/qml/TransfersPage.qml:765
+msgid "More Details"
+msgstr "More Details"
 
-#: src/shell/qml/TransfersPage.qml:765 src/shell/transferwatcher.cpp:276
+#: src/shell/qml/TransfersPage.qml:833
+msgctxt "@action:button accept an incoming transfer"
 msgid "Accept"
 msgstr "Accept"
 
-#: src/shell/qml/TransfersPage.qml:771 src/shell/transferwatcher.cpp:291
+#: src/shell/qml/TransfersPage.qml:839
+msgctxt "@action:button decline an incoming transfer"
 msgid "Decline"
 msgstr "Decline"
 
-#: src/shell/qml/TransfersPage.qml:777 src/shell/transferwatcher.cpp:340
-msgid "Open folder"
-msgstr "Open folder"
+#: src/shell/qml/TransfersPage.qml:845
+msgid "Open Folder"
+msgstr "Open Folder"
 
-#: src/shell/qml/TransfersPage.qml:783
-#: src/shell/qml/WifiRequirementsDialog.qml:27
-msgid "Join network"
-msgstr "Join network"
+#: src/shell/qml/TransfersPage.qml:851
+msgid "Join Network"
+msgstr "Join Network"
 
 #: src/shell/qml/WifiRequirementsDialog.qml:23
+msgctxt "@label"
 msgid "Sending"
 msgstr "Sending"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:47
-msgid "System requirements"
-msgstr "System requirements"
+#: src/shell/qml/WifiRequirementsDialog.qml:25
+msgctxt "@label"
+msgid "Receiving"
+msgstr "Receiving"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:68
-#: src/shell/qml/WifiRequirementsDialog.qml:192
+#: src/shell/qml/WifiRequirementsDialog.qml:27
+msgctxt "@label"
+msgid "Join network"
+msgstr "Join network"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:47
+msgctxt "@title:window"
+msgid "Check System Requirements"
+msgstr "Check System Requirements"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:69
+msgctxt "@action:button"
 msgid "Refresh"
 msgstr "Refresh"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:74
-msgid "Copy diagnostic report"
-msgstr "Copy diagnostic report"
+#: src/shell/qml/WifiRequirementsDialog.qml:75
+msgctxt "@action:button"
+msgid "Copy Diagnostic Report"
+msgstr "Copy Diagnostic Report"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:167
-msgid "Copy command"
-msgstr "Copy command"
+#: src/shell/qml/WifiRequirementsDialog.qml:168
+msgctxt "@action:button"
+msgid "Copy Command"
+msgstr "Copy Command"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:186
+#: src/shell/qml/WifiRequirementsDialog.qml:187
 msgid ""
-"What Wi-Fi Direct needs on this computer. Checking never changes Bluetooth, "
-"Wi-Fi or the firewall"
+"What Wi-Fi Direct needs on this system. Checking never changes Bluetooth, Wi-"
+"Fi or the firewall"
 msgstr ""
-"What Wi-Fi Direct needs on this computer. Checking never changes Bluetooth, "
-"Wi-Fi or the firewall"
+"What Wi-Fi Direct needs on this system. Checking never changes Bluetooth, Wi-"
+"Fi or the firewall"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:258
+#: src/shell/qml/WifiRequirementsDialog.qml:193
+msgctxt "@info:status accessible name of the busy indicator"
+msgid "Checking"
+msgstr "Checking"
+
+#: src/shell/qml/WifiRequirementsDialog.qml:259
 msgid "Not checked yet"
 msgstr "Not checked yet"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:267
+#: src/shell/qml/WifiRequirementsDialog.qml:268
 msgid "Last checked: %1 (out of date)"
 msgstr "Last checked: %1 (out of date)"
 
-#: src/shell/qml/WifiRequirementsDialog.qml:267
+#: src/shell/qml/WifiRequirementsDialog.qml:268
 msgid "Last checked: %1"
 msgstr "Last checked: %1"
 
 #: src/shell/transferjob.cpp:33
-msgid "Sending files"
-msgstr "Sending files"
+msgctxt "@title:notification"
+msgid "Sending Files"
+msgstr "Sending Files"
 
 #: src/shell/transferjob.cpp:34
-msgid "Receiving files"
-msgstr "Receiving files"
+msgctxt "@title:notification"
+msgid "Receiving Files"
+msgstr "Receiving Files"
 
 #: src/shell/transferjob.cpp:35
+msgctxt "@label transfer destination"
 msgid "To"
 msgstr "To"
 
 #: src/shell/transferjob.cpp:35
+msgctxt "@label transfer source"
 msgid "From"
 msgstr "From"
 
 #: src/shell/transferjob.cpp:36
+msgctxt "@label"
 msgid "Files"
 msgstr "Files"
 
 #: src/shell/transferjob.cpp:67
-msgid "The transfer was interrupted"
-msgstr "The transfer was interrupted"
+msgid "The transfer was interrupted; check the connection and try again"
+msgstr "The transfer was interrupted; check the connection and try again"
 
 #: src/shell/transferwatcher.cpp:240
 msgid "a nearby device"
 msgstr "a nearby device"
 
-#: src/shell/transferwatcher.cpp:245
-msgid "Offer refused"
-msgstr "Offer refused"
+#: src/shell/transferwatcher.cpp:246
+msgctxt "@title:notification"
+msgid "Offer Refused"
+msgstr "Offer Refused"
 
-#: src/shell/transferwatcher.cpp:245
+#: src/shell/transferwatcher.cpp:246
 msgid "From %1: %2"
 msgstr "From %1: %2"
 
-#: src/shell/transferwatcher.cpp:256
-msgid "Could not start the transfer to %1 over Bluetooth"
-msgstr "Could not start the transfer to %1 over Bluetooth"
-
-#: src/shell/transferwatcher.cpp:257
-msgid "%1 declined the transfer or could not receive it"
-msgstr "%1 declined the transfer or could not receive it"
-
-#: src/shell/transferwatcher.cpp:258
-msgid "Transfer not accepted"
-msgstr "Transfer not accepted"
+#: src/shell/transferwatcher.cpp:261
+msgid ""
+"Could not start the transfer to %1 over Bluetooth\n"
+"Check that Bluetooth is on and the device is nearby, then try again"
+msgstr ""
+"Could not start the transfer to %1 over Bluetooth\n"
+"Check that Bluetooth is on and the device is nearby, then try again"
 
 #: src/shell/transferwatcher.cpp:262
-msgid "Transfer interrupted"
-msgstr "Transfer interrupted"
+msgid ""
+"%1 declined the transfer or could not receive it\n"
+"Check the other device and its free space, then try again"
+msgstr ""
+"%1 declined the transfer or could not receive it\n"
+"Check the other device and its free space, then try again"
 
-#: src/shell/transferwatcher.cpp:262
-msgid "The connection with %1 was lost"
-msgstr "The connection with %1 was lost"
+#: src/shell/transferwatcher.cpp:263
+msgctxt "@title:notification"
+msgid "Transfer Not Accepted"
+msgstr "Transfer Not Accepted"
 
-#: src/shell/transferwatcher.cpp:270
-msgid "Incoming transfer"
-msgstr "Incoming transfer"
+#: src/shell/transferwatcher.cpp:267
+msgctxt "@title:notification"
+msgid "Transfer Interrupted"
+msgstr "Transfer Interrupted"
 
-#: src/shell/transferwatcher.cpp:271
+#: src/shell/transferwatcher.cpp:267
+msgid ""
+"The connection with %1 was lost\n"
+"Keep both devices close and awake, then try again"
+msgstr ""
+"The connection with %1 was lost\n"
+"Keep both devices close and awake, then try again"
+
+#: src/shell/transferwatcher.cpp:275
+msgctxt "@title:notification"
+msgid "Incoming Transfer"
+msgstr "Incoming Transfer"
+
+#: src/shell/transferwatcher.cpp:278
 msgid "A nearby device"
 msgstr "A nearby device"
 
-#: src/shell/transferwatcher.cpp:272
+#: src/shell/transferwatcher.cpp:279
 msgid "%1 wants to share with you"
 msgstr "%1 wants to share with you"
 
-#: src/shell/transferwatcher.cpp:272
+#: src/shell/transferwatcher.cpp:279
 msgid ""
 "%1 wants to share with you\n"
 "PIN: %2"
@@ -2020,27 +2320,40 @@ msgstr ""
 "%1 wants to share with you\n"
 "PIN: %2"
 
-#: src/shell/transferwatcher.cpp:285
-msgid "Accept and trust"
-msgstr "Accept and trust"
+#: src/shell/transferwatcher.cpp:283
+msgctxt "@action:button"
+msgid "Accept"
+msgstr "Accept"
 
-#: src/shell/transferwatcher.cpp:289
+#: src/shell/transferwatcher.cpp:292
+msgctxt "@action:button"
+msgid "Accept and Trust"
+msgstr "Accept and Trust"
+
+#: src/shell/transferwatcher.cpp:296
 msgid ""
-"“Accept and trust” recognises this device by its name and network address, "
+"“Accept and Trust” recognises this device by its name and network address, "
 "which another device on the same network can copy"
 msgstr ""
-"“Accept and trust” recognises this device by its name and network address, "
+"“Accept and Trust” recognises this device by its name and network address, "
 "which another device on the same network can copy"
 
-#: src/shell/transferwatcher.cpp:312
-msgid "Link received"
-msgstr "Link received"
+#: src/shell/transferwatcher.cpp:298
+msgctxt "@action:button"
+msgid "Decline"
+msgstr "Decline"
 
-#: src/shell/transferwatcher.cpp:312
-msgid "Text received"
-msgstr "Text received"
+#: src/shell/transferwatcher.cpp:320
+msgctxt "@title:notification"
+msgid "Link Received"
+msgstr "Link Received"
 
-#: src/shell/transferwatcher.cpp:313
+#: src/shell/transferwatcher.cpp:320
+msgctxt "@title:notification"
+msgid "Text Received"
+msgstr "Text Received"
+
+#: src/shell/transferwatcher.cpp:321
 msgid ""
 "From %1:\n"
 "%2"
@@ -2048,26 +2361,41 @@ msgstr ""
 "From %1:\n"
 "%2"
 
-#: src/shell/transferwatcher.cpp:314
-msgid "Copy link"
-msgstr "Copy link"
+#: src/shell/transferwatcher.cpp:322
+msgctxt "@action:button"
+msgid "Copy Link"
+msgstr "Copy Link"
 
-#: src/shell/transferwatcher.cpp:314
-msgid "Copy text"
-msgstr "Copy text"
+#: src/shell/transferwatcher.cpp:322
+msgctxt "@action:button"
+msgid "Copy Text"
+msgstr "Copy Text"
 
-#: src/shell/transferwatcher.cpp:323
+#: src/shell/transferwatcher.cpp:327
+msgctxt "@action:button"
+msgid "Open Link"
+msgstr "Open Link"
+
+#: src/shell/transferwatcher.cpp:331
+msgctxt "@action:button"
 msgid "View"
 msgstr "View"
 
-#: src/shell/transferwatcher.cpp:330
-msgid "Files received"
-msgstr "Files received"
+#: src/shell/transferwatcher.cpp:338
+msgctxt "@title:notification"
+msgid "Files Received"
+msgstr "Files Received"
 
-#: src/shell/transferwatcher.cpp:331
+#: src/shell/transferwatcher.cpp:339
 msgid "From %1"
 msgstr "From %1"
 
-#: src/shell/transferwatcher.cpp:336
-msgid "Open file"
-msgstr "Open file"
+#: src/shell/transferwatcher.cpp:344
+msgctxt "@action:button"
+msgid "Open File"
+msgstr "Open File"
+
+#: src/shell/transferwatcher.cpp:348
+msgctxt "@action:button"
+msgid "Open Folder"
+msgstr "Open Folder"

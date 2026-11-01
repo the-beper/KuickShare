@@ -6,7 +6,7 @@ Actions=sendWithKuickShare
 X-KDE-Priority=TopLevel
 
 [Desktop Action sendWithKuickShare]
-Name=Send with KuickShare
+Name=Send With KuickShare
 Name[it]=Invia con KuickShare
 Icon=io.github.the_beper.KuickShare
 Exec=kuickshare %F

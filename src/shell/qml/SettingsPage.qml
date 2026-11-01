@@ -13,7 +13,7 @@ FormCard.FormCardPage {
 
     required property var core
 
-    title: KI18n.i18n("Preferences")
+    title: KI18n.i18nc("@title", "Preferences")
 
     // Same padding on every page: cards float with rounded corners instead of touching the window edges.
     topPadding: Kirigami.Units.largeSpacing
@@ -26,9 +26,13 @@ FormCard.FormCardPage {
         core: page.core
     }
 
+    // Names the paired device the user asked to unpair, until the confirmation is answered.
+    property string unpairName: ""
+    property string unpairFingerprint: ""
+
     FolderDialog {
         id: folderDialog
-        title: KI18n.i18n("Choose the download folder")
+        title: KI18n.i18nc("@title:window", "Choose Download Folder")
         onAccepted: page.core.downloadDir = page.core.toLocalFile(selectedFolder)
     }
 
@@ -52,7 +56,7 @@ FormCard.FormCardPage {
         core: page.core
     }
 
-    // The switch and the description of "Check system requirements…" follow the last report; the core answers from
+    // The switch and the description of "Check System Requirements…" follow the last report; the core answers from
     // its cache while it is fresh.
     Component.onCompleted: {
         if (page.core.connected) {
@@ -71,14 +75,14 @@ FormCard.FormCardPage {
 
     SectionTitle {
         first: true
-        text: KI18n.i18n("Visibility")
+        text: KI18n.i18nc("@title:group", "Visibility")
     }
     // FormCard rounds its corners only when it is wider than its maximumWidth (30 grid units by
     // default, wider than this window): cap every card just below its own width.
     FormCard.FormCard {
         maximumWidth: width - 1
         FormCard.FormTextFieldDelegate {
-            label: KI18n.i18n("Device name")
+            label: KI18n.i18nc("@label:textbox", "Device name")
             text: page.core.deviceName
             enabled: page.core.connected
             onEditingFinished: page.core.deviceName = text
@@ -86,15 +90,15 @@ FormCard.FormCardPage {
         FormCard.FormSwitchDelegate {
             icon.name: "visibility"
             text: KI18n.i18n("Visible to nearby devices")
-            description: KI18n.i18n("Others can find this computer and send to it")
+            description: KI18n.i18n("Others can find this system and send to it")
             checked: page.core.visible
             enabled: page.core.connected
             onToggled: page.core.visible = checked
         }
         FormCard.FormSwitchDelegate {
             icon.name: "notifications-disabled"
-            text: KI18n.i18n("Hide during Do Not Disturb")
-            description: KI18n.i18n("Not visible while Do Not Disturb is on")
+            text: KI18n.i18nc("@option:check", "Hide during Do Not Disturb")
+            description: KI18n.i18n("Nearby devices stop seeing this system while Do Not Disturb is on")
             checked: page.core.hideWhenDnd
             enabled: page.core.connected
             onToggled: page.core.hideWhenDnd = checked
@@ -102,27 +106,27 @@ FormCard.FormCardPage {
     }
 
     SectionTitle {
-        text: KI18n.i18n("Receiving")
+        text: KI18n.i18nc("@title:group", "Receiving")
     }
     FormCard.FormCard {
         maximumWidth: width - 1
         FormCard.FormButtonDelegate {
             icon.name: "folder-download-symbolic"
-            text: KI18n.i18n("Download folder")
+            text: KI18n.i18nc("@action:button", "Choose Download Folder…")
             description: page.core.downloadDir.length > 0 ? page.core.downloadDir : KI18n.i18n("Default (Downloads)")
             enabled: page.core.connected
             onClicked: folderDialog.open()
         }
         FormCard.FormButtonDelegate {
             visible: page.core.downloadDir.length > 0
-            icon.name: "edit-undo"
-            text: KI18n.i18n("Use the default folder")
+            icon.name: "folder-download"
+            text: KI18n.i18nc("@action:button", "Use the Default Folder")
             onClicked: page.core.downloadDir = ""
         }
         FormCard.FormSwitchDelegate {
             id: randomPort
             icon.name: "network-wired-symbolic"
-            text: KI18n.i18n("Random port")
+            text: KI18n.i18nc("@option:check", "Use a random port")
             description: KI18n.i18n("A different port at every start")
             checked: page.core.staticPort === 0
             enabled: page.core.connected
@@ -136,7 +140,7 @@ FormCard.FormCardPage {
                 spacing: Kirigami.Units.largeSpacing
 
                 QQC2.Label {
-                    text: KI18n.i18n("Fixed port")
+                    text: KI18n.i18nc("@label:spinbox", "Fixed port")
                     Layout.fillWidth: true
                 }
                 QQC2.SpinBox {
@@ -157,7 +161,7 @@ FormCard.FormCardPage {
     }
 
     SectionTitle {
-        text: KI18n.i18n("Wi-Fi Direct")
+        text: KI18n.i18nc("@title:group", "Wi-Fi Direct")
     }
     FormCard.FormCard {
         id: wifiCard
@@ -174,7 +178,7 @@ FormCard.FormCardPage {
         FormCard.FormSwitchDelegate {
             id: wifiSwitch
             icon.name: "network-wireless"
-            text: KI18n.i18n("Receive and send without a shared network")
+            text: KI18n.i18nc("@option:check", "Receive and send without a shared network")
             description: KI18n.i18n("Be found over Bluetooth and move the transfer to a temporary Wi-Fi link")
             checked: page.core.wifiUpgrade
             // Off and greyed out while nothing can work; a setting that is already on can still be turned off.
@@ -193,7 +197,7 @@ FormCard.FormCardPage {
         // Always reachable, also when the switch is disabled; the description sums up the last check.
         FormCard.FormButtonDelegate {
             icon.name: "view-list-details"
-            text: KI18n.i18n("Check system requirements…")
+            text: KI18n.i18nc("@action:button", "Check System Requirements…")
             description: {
                 const wr = wifiCard.wr;
                 if (!page.core.connected || wr.error === "unavailable") {
@@ -203,18 +207,18 @@ FormCard.FormCardPage {
                     return KI18n.i18n("The result could not be read. Refresh to try again");
                 }
                 if (!wifiCard.hasReport) {
-                    return KI18n.i18n("See what this computer needs for Wi-Fi Direct");
+                    return KI18n.i18n("See what this system needs for Wi-Fi Direct");
                 }
                 if (wifiCard.blocked) {
-                    return KI18n.i18n("Neither sending nor receiving can work on this computer");
+                    return KI18n.i18n("Neither sending nor receiving can work on this system");
                 }
                 // "Works" only when the other direction was checked and can work.
                 const works = s => s === "available" || s === "degraded";
                 if (wifiCard.receiving === "unavailable" && works(wifiCard.sending)) {
-                    return KI18n.i18n("Only sending works on this computer");
+                    return KI18n.i18n("Only sending works on this system");
                 }
                 if (wifiCard.sending === "unavailable" && works(wifiCard.receiving)) {
-                    return KI18n.i18n("Only receiving works on this computer");
+                    return KI18n.i18n("Only receiving works on this system");
                 }
                 const statuses = [wifiCard.sending, wifiCard.receiving, wr.capabilities.joinNetwork.status];
                 if (statuses.every(s => s === "available")) {
@@ -232,16 +236,26 @@ FormCard.FormCardPage {
             onClicked: requirementsDialog.open()
         }
     }
-    // Experimental and with side effects, so a warning box like the one under Trusted devices.
+    // Experimental and with side effects, so a warning box like the one under Trusted Devices.
     MessageBox {
         type: Kirigami.MessageType.Warning
-        text: KI18n.i18n("Experimental. Needs NetworkManager, its dnsmasq package and Bluetooth. While on, this computer is visible over Bluetooth to devices in range, and its Wi-Fi connection may drop while the temporary Wi-Fi link is active. See the documentation")
+        text: KI18n.i18n("Experimental. Needs NetworkManager, its dnsmasq package and Bluetooth. While on, this system is visible over Bluetooth to devices in range, and its Wi-Fi connection may drop while the temporary Wi-Fi link is active")
         Layout.fillWidth: true
         Layout.topMargin: Kirigami.Units.largeSpacing
     }
+    // A link, not a button in the box: URLs open from links (HIG getting_input#signaling-interactivity).
+    Kirigami.UrlButton {
+        url: "https://github.com/the-beper/KuickShare/blob/main/docs/wifi-direct.md"
+        text: KI18n.i18nc("@label link to the documentation", "Wi-Fi Direct documentation")
+        wrapMode: Text.Wrap
+        // Left-aligned under the box (LinkButton centres its text), and only as wide as its text.
+        horizontalAlignment: Text.AlignLeft
+        Layout.maximumWidth: parent.width
+        Layout.topMargin: Kirigami.Units.smallSpacing
+    }
 
     SectionTitle {
-        text: KI18n.i18n("Paired devices")
+        text: KI18n.i18nc("@title:group", "Paired Devices")
     }
     FormCard.FormCard {
         maximumWidth: width - 1
@@ -252,38 +266,42 @@ FormCard.FormCardPage {
 
                 required property var modelData
 
-                icon.name: "security-high"
+                // No leading icon: every item would show the same one (HIG icons#icons-for-list-items).
                 text: modelData.name
-                description: KI18n.i18n("Fingerprint %1", modelData.fingerprint.substring(0, 12))
+                description: KI18n.i18nc("@info %1 is a shortened identifier of the device", "Device identifier: %1", modelData.fingerprint.substring(0, 12))
                 trailing: QQC2.ToolButton {
                     icon.name: "edit-delete-remove"
                     display: QQC2.AbstractButton.IconOnly
-                    text: KI18n.i18n("Remove")
-                    onClicked: page.core.unpair(paired.modelData.fingerprint)
+                    text: KI18n.i18nc("@action:button %1 is a device name", "Unpair %1", paired.modelData.name)
+                    onClicked: {
+                        page.unpairName = paired.modelData.name;
+                        page.unpairFingerprint = paired.modelData.fingerprint;
+                        unpairDialog.open();
+                    }
                 }
             }
         }
         FormCard.FormTextDelegate {
             visible: page.core.trustedDevices.length === 0
-            text: KI18n.i18n("No paired computers yet")
-            description: KI18n.i18n("Paired computers can send to each other without asking")
+            text: KI18n.i18n("No paired devices yet")
+            description: KI18n.i18n("Paired devices can send to each other without asking")
         }
         FormCard.FormButtonDelegate {
             icon.name: "list-add"
-            text: KI18n.i18n("Pair a device…")
+            text: KI18n.i18nc("@action:button", "Pair a Device…")
             enabled: page.core.connected
             onClicked: pairDialog.open()
         }
     }
     MessageBox {
         type: Kirigami.MessageType.Information
-        text: KI18n.i18n("Pairing works only between computers on the same local network")
+        text: KI18n.i18n("Pairing works only between devices on the same local network")
         Layout.fillWidth: true
         Layout.topMargin: Kirigami.Units.largeSpacing
     }
 
     SectionTitle {
-        text: KI18n.i18n("Trusted devices")
+        text: KI18n.i18nc("@title:group", "Trusted Devices")
     }
     FormCard.FormCard {
         maximumWidth: width - 1
@@ -302,13 +320,13 @@ FormCard.FormCardPage {
 
                 required property var modelData
 
-                icon.name: "smartphone-symbolic"
+                // No leading icon: every item would show the same one (HIG icons#icons-for-list-items).
                 text: modelData.title
-                description: KI18n.i18n("MAC address %1", modelData.mac)
+                description: KI18n.i18nc("@info %1 is the hardware address of the network adapter (MAC address)", "Hardware address: %1", modelData.mac)
                 trailing: QQC2.ToolButton {
                     icon.name: "edit-delete-remove"
                     display: QQC2.AbstractButton.IconOnly
-                    text: KI18n.i18n("Remove")
+                    text: KI18n.i18nc("@action:button %1 is a device name", "Remove %1", allowed.modelData.title)
                     onClicked: page.core.forgetAllowed(allowed.modelData.name, allowed.modelData.mac)
                 }
             }
@@ -316,7 +334,7 @@ FormCard.FormCardPage {
         FormCard.FormTextDelegate {
             visible: page.core.trustedDevicesEnabled && page.core.allowedDevices.length === 0
             text: KI18n.i18n("No devices yet")
-            description: KI18n.i18n("Use “Accept and trust” on an incoming transfer notification to add one")
+            description: KI18n.i18n("Use “Accept and Trust” on an incoming transfer notification to add one")
         }
     }
     // A warning, not a hint, and only while trusting is on.
@@ -329,7 +347,7 @@ FormCard.FormCardPage {
     }
 
     SectionTitle {
-        text: KI18n.i18n("History")
+        text: KI18n.i18nc("@title:group", "History")
     }
     FormCard.FormCard {
         maximumWidth: width - 1
@@ -366,7 +384,7 @@ FormCard.FormCardPage {
 
                     Layout.preferredWidth: Kirigami.Units.gridUnit * 9
                     popup.width: width
-                    model: [KI18n.i18n("Never"), KI18n.i18n("1 day"), KI18n.i18n("7 days"), KI18n.i18n("30 days"), KI18n.i18n("90 days")]
+                    model: [KI18n.i18nc("@item:inlistbox delete entries after", "Never"), KI18n.i18n("1 day"), KI18n.i18n("7 days"), KI18n.i18n("30 days"), KI18n.i18n("90 days")]
                     currentIndex: Math.max(0, keepRow.days.indexOf(page.core.historyKeepDays))
                     onActivated: index => page.core.historyKeepDays = keepRow.days[index]
                 }
@@ -379,7 +397,7 @@ FormCard.FormCardPage {
     }
 
     SectionTitle {
-        text: KI18n.i18n("Startup")
+        text: KI18n.i18nc("@title:group", "Startup")
     }
     FormCard.FormCard {
         maximumWidth: width - 1
@@ -392,22 +410,22 @@ FormCard.FormCardPage {
         }
     }
     SectionTitle {
-        text: KI18n.i18n("Integration")
+        text: KI18n.i18nc("@title:group", "Integration")
     }
     FormCard.FormCard {
         maximumWidth: width - 1
         FormCard.FormSwitchDelegate {
             icon.name: "notifications-symbolic"
-            text: KI18n.i18n("Show tray icon")
-            description: KI18n.i18n("Keep KuickShare in the system tray")
+            text: KI18n.i18n("Keep running in the background")
+            description: KI18n.i18n("Closing the window leaves KuickShare in the system tray, ready to receive. Its icon stands out during a transfer or a request")
             checked: page.core.trayIcon
             enabled: page.core.connected
             onToggled: page.core.trayIcon = checked
         }
         FormCard.FormSwitchDelegate {
             icon.name: "system-file-manager-symbolic"
-            text: KI18n.i18n("Dolphin context menu")
-            description: KI18n.i18n("Add “Send with KuickShare” to the menu of files")
+            text: KI18n.i18nc("@option:check", "Show in Dolphin’s context menu")
+            description: KI18n.i18n("Add “Send With KuickShare” to the menu of files")
             checked: page.core.dolphinIntegration
             enabled: page.core.connected
             onToggled: page.core.dolphinIntegration = checked
@@ -415,7 +433,7 @@ FormCard.FormCardPage {
         FormCard.FormSwitchDelegate {
             visible: page.core.appImage
             icon.name: "application-menu-symbolic"
-            text: KI18n.i18n("Application menu entry")
+            text: KI18n.i18nc("@option:check", "Show in the application menu")
             description: KI18n.i18n("Add KuickShare to the application menu")
             checked: page.core.menuEntry
             onToggled: page.core.menuEntry = checked
@@ -424,7 +442,7 @@ FormCard.FormCardPage {
     MessageBox {
         visible: page.core.connected && !page.core.trayIcon
         type: Kirigami.MessageType.Information
-        text: KI18n.i18n("Without the tray icon, closing the window quits KuickShare, and nothing can be received until you open it again. At login it starts hidden: open KuickShare again to show the window")
+        text: KI18n.i18n("Closing the window quits KuickShare, and nothing can be received until you open it again. At login it starts hidden, without a tray icon: open KuickShare again to show the window")
         Layout.fillWidth: true
         Layout.topMargin: Kirigami.Units.largeSpacing
     }
@@ -438,29 +456,80 @@ FormCard.FormCardPage {
     Kirigami.PromptDialog {
         id: firewallDialog
         title: KI18n.i18n("Turn on without a firewall?")
-        subtitle: KI18n.i18n("firewalld is not running, so the firewall cannot be opened for a single port. If you agree, then until KuickShare is closed, the phone that joins the hotspot can reach every service on this computer")
-        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
-        // The explicit consent, valid for this session only.
-        onAccepted: page.core.requestWifiUpgrade(true, true)
+        subtitle: KI18n.i18n("firewalld is not running, so the firewall cannot be opened for a single port. If you agree, then until KuickShare is closed, the device that joins the hotspot can reach every service on this system")
+        // The accepting button is named after what it does, so the footer is made of actions.
+        standardButtons: Kirigami.Dialog.NoButton
+        customFooterActions: [
+            // The explicit consent, valid for this session only.
+            Kirigami.Action {
+                text: KI18n.i18nc("@action:button", "Turn On")
+                icon.name: "security-medium"
+                onTriggered: {
+                    page.core.requestWifiUpgrade(true, true);
+                    firewallDialog.close();
+                }
+            },
+            Kirigami.Action {
+                text: KI18n.i18nc("@action:button", "Cancel")
+                icon.name: "dialog-cancel"
+                onTriggered: firewallDialog.close()
+            }
+        ]
         // The switch was toggled by hand: show the real setting again.
         onClosed: wifiSwitch.checked = Qt.binding(() => page.core.wifiUpgrade)
+    }
+    Kirigami.PromptDialog {
+        id: unpairDialog
+        title: KI18n.i18n("Unpair %1?", page.unpairName)
+        subtitle: KI18n.i18n("Transfers from this device will no longer be accepted without asking. Pair the devices again to undo this")
+        standardButtons: Kirigami.Dialog.NoButton
+        customFooterActions: [
+            Kirigami.Action {
+                text: KI18n.i18nc("@action:button", "Unpair")
+                icon.name: "edit-delete-remove"
+                onTriggered: {
+                    page.core.unpair(page.unpairFingerprint);
+                    unpairDialog.close();
+                }
+            },
+            Kirigami.Action {
+                text: KI18n.i18nc("@action:button", "Cancel")
+                icon.name: "dialog-cancel"
+                onTriggered: unpairDialog.close()
+            }
+        ]
     }
     Kirigami.PromptDialog {
         id: resetDialog
         title: KI18n.i18n("Reset preferences?")
         subtitle: KI18n.i18n("Every setting goes back to its default. The history and the paired and trusted devices are kept")
-        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
-        onAccepted: page.core.resetSettings()
+        // The accepting button is named after what it does, so the footer is made of actions.
+        standardButtons: Kirigami.Dialog.NoButton
+        customFooterActions: [
+            Kirigami.Action {
+                text: KI18n.i18nc("@action:button", "Reset")
+                icon.name: "document-revert"
+                onTriggered: {
+                    page.core.resetSettings();
+                    resetDialog.close();
+                }
+            },
+            Kirigami.Action {
+                text: KI18n.i18nc("@action:button", "Cancel")
+                icon.name: "dialog-cancel"
+                onTriggered: resetDialog.close()
+            }
+        ]
     }
 
     SectionTitle {
-        text: KI18n.i18n("Reset")
+        text: KI18n.i18nc("@title:group", "Reset")
     }
     FormCard.FormCard {
         maximumWidth: width - 1
         FormCard.FormButtonDelegate {
-            icon.name: "edit-undo"
-            text: KI18n.i18n("Reset preferences…")
+            icon.name: "document-revert"
+            text: KI18n.i18nc("@action:button", "Reset Preferences…")
             description: KI18n.i18n("Go back to the default preferences")
             enabled: page.core.connected
             onClicked: resetDialog.open()

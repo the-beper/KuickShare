@@ -36,7 +36,7 @@ Kirigami.ScrollablePage {
     property bool sendAsText: false
     onSingleLinkChanged: sendAsText = false
 
-    title: KI18n.i18n("Send")
+    title: KI18n.i18nc("@title", "Send")
     // Same padding on every page: cards float with rounded corners instead of touching the window edges.
     topPadding: Kirigami.Units.largeSpacing
     leftPadding: Kirigami.Units.largeSpacing
@@ -139,7 +139,10 @@ Kirigami.ScrollablePage {
             QQC2.ToolButton {
                 icon.name: "edit-delete-remove"
                 display: QQC2.AbstractButton.IconOnly
-                text: KI18n.i18n("Remove")
+                // The file name tells the identical buttons of the rows apart for a screen reader.
+                text: KI18n.i18nc("@action:button %1 is a file name", "Remove %1", row.modelData.name)
+                QQC2.ToolTip.visible: hovered
+                QQC2.ToolTip.text: KI18n.i18nc("@info:tooltip", "Remove from the list of files to send")
                 onClicked: page.fileRemoved(row.modelData.path)
             }
         }
@@ -147,7 +150,7 @@ Kirigami.ScrollablePage {
 
     Kirigami.Dialog {
         id: allFilesDialog
-        title: KI18n.i18n("Files to send")
+        title: KI18n.i18n("Files to Send")
         standardButtons: Kirigami.Dialog.NoButton
         footer: null // no button bar: the close button of the header is enough
         preferredWidth: Kirigami.Units.gridUnit * 22
@@ -187,7 +190,7 @@ Kirigami.ScrollablePage {
 
     FileDialog {
         id: fileDialog
-        title: KI18n.i18n("Choose files to send")
+        title: KI18n.i18n("Choose Files to Send")
         fileMode: FileDialog.OpenFiles
         onAccepted: page.filesAdded(selectedFiles)
     }
@@ -209,7 +212,7 @@ Kirigami.ScrollablePage {
 
             Kirigami.Icon {
                 // Same icons as the matching options in Settings: hidden = visibility off, Do Not Disturb = notifications off.
-                source: status.starting ? "network-wireless-disconnected-symbolic" : status.hidden ? "view-hidden-symbolic" : status.dnd ? "notifications-disabled-symbolic" : "network-wireless-hotspot-symbolic"
+                source: status.starting ? "network-wireless-disconnected" : status.hidden ? "view-hidden" : status.dnd ? "notifications-disabled" : "network-wireless-hotspot"
                 Layout.alignment: Qt.AlignVCenter
                 Layout.preferredWidth: Kirigami.Units.iconSizes.large
                 Layout.preferredHeight: Kirigami.Units.iconSizes.large
@@ -221,12 +224,12 @@ Kirigami.ScrollablePage {
                 Kirigami.Heading {
                     level: 3
                     color: status.starting || status.hidden || status.dnd ? Kirigami.Theme.textColor : Kirigami.Theme.highlightColor
-                    text: status.starting ? KI18n.i18n("Starting…") : status.hidden ? KI18n.i18n("Hidden") : status.dnd ? KI18n.i18n("Do Not Disturb") : KI18n.i18n("Ready")
+                    text: status.starting ? KI18n.i18nc("@info:status", "Starting…") : status.hidden ? KI18n.i18nc("@info:status", "Hidden") : status.dnd ? KI18n.i18n("Do Not Disturb") : KI18n.i18nc("@info:status", "Ready")
                 }
                 QQC2.Label {
                     visible: text.length > 0
                     opacity: 0.7
-                    text: status.starting ? "" : status.hidden ? KI18n.i18n("Turn on visibility in Preferences to receive files") : status.dnd ? KI18n.i18n("Hidden until Do Not Disturb ends") : KI18n.i18n("Visible as \"%1\"", page.core.deviceName)
+                    text: status.starting ? "" : status.hidden ? KI18n.i18n("Turn on visibility in Preferences to receive files") : status.dnd ? KI18n.i18n("Hidden until Do Not Disturb ends") : KI18n.i18n("Visible as “%1”", page.core.deviceName)
                 }
             }
         }
@@ -249,34 +252,22 @@ Kirigami.ScrollablePage {
                 clip: true
                 spacing: Kirigami.Units.largeSpacing
 
-                Kirigami.Icon {
+                Kirigami.PlaceholderMessage {
                     visible: page.files.length === 0
-                    source: page.dragging ? "document-import" : "folder-open-symbolic"
-                    Layout.alignment: Qt.AlignHCenter
+                    Layout.fillWidth: true
                     Layout.topMargin: Kirigami.Units.largeSpacing
-                    Layout.preferredWidth: Kirigami.Units.iconSizes.huge
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.huge
-                }
-                Kirigami.Heading {
-                    visible: page.files.length === 0
-                    level: 2
-                    text: page.dragging ? KI18n.i18n("Drop to share") : KI18n.i18n("Drop files here")
-                    Layout.alignment: Qt.AlignHCenter
-                }
-                QQC2.Label {
-                    visible: page.files.length === 0
-                    text: KI18n.i18n("or click to choose them")
-                    opacity: 0.7
-                    Layout.alignment: Qt.AlignHCenter
-                }
-                QQC2.Button {
-                    visible: page.files.length === 0
-                    icon.name: "edit-paste"
-                    text: KI18n.i18n("Paste from clipboard")
-                    enabled: page.core.clipboardHasFiles
-                    Layout.alignment: Qt.AlignHCenter
                     Layout.bottomMargin: Kirigami.Units.largeSpacing
-                    onClicked: page.pasteFiles()
+                    icon.name: page.dragging ? "document-import" : "folder-open"
+                    icon.width: Kirigami.Units.iconSizes.huge
+                    icon.height: Kirigami.Units.iconSizes.huge
+                    text: page.dragging ? KI18n.i18n("Drop to share") : KI18n.i18n("Drop files here")
+                    explanation: KI18n.i18n("Or click to choose them")
+                    helpfulAction: Kirigami.Action {
+                        icon.name: "edit-paste"
+                        text: KI18n.i18n("Paste from Clipboard")
+                        enabled: page.core.clipboardHasFiles
+                        onTriggered: page.pasteFiles()
+                    }
                 }
 
                 RowLayout {
@@ -296,12 +287,12 @@ Kirigami.ScrollablePage {
                     }
                     QQC2.Button {
                         icon.name: "list-add"
-                        text: KI18n.i18n("Add")
+                        text: KI18n.i18nc("@action:button add files to the list to send", "Add")
                         onClicked: fileDialog.open()
                     }
                     QQC2.Button {
                         icon.name: "edit-clear-all"
-                        text: KI18n.i18n("Clear")
+                        text: KI18n.i18nc("@action:button remove all files from the list to send", "Clear")
                         onClicked: page.filesCleared()
                     }
                 }
@@ -320,7 +311,7 @@ Kirigami.ScrollablePage {
                     visible: page.files.length > page.maxListed
                     flat: true
                     icon.name: "view-list-details"
-                    text: KI18n.i18np("Show all %1 file", "Show all %1 files", page.files.length)
+                    text: KI18n.i18np("Show All %1 File", "Show All %1 Files", page.files.length)
                     Layout.alignment: Qt.AlignHCenter
                     onClicked: allFilesDialog.open()
                 }
@@ -344,7 +335,7 @@ Kirigami.ScrollablePage {
                     }
                     Kirigami.Heading {
                         level: 4
-                        text: KI18n.i18n("Text or link")
+                        text: KI18n.i18n("Text or Link")
                         Layout.fillWidth: true
                     }
                     // Always laid out (just hidden), so the card does not change height while typing.
@@ -357,13 +348,13 @@ Kirigami.ScrollablePage {
                         }
                         enabled: textField.text.length > 0
                         icon.name: "edit-clear-all"
-                        text: KI18n.i18n("Clear")
+                        text: KI18n.i18nc("@action:button empty the text box", "Clear")
                         onClicked: textField.clear()
                     }
                     // Text only: a copied image or file is pasted with the button of the card above
                     QQC2.Button {
                         icon.name: "edit-paste"
-                        text: KI18n.i18n("Paste")
+                        text: KI18n.i18nc("@action:button paste text from the clipboard", "Paste")
                         enabled: page.core.clipboardHasText
                         onClicked: page.pasteText()
                     }
@@ -378,7 +369,7 @@ Kirigami.ScrollablePage {
                     Layout.preferredHeight: Math.min(textField.implicitHeight, maxHeight)
 
                     background: Rectangle {
-                        radius: 6
+                        radius: Kirigami.Units.cornerRadius
                         color: Qt.alpha(Kirigami.Theme.textColor, 0.05)
                         border.width: 1
                         border.color: textField.activeFocus ? Kirigami.Theme.highlightColor : Qt.alpha(Kirigami.Theme.textColor, 0.2)
@@ -391,7 +382,7 @@ Kirigami.ScrollablePage {
 
                     QQC2.TextArea {
                         id: textField
-                        placeholderText: KI18n.i18n("Type or paste something to send…")
+                        placeholderText: KI18n.i18n("Type or paste something to send")
                         wrapMode: TextEdit.Wrap
                         leftPadding: Kirigami.Units.largeSpacing
                         rightPadding: Kirigami.Units.largeSpacing
@@ -417,35 +408,31 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
 
                     // Always shown. A single link can go either way (off = as a link). Without a valid
-                    // link, or with more content around it, it can only go as text: on and locked.
-                    Item {
-                        implicitWidth: asTextBox.implicitWidth
-                        implicitHeight: asTextBox.implicitHeight
+                    // link, or with more content around it, it can only go as text: on and locked, and the
+                    // reason is written on the same row, against the right edge (not only in a tooltip).
+                    QQC2.CheckBox {
+                        id: asTextBox
 
-                        HoverHandler {
-                            id: asTextHover
-                        }
-                        QQC2.ToolTip.visible: asTextHover.hovered && !page.singleLink
-                        QQC2.ToolTip.text: page.startsWithLink ? KI18n.i18n("A string can only be sent as a link when it is the only content") : KI18n.i18n("No valid link")
-                        QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
-
-                        QQC2.CheckBox {
-                            id: asTextBox
-
-                            text: KI18n.i18n("Send as text")
-                            checked: !page.singleLink || page.sendAsText
-                            enabled: page.singleLink
-                            onToggled: page.sendAsText = checked
-                        }
+                        text: KI18n.i18n("Send as text")
+                        checked: !page.singleLink || page.sendAsText
+                        enabled: page.singleLink
+                        Accessible.description: lockReason.text
+                        onToggled: page.sendAsText = checked
                     }
+                    QQC2.Label {
+                        id: lockReason
 
-                    Item {
+                        text: page.singleLink ? "" : page.startsWithLink ? KI18n.i18n("A string can only be sent as a link when it is the only content") : KI18n.i18n("No valid link")
+                        opacity: 0.7
+                        wrapMode: Text.Wrap
+                        horizontalAlignment: Text.AlignRight
                         Layout.fillWidth: true
+                        Layout.rightMargin: Kirigami.Units.smallSpacing
                     }
                     // How many characters out of the limit, in yellow, only when it is getting close
                     QQC2.Label {
                         visible: page.nearLimit
-                        text: textField.length + "/" + page.maxChars
+                        text: KI18n.i18nc("@info:status characters typed out of the most allowed, %1 and %2 are numbers", "%1/%2", Qt.locale().toString(textField.length, "f", 0), Qt.locale().toString(page.maxChars, "f", 0))
                         color: Kirigami.Theme.neutralTextColor
                         font: Kirigami.Theme.smallFont
                         Layout.rightMargin: Kirigami.Units.smallSpacing
@@ -470,14 +457,14 @@ Kirigami.ScrollablePage {
             Item {
                 Layout.fillWidth: true
             }
-            // Phones in Receive mode are found over Bluetooth by a short scan, not continuously.
+            // Devices in Receive mode are found over Bluetooth by a short scan, not continuously.
             QQC2.ToolButton {
                 visible: page.core.wifiUpgrade
                 icon.name: "view-refresh-symbolic"
-                text: KI18n.i18n("Search again")
+                text: KI18n.i18n("Search Again")
                 display: QQC2.AbstractButton.IconOnly
                 QQC2.ToolTip.visible: hovered
-                QQC2.ToolTip.text: KI18n.i18n("Search for nearby phones over Bluetooth again")
+                QQC2.ToolTip.text: KI18n.i18n("Search for nearby devices over Bluetooth again")
                 onClicked: page.core.scanBluetooth()
             }
         }
@@ -489,21 +476,13 @@ Kirigami.ScrollablePage {
             Layout.fillHeight: true
             Layout.minimumHeight: searching.implicitHeight + Kirigami.Units.gridUnit * 2
 
-            ColumnLayout {
+            Kirigami.PlaceholderMessage {
                 id: searching
 
                 anchors.centerIn: parent
                 width: parent.width - Kirigami.Units.gridUnit * 4
-                spacing: Kirigami.Units.largeSpacing
+                text: KI18n.i18n("Looking for nearby devices…")
 
-                Kirigami.Heading {
-                    level: 3
-                    text: KI18n.i18n("Looking for nearby devices…")
-                    opacity: 0.7
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.Wrap
-                    Layout.fillWidth: true
-                }
                 QQC2.ProgressBar {
                     indeterminate: true
                     Layout.fillWidth: true
@@ -562,7 +541,7 @@ Kirigami.ScrollablePage {
                     spacing: Kirigami.Units.largeSpacing
 
                     Kirigami.Icon {
-                        source: deviceCard.deviceType === "Tablet" ? "tablet-symbolic" : deviceCard.deviceType === "Laptop" ? "computer-laptop-symbolic" : deviceCard.deviceType === "Phone" ? "smartphone-symbolic" : "computer-symbolic"
+                        source: deviceCard.deviceType === "Tablet" ? "tablet" : deviceCard.deviceType === "Laptop" ? "computer-laptop" : deviceCard.deviceType === "Phone" ? "smartphone" : "computer"
                         Layout.preferredWidth: Kirigami.Units.iconSizes.medium
                         Layout.preferredHeight: Kirigami.Units.iconSizes.medium
                     }

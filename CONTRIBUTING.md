@@ -125,7 +125,7 @@ The images in `docs/screenshots/` come from the real shell running against a fak
 | `demo.sh [options]` | Opens the shell on its own private D-Bus bus, with settings in a temporary folder |
 | `fake_core.py` | The made-up devices, transfers and history; edit it to change what the screenshots show |
 
-They run on the host, not in the container: they need `spectacle`, `dbus-daemon`, `gdbus` and Python with PyGObject, and the shell built in `dist/tmp/cmake-dev` (see [Build](#build)). The windows are captured as the app opens them, at its fixed size, using the colours and icon theme of the desktop: switch to the light theme and close other windows first. `pair.png` needs a click and is taken by hand (Preferences, Pair a device).
+They run on the host, not in the container: they need `spectacle`, `dbus-daemon`, `gdbus` and Python with PyGObject, and the shell built in `dist/tmp/cmake-dev` (see [Build](#build)). The windows are captured as the app opens them, at its fixed size, using the colours and icon theme of the desktop: switch to the light theme and close other windows first. `pair.png` needs a click and is taken by hand (Preferences, Pair a Device).
 
 ## Translations
 

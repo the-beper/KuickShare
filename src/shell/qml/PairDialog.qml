@@ -6,7 +6,7 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.ki18n
 
-// Pairs this computer with another one running KuickShare. Both computers open this dialog:
+// Pairs this system with another device running KuickShare. Both open this dialog:
 // one picks the other from the list, then both users check that the same code is shown.
 Kirigami.Dialog {
     id: dialog
@@ -19,16 +19,19 @@ Kirigami.Dialog {
     property string peer: ""
     property string message: ""
 
-    title: KI18n.i18n("Pair a device")
+    title: KI18n.i18nc("@title:window", "Pair a Device")
     preferredWidth: Kirigami.Units.gridUnit * 22
     padding: Kirigami.Units.largeSpacing
     standardButtons: Kirigami.Dialog.NoButton
 
-    onOpened: {
+    // Opens the pairing window and lists the devices found; also what "Try Again" runs.
+    function start() {
         stage = "list";
         core.setPairing(true);
         core.startDiscovery();
     }
+
+    onOpened: start()
     onClosed: {
         if (stage === "code") {
             core.confirmPairing(false);
@@ -54,7 +57,7 @@ Kirigami.Dialog {
     customFooterActions: [
         Kirigami.Action {
             visible: dialog.stage === "code"
-            text: KI18n.i18n("The codes match")
+            text: KI18n.i18nc("@action:button", "Confirm Pairing")
             icon.name: "dialog-ok-apply"
             onTriggered: {
                 dialog.core.confirmPairing(true);
@@ -63,13 +66,19 @@ Kirigami.Dialog {
         },
         Kirigami.Action {
             visible: dialog.stage === "code"
-            text: KI18n.i18n("They differ")
+            text: KI18n.i18nc("@action:button", "Reject Pairing")
             icon.name: "dialog-cancel"
             onTriggered: dialog.core.confirmPairing(false)
         },
         Kirigami.Action {
+            visible: dialog.stage === "failed"
+            text: KI18n.i18nc("@action:button", "Try Again")
+            icon.name: "view-refresh"
+            onTriggered: dialog.start()
+        },
+        Kirigami.Action {
             visible: dialog.stage === "done" || dialog.stage === "failed"
-            text: KI18n.i18n("Close")
+            text: KI18n.i18nc("@action:button", "Close")
             icon.name: "window-close"
             onTriggered: dialog.close()
         }
@@ -81,7 +90,7 @@ Kirigami.Dialog {
         MessageBox {
             visible: dialog.stage === "list"
             type: Kirigami.MessageType.Information
-            text: KI18n.i18n("Open Preferences → Pair a device on the other computer as well, then choose it here")
+            text: KI18n.i18n("Open Preferences → Pair a Device on the other device as well, then choose it here")
             Layout.fillWidth: true
         }
         Repeater {
@@ -109,7 +118,7 @@ Kirigami.Dialog {
 
                 QQC2.Label {
                     visible: candidate.trust === "trusted" || !candidate.pairing
-                    text: candidate.trust === "trusted" ? KI18n.i18n("Already paired") : KI18n.i18n("Waiting for the other computer")
+                    text: candidate.trust === "trusted" ? KI18n.i18n("Already paired") : KI18n.i18n("Waiting for the other device")
                     opacity: 0.7
                     anchors.right: parent.right
                     anchors.rightMargin: Kirigami.Units.largeSpacing
@@ -128,9 +137,11 @@ Kirigami.Dialog {
                 running: dialog.stage === "list"
                 Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
                 Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                // The label next to it says what is going on.
+                Accessible.ignored: true
             }
             QQC2.Label {
-                text: KI18n.i18n("Looking for computers running KuickShare…")
+                text: KI18n.i18n("Looking for devices running KuickShare…")
                 opacity: 0.7
             }
         }
@@ -177,7 +188,7 @@ Kirigami.Dialog {
             visible: dialog.stage === "done"
             icon.name: "security-high"
             text: KI18n.i18n("Paired with %1", dialog.peer)
-            explanation: KI18n.i18n("Transfers between these computers are accepted without asking.")
+            explanation: KI18n.i18n("Transfers between these devices are accepted without asking.")
             Layout.fillWidth: true
         }
         Kirigami.PlaceholderMessage {
