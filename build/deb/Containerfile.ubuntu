@@ -1,0 +1,22 @@
+# Build image of the deb package (build/packaging/build-deb.sh): Ubuntu 26.04 with the exact dev
+# packages the deb recipe builds against, and the rustc/cargo of the Ubuntu archive (that is also what
+# Launchpad would build with in phase 7 — installing the image is the rust-1.93.1 feasibility test).
+# The base image ships no ca-certificates: install it first, crates.io fetches need TLS.
+# The image is published by images.yml; release.yml names it by digest (CONTRIBUTING.md, Pinned tools).
+FROM docker.io/library/ubuntu:26.04
+
+RUN export DEBIAN_FRONTEND=noninteractive \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates build-essential cmake debhelper dpkg-dev g++ gettext \
+        make ninja-build pkg-config git protobuf-compiler \
+        qt6-base-dev qt6-declarative-dev libdbus-1-dev extra-cmake-modules \
+        libkf6coreaddons-dev libkf6crash-dev libkf6dbusaddons-dev libkf6i18n-dev \
+        libkf6jobwidgets-dev libkf6notifications-dev libkf6statusnotifieritem-dev \
+        libkirigami-dev \
+        qml6-module-org-kde-kirigami \
+        rustc cargo \
+    && rm -rf /var/lib/apt/lists/*
+
+# Links the ghcr.io package to the repository, so the workflows can pull it with GITHUB_TOKEN.
+LABEL org.opencontainers.image.source="https://github.com/the-beper/KuickShare"

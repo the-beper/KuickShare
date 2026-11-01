@@ -1,0 +1,5 @@
+kuickshare (@VERSION@-1) unstable; urgency=medium
+
+  * Native package of @VERSION@ (build/packaging; Debian revision -1).
+
+ -- KuickShare Developers <the-beper@users.noreply.github.com>  @DATE_DEB@

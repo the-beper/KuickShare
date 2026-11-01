@@ -7,6 +7,10 @@ add_compile_definitions(KUICKSHARE_VERSION="${PROJECT_VERSION}")
 find_package(ECM REQUIRED NO_MODULE)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
 
+# Qt 6 must be decided before KDEInstallDirs: with it unset until the find_package(Qt6) below, the
+# module includes its KF5 variant and installs the notifyrc into knotifications5, a name no KF6
+# runtime reads (Fedora 45 and Ubuntu 26.04 ship knotifications6, both libraries carry the name).
+set(QT_MAJOR_VERSION 6)
 include(KDEInstallDirs)
 include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
@@ -14,9 +18,12 @@ include(KDECompilerSettings NO_POLICY_SCOPE)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Path to the kuickshared cargo produced; packages and build-host-payload.sh pass it (absolute or relative
+# to the source root), dev builds leave it empty and keep the target/debug link below.
+set(KUICKSHARED_PATH "" CACHE FILEPATH "Built kuickshared, installed next to the shell (system packages)")
+
 find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 DBus Widgets)
 find_package(KF6 REQUIRED COMPONENTS Kirigami I18n CoreAddons Crash DBusAddons StatusNotifierItem Notifications JobWidgets)
-set(QT_MAJOR_VERSION 6)
 include(ECMFindQmlModule)
 ecm_find_qmlmodule(org.kde.kirigami REQUIRED)
 
@@ -84,13 +91,46 @@ target_link_libraries(kuickshare PRIVATE
 # Qt 6.12+ (Arch) refuses executables that copy-relocate its data symbols.
 target_compile_options(kuickshare PRIVATE -mno-direct-extern-access)
 
+# The following install rules are what a system package gets with one `cmake --install --prefix /usr`:
+# build/build-host-payload.sh stages its tarball payload from the same set (every file the payload
+# needs must be listed here), a relative KUICKSHARED_PATH is resolved against the source root.
 install(TARGETS kuickshare ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
+if(KUICKSHARED_PATH)
+    # The daemon cargo builds, installed next to the shell: corebridge.cpp starts it from applicationDirPath().
+    install(PROGRAMS "${KUICKSHARED_PATH}" DESTINATION ${KDE_INSTALL_BINDIR})
+endif()
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../data/kuickshare.notifyrc DESTINATION ${KDE_INSTALL_KNOTIFYRCDIR})
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../data/io.github.the_beper.KuickShare.desktop DESTINATION ${KDE_INSTALL_APPDIR})
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../data/io.github.the_beper.KuickShare.metainfo.xml DESTINATION ${KDE_INSTALL_METAINFODIR})
 # Dolphin ignores service menus that are not executable.
 install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../../data/kuickshare-send.desktop DESTINATION ${KDE_INSTALL_DATADIR}/kio/servicemenus)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../data/icons/hicolor/scalable/apps/io.github.the_beper.KuickShare.svg DESTINATION ${KDE_INSTALL_ICONDIR}/hicolor/scalable/apps)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../data/icons/hicolor/symbolic/apps/io.github.the_beper.KuickShare-symbolic.svg DESTINATION ${KDE_INSTALL_ICONDIR}/hicolor/symbolic/apps)
+
+# Translations: one catalog per language in po/LINGUAS, next to the KDE ones (/usr/share/locale).
+find_program(GETTEXT_MSGFMT_EXECUTABLE msgfmt)
+if(GETTEXT_MSGFMT_EXECUTABLE)
+    file(READ ${CMAKE_CURRENT_SOURCE_DIR}/../../po/LINGUAS linguas)
+    string(REPLACE "\n" ";" langs "${linguas}")
+    set(mo_files "")
+    foreach(lang ${langs})
+        if(lang STREQUAL "")
+            continue()
+        endif()
+        set(mo ${CMAKE_CURRENT_BINARY_DIR}/locale/${lang}/LC_MESSAGES/kuickshare.mo)
+        add_custom_command(OUTPUT ${mo}
+            COMMAND ${GETTEXT_MSGFMT_EXECUTABLE} --check-format -o ${mo} ${CMAKE_CURRENT_SOURCE_DIR}/../../po/${lang}.po
+            DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../../po/${lang}.po)
+        list(APPEND mo_files ${mo})
+        install(FILES ${mo} DESTINATION ${KDE_INSTALL_LOCALEDIR}/${lang}/LC_MESSAGES)
+    endforeach()
+    add_custom_target(kuickshare-mo ALL DEPENDS ${mo_files})
+    if(NOT langs)
+        message(FATAL_ERROR "po/LINGUAS is empty")
+    endif()
+else()
+    message(STATUS "msgfmt not found: skipping the .mo catalogs")
+endif()
 
 file(CREATE_LINK ${CMAKE_CURRENT_SOURCE_DIR}/../../target/debug/kuickshared ${CMAKE_BINARY_DIR}/kuickshared SYMBOLIC)
 

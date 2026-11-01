@@ -1,0 +1,22 @@
+#!/usr/bin/make -f
+# Version-free: render.sh copies this debian/rules verbatim. cargo + cmake run explicitly instead of
+# dh_auto_* — the shell has -DKUICKSHARED_PATH and a cargo build dh would not know about.
+
+%:
+	dh $@
+
+override_dh_auto_clean:
+	: # The build tree comes from overrides below, not from the auto build system
+
+override_dh_auto_build:
+	cargo build --release --locked
+	cmake -S src/shell -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+		-DKUICKSHARED_PATH=$(CURDIR)/target/release/kuickshared
+	cmake --build build
+
+override_dh_auto_install:
+	DESTDIR=$(CURDIR)/debian/kuickshare cmake --install build --prefix /usr --strip
+
+override_dh_auto_test:
+
+override_dh_strip:
