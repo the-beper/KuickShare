@@ -1,0 +1,63 @@
+# Rendered by build/packaging/render.sh (@VERSION@, @DATE_RPM@): the version is never edited here.
+# The same spec is used by the CI build (rpmbuild in the build image, _sourcedir at dist/tmp/packaging)
+# and by COPR in phase 5. The runtime Requires list the QML modules the app loads by hand (rpmbuild
+# only auto-requires the shared libraries it can see inside the run tree); the list is proven complete
+# by build/packaging/test-rpm.sh (install with weak deps off in a bare Fedora container, run offscreen).
+Name: kuickshare
+Version: @VERSION@
+Release: 1%{?dist}
+Summary: Share files between devices on the same network
+License: GPL-3.0-or-later
+URL: https://github.com/the-beper/KuickShare
+Source: @TARBALL@
+# One package, exactly as the other formats build one (the deb has no -dbgsym, the PKGBUILD defines
+# options=(!debug)): without this rpmbuild also writes kuickshare-debuginfo and kuickshare-debugsource
+# rpms, while build-rpm.sh and the release's verify-assets want the single dist/KuickShare-x86_64.rpm.
+# The installed binaries of the main package keep their strip from the install step.
+%global debug_package %{nil}
+
+BuildRequires: cargo gettext gcc-c++ git ninja-build pkgconf-pkg-config
+BuildRequires: protobuf-compiler dbus-devel
+BuildRequires: qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtsvg-devel
+BuildRequires: extra-cmake-modules
+BuildRequires: kf6-kirigami-devel kf6-ki18n-devel kf6-kcoreaddons-devel kf6-kcrash-devel
+BuildRequires: kf6-kdbusaddons-devel kf6-kjobwidgets-devel kf6-knotifications-devel
+BuildRequires: kf6-kstatusnotifieritem-devel
+
+Requires: dbus kf6-kirigami kf6-kirigami-addons kf6-ki18n kf6-qqc2-desktop-style qt6-qtdeclarative qt6-qtsvg
+
+%description
+KuickShare sends files between devices on the same network.
+
+# autosetup extracts the tarball into the build tree folder (kuickshare-VERSION) and every later
+# section runs in there (rpmbuild cds to the buildsubdir): without it, cargo and cmake would run
+# wherever the build-dir macro points, inside the checkout, and compile the freshest workspace
+# instead of the packaged sources. No percent signs here on purpose: rpm warns on comments with
+# macros it expands.
+%prep
+%autosetup -p1
+
+%build
+cargo build --release --locked
+cmake -S src/shell -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+    -DKUICKSHARED_PATH=$PWD/target/release/kuickshared
+cmake --build build
+
+%install
+DESTDIR=%{buildroot} cmake --install build --prefix /usr --strip
+
+%files
+%license LICENSE
+/usr/bin/kuickshare
+/usr/bin/kuickshared
+/usr/share/applications/io.github.the_beper.KuickShare.desktop
+/usr/share/metainfo/io.github.the_beper.KuickShare.metainfo.xml
+/usr/share/knotifications6/kuickshare.notifyrc
+/usr/share/kio/servicemenus/kuickshare-send.desktop
+/usr/share/icons/hicolor/scalable/apps/io.github.the_beper.KuickShare.svg
+/usr/share/icons/hicolor/symbolic/apps/io.github.the_beper.KuickShare-symbolic.svg
+/usr/share/locale/*/LC_MESSAGES/kuickshare.mo
+
+%changelog
+* @DATE_RPM@ KuickShare Developers <the-beper@users.noreply.github.com> @VERSION@-1
+- Native Fedora package (see build/packaging)

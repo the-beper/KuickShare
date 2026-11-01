@@ -64,4 +64,8 @@ grep -q -- "--default-toolchain $rust_version\$" .github/workflows/ci.yml || { e
 for img in kuickshare-build kuickshare-flatpak kuickshare-appimage; do
     grep -Eq "ghcr\.io/the-beper/$img:[a-z0-9]+@sha256:[0-9a-f]{64}" .github/workflows/release.yml || { echo "release.yml does not pin $img by digest" >&2; exit 1; }
 done
+# The deb image is a second tag of kuickshare-build (fedora45 is the loop's check above): it is pinned in its own line.
+# Until images.yml publishes it from main, the pin is the zeros placeholder of release.yml: the release pull fails then,
+# so the placeholder merely documents the paste that CONTRIBUTING.md, Pinned tools wants before the first release.
+grep -Eq 'ghcr\.io/the-beper/kuickshare-build:ubuntu26@sha256:[0-9a-f]{64}' .github/workflows/release.yml || { echo "release.yml does not pin kuickshare-build:ubuntu26 by digest" >&2; exit 1; }
 if grep -o 'ghcr\.io/the-beper/[^ "]*' .github/workflows/release.yml | grep -Ev '@sha256:[0-9a-f]{64}$'; then echo "release.yml has an image without a digest" >&2; exit 1; fi

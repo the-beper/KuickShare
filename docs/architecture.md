@@ -496,3 +496,18 @@ flowchart LR
   - a second launch hands over to the running instance.
 
   Notifications, job progress, the file chooser and Dolphin itself need a real Plasma session and are untested.
+
+### Native packages
+
+Unlike the three above, system packages install into the distribution: a Fedora rpm, an Ubuntu deb and an Arch package, built by the release (`build-rpm`, `build-deb`, `build-arch` in `release.yml`) from one source tarball with the recipes in `build/packaging/`:
+
+1. `build/packaging/source-tarball.sh` writes `git archive` of the release commit to `dist/tmp/packaging/kuickshare-$version.tar.gz`, with fixed tar entry dates (the same commit always gives the same bytes).
+2. `build/packaging/render.sh` renders each recipe from the `.in` template next to it: the version and Release from [`src/shell/CMakeLists.txt`](../src/shell/CMakeLists.txt) (the single source of the version), the tarball's SHA-256 and the packaging dates of the day.
+3. The build script runs `cmake --install` with `BUILD_TESTING=OFF`, `--prefix /usr` and `KUICKSHARED_PATH`, in the pinned images ([CONTRIBUTING.md](../CONTRIBUTING.md#releases)): the rpm in the Fedora image, the deb in the Ubuntu image (the rustc and cargo of the Ubuntu archive), the Arch package in the Arch image (the same `quick-sharun` base as the AppImage).
+
+The payload is the tarball's list at system paths: the two binaries in `/usr/bin`, the desktop entry, the AppStream metainfo, the notifications config, the service menu, the icons and the compiled catalogs in `/usr/share/locale`. What differs from the tarball:
+
+- **Dolphin menu.** The package ships `/usr/share/kio/servicemenus/kuickshare-send.desktop`, which `DolphinMenu::sync` never touches (as above), so turning the setting off manages only the user's own copy.
+- **Uninstall.** The package manager removes the files above; user data in `~/.config/kuickshare` and `~/.local/share/kuickshare` stays.
+- **Distribution.** Release assets named `KuickShare-x86_64.rpm`, `-x86_64.deb` and `-x86_64.pkg.tar.zst`; the source tarball is only an input to the three recipes, not an asset.
+- **Test.** `build/packaging/test-rpm.sh`, `test-deb.sh` and `test-arch.sh` install the package in a bare container of the target distribution (with only `dbus` and a font: the dependency list in the recipe is what brings the rest), run it offscreen under a session bus, and check the version, that the core answers on D-Bus, no QML or plugin errors, and that `dnf`/`apt`/`pacman` remove leaves nothing of the package in the system or in `HOME` beyond the app's own data. A runtime dependency missing from the recipe fails here before the release sits on a package users cannot start.

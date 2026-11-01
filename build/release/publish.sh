@@ -2,7 +2,7 @@
 # Release gate 4, the only step that writes: publishes verified files, never rebuilds anything. It can be run again
 # after any failure; each step looks at what is already there and does only what is missing.
 #
-#   1. Checks again what it was given: the five assets against SHA256SUMS, the site archive against the hash the sign
+#   1. Checks again what it was given: the eight assets against SHA256SUMS, the site archive against the hash the sign
 #      job reported, and that the tag still points to the commit of the run.
 #   2. Finds the release for the tag (drafts included). Creates a DRAFT when there is none, then uploads the assets that
 #      are missing. An asset that exists with the same SHA-256 is skipped; one that differs fails the run. Never --clobber.
@@ -12,12 +12,12 @@
 #      reports a failure both branches are read again: gh-pages already at the new commit means the push had landed (the
 #      acknowledgement was lost) and the run goes on; exit 3 if either branch moved to something else, exit 1 if not.
 #   4. Waits until Pages serves the new repo/summary and repo/summary.sig.
-#   5. Publishes the draft (--latest) and checks the release again: exactly the five assets, each with its SHA-256.
+#   5. Publishes the draft (--latest) and checks the release again: exactly the eight assets, each with its SHA-256.
 # The release stays a draft until the Flatpak repository is live, so a release that people can see is never incomplete.
 #
 # Environment (nothing from the command line):
 #   RELEASE_TAG, GITHUB_SHA, GITHUB_REPOSITORY, GH_TOKEN
-#   ASSETS_DIR           the five release files
+#   ASSETS_DIR           the eight release files
 #   EXPECT_SUMS_SHA256   SHA-256 of SHA256SUMS, as reported by the verify job
 #   SITE_TAR             the site archive from the finish job, EXPECT_SITE_SHA256 its SHA-256
 #   SITE_BASE_SHA        the gh-pages commit the site was built on ("-" when there was none)
@@ -81,8 +81,9 @@ if [ -n "${GH_TOKEN:-}" ]; then
     esac
 fi
 
-# The five assets, SHA256SUMS last: a release without it is visibly unfinished.
-set -- KuickShare-x86_64.AppImage KuickShare-x86_64.AppImage.zsync KuickShare-x86_64.flatpak KuickShare-x86_64.tar.gz SHA256SUMS
+# The eight assets, SHA256SUMS last: a release without it is visibly unfinished.
+set -- KuickShare-x86_64.AppImage KuickShare-x86_64.AppImage.zsync KuickShare-x86_64.rpm KuickShare-x86_64.deb \
+    KuickShare-x86_64.pkg.tar.zst KuickShare-x86_64.flatpak KuickShare-x86_64.tar.gz SHA256SUMS
 
 # ---- 1. what we were given ----
 "$tools/build/release/verify-assets.sh" --recheck "$ASSETS_DIR"
@@ -145,7 +146,7 @@ asset_matches() { # name state digest want
     [ "$(sha256_of "$tmp/dl/$1")" = "$4" ]
 }
 
-# Exactly the five assets, all complete, all equal to the local files.
+# Exactly the eight assets, all complete, all equal to the local files.
 check_release() {
     info=$(lookup)
     [ "$info" != none ] || fail "release $tag does not exist"

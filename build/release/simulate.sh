@@ -14,7 +14,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 repo_root=$(cd "$here/../.." && pwd)
 td=$here/testdata
 
-for tool in git gpg python3 tar sha256sum sha1sum base64; do
+for tool in git gpg python3 tar sha256sum sha1sum base64 zstd; do
     command -v "$tool" > /dev/null || { echo "Bail out! $tool is needed"; exit 2; }
 done
 
@@ -45,7 +45,7 @@ mkdir -m 700 "$GNUPGHOME"
 
 rel=$repo_root/build/release
 app_id=io.github.the_beper.KuickShare
-total=38
+total=39
 n=0
 passed=0
 failed=0
@@ -124,7 +124,84 @@ use_secret() { FLATPAK_GPG_PRIVATE_KEY=$(cat "$keys/$1/secret.asc"); export FLAT
 drop_secret() { unset FLATPAK_GPG_PRIVATE_KEY; }
 
 # ---- fixtures ----
-make_assets() { # <dir> <version>
+# The three packages (rpm, deb, pkg.tar.zst), built with python only: the formats' own shapes are tiny and the
+# release scripts read exactly these parts (build/packaging/package-info.py). "-" keeps the honest value in each
+# field, so single fields can be skewed for the mismatch cases below.
+packages() { # <dir> <version> [<rpm name> <rpm version> <rpm release> <rpm arch> <deb name> <deb version> <deb arch> <pkg name> <pkg version> <pkg arch>]
+    python3 -I - "$@" <<'PY'
+import io
+import struct
+import subprocess
+import sys
+import tarfile
+
+d, v = sys.argv[1:3]
+honest = ["kuickshare", v, "1.fc45", "x86_64", "kuickshare", v + "-1", "amd64", "kuickshare", v + "-1", "x86_64"]
+extra = sys.argv[3:]
+fields = [extra[i] if i < len(extra) and extra[i] != "-" else honest[i] for i in range(len(honest))]
+(name, version, release, arch), (deb_name, deb_version, deb_arch), (pkg_name, pkg_version, pkg_arch) = (
+    fields[0:4], fields[4:7], fields[7:10])
+
+# rpm: the lead, then the two back-to-back header sections with the four STRING tags package-info reads
+# (NAME=1000, VERSION=1001, RELEASE=1002, ARCH=1022). The data section is padded to the alignment the next
+# section keeps (real rpms pad the same way).
+def rpm_section(strings):
+    data, entries = b"", []
+    for tag, value in strings:
+        entries.append((tag, 6, len(data), 1))
+        data += value.encode() + b"\0"
+    data += b"\0" * ((8 - len(data) % 8) % 8)  # the data section itself ends on the boundary of 8
+    head = b"\x8e\xad\xe8\x01" + b"\0" * 4 + struct.pack(">II", len(entries), len(data))
+    index = b"".join(struct.pack(">4i", *e) for e in entries)
+    return head + index + data
+
+strings = [(1000, name), (1001, version), (1002, release), (1022, arch)]
+lead = b"\xed\xab\xee\xdb" + b"\x00" * 92  # only the magic is checked; the payload is none of our scripts' business
+with open(d + "/KuickShare-x86_64.rpm", "wb") as f:
+    f.write(lead + rpm_section(strings) + rpm_section(strings))
+
+# deb: a real ar: debian-binary, control.tar.xz (a tar with the control file), data.tar.xz (never read).
+control = "\n".join([
+    "Package: %s" % deb_name,
+    "Version: %s" % deb_version,
+    "Architecture: %s" % deb_arch,
+    "Maintainer: KuickShare Developers <the-beper@users.noreply.github.com>",
+    "Description: the simulation's fake package",
+    "",
+]).encode()
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w:xz") as t:
+    info = tarfile.TarInfo("./control")
+    info.size = len(control)
+    t.addfile(info, io.BytesIO(control))
+
+def ar_member(mname, body):
+    header = ("%-16s%-12d%-6d%-6d%-8s%-10d" % (mname, 0, 0, 0, "100644", len(body))).encode() + b"\x60\x0a"
+    return header + body + (b"\n" if len(body) % 2 else b"")
+
+with open(d + "/KuickShare-x86_64.deb", "wb") as f:
+    f.write(b"!<arch>\n" + ar_member("debian-binary/", b"2.0\n") +
+            ar_member("control.tar.xz/", buf.getvalue()) + ar_member("data.tar.xz/", b"data"))
+
+# pkg: a tar member .PKGINFO, compressed with zstd (the CLI, as package-info decompresses it).
+pkginfo = "".join([
+    "pkgname = %s\n" % pkg_name,
+    "pkgver = %s\n" % pkg_version,
+    "arch = %s\n" % pkg_arch,
+]).encode()
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w:") as t:
+    info = tarfile.TarInfo(".PKGINFO")
+    info.size = len(pkginfo)
+    t.addfile(info, io.BytesIO(pkginfo))
+# pkg: a tar member .PKGINFO, compressed with zstd (the CLI, as package-info decompresses it); -f: the
+# mismatch cases above write into the same directory again.
+subprocess.run(["zstd", "-q", "-f", "-o", d + "/KuickShare-x86_64.pkg.tar.zst", "-"],
+               input=buf.getvalue(), stdout=subprocess.DEVNULL, check=True)
+PY
+}
+
+make_assets() { # <dir> <version> [<tarball inner version>]
     d=$1
     v=$2
     mkdir -p "$d" "$d.tarstage/KuickShare-$v-x86_64/usr/share/kuickshare"
@@ -133,6 +210,7 @@ make_assets() { # <dir> <version>
     echo '#!/bin/sh' > "$d.tarstage/KuickShare-$v-x86_64/install.sh"
     tar -C "$d.tarstage" -czf "$d/KuickShare-x86_64.tar.gz" "KuickShare-$v-x86_64"
     echo "fake flatpak bundle $v" > "$d/KuickShare-x86_64.flatpak"
+    packages "$d" "$v"
     python3 -I - "$d" <<'PY'
 import hashlib
 import sys
@@ -214,7 +292,8 @@ XML
     export FAKE_PAGES_ORIGIN FAKE_PAGES_URL FAKE_PAGES_STALE FAKE_OSTREE_LOG FAKE_OSTREE_ORPHAN FAKE_FLATPAK_LOG
     : > "$FAKE_GH_LOG"
     echo '{"next_id": 1, "releases": [], "latest": null}' > "$FAKE_GH_STATE"
-    unset EXPECT_SHA256_APPIMAGE EXPECT_SHA256_ZSYNC EXPECT_SHA256_TARBALL EXPECT_SHA256_FLATPAK
+    unset EXPECT_SHA256_APPIMAGE EXPECT_SHA256_ZSYNC EXPECT_SHA256_TARBALL EXPECT_SHA256_FLATPAK \
+        EXPECT_SHA256_RPM EXPECT_SHA256_DEB EXPECT_SHA256_PKG
     drop_secret
 
     # The published repository (gh-pages): version 1.2.2, signed with key A, as the live one is.
@@ -247,7 +326,11 @@ hashes_of_dist() {
     EXPECT_SHA256_ZSYNC=$(sha256_of "$w/dist/KuickShare-x86_64.AppImage.zsync")
     EXPECT_SHA256_TARBALL=$(sha256_of "$w/dist/KuickShare-x86_64.tar.gz")
     EXPECT_SHA256_FLATPAK=$(sha256_of "$w/dist/KuickShare-x86_64.flatpak")
-    export EXPECT_SHA256_APPIMAGE EXPECT_SHA256_ZSYNC EXPECT_SHA256_TARBALL EXPECT_SHA256_FLATPAK
+    EXPECT_SHA256_RPM=$(sha256_of "$w/dist/KuickShare-x86_64.rpm")
+    EXPECT_SHA256_DEB=$(sha256_of "$w/dist/KuickShare-x86_64.deb")
+    EXPECT_SHA256_PKG=$(sha256_of "$w/dist/KuickShare-x86_64.pkg.tar.zst")
+    export EXPECT_SHA256_APPIMAGE EXPECT_SHA256_ZSYNC EXPECT_SHA256_TARBALL EXPECT_SHA256_FLATPAK \
+        EXPECT_SHA256_RPM EXPECT_SHA256_DEB EXPECT_SHA256_PKG
 }
 
 # The jobs after the build, each leaves its status in $rc.
@@ -348,7 +431,7 @@ echo "1..$total"
 # ---- 1. the happy path ----
 full_release 1
 check "publish exits 0" rc_is 0
-check "the release is published, has five assets and is the latest" state_is "published 5 latest"
+check "the release is published, has eight assets and is the latest" state_is "published 8 latest"
 check "the release notes list the metainfo items" file_has "$FAKE_GH_STATE" "What's Changed\\\\n\\\\n- First change with \`code\`."
 check "the release notes link the changelog to the previous tag" file_has "$FAKE_GH_STATE" "Full Changelog\\*\\*: https://github.com/example/KuickShare/compare/v1.2.2\\.\\.\\.v1.2.3"
 check "the AppImage was uploaded once" same "$(gh_count 'upload KuickShare-x86_64.AppImage')" 1
@@ -430,6 +513,68 @@ echo tampered > "$w/assets/SHA256SUMS"
 job_publish
 check "publish refuses another SHA256SUMS" rc_fails
 end_case "checksum mismatch: build hash, zsync, tarball VERSION, change after verify"
+
+# ---- 4b. the inner identities of the rpm, the deb and the pkg: verify refuses everything but the honest ones ----
+# The fixtures can skew single fields (the "-" of packages() keeps the honest value): every check of
+# verify-assets.sh must refuse exactly the skew it names.
+make_world 43
+build_jobs
+job_verify
+check "verify accepts the honest identities" rc_is 0
+packages "$w/dist" 1.2.3 kuickshare 1.2.2 1.fc45 x86_64
+job_verify
+check "verify refuses an rpm of another version" rc_is 1
+check "(the message says so)" out_has "the tag says '1.2.3'"
+packages "$w/dist" 1.2.3 kuickshare2 1.2.3 1.fc45 x86_64
+job_verify
+check "verify refuses an rpm named kuickshare2" rc_is 1
+check "(the message says so)" out_has "not kuickshare"
+packages "$w/dist" 1.2.3 kuickshare 1.2.3 2.fc45 x86_64
+job_verify
+check "verify refuses an rpm whose release is not 1 or 1.<dist>" rc_is 1
+check "(the message says so)" out_has "the release inside"
+packages "$w/dist" 1.2.3 kuickshare 1.2.3 1.fc45 i686
+job_verify
+check "verify refuses an rpm for another machine" rc_is 1
+check "(the message says so)" out_has "the arch inside"
+packages "$w/dist" 1.2.3 - - - - kuickshare 1.2.3-2 amd64 -
+job_verify
+check "verify refuses a deb of another revision" rc_is 1
+check "(the message says so)" out_has "the tag says '1.2.3-1'"
+packages "$w/dist" 1.2.3 - - - - kuickshare 1.2.3-1 all -
+job_verify
+check "verify refuses a deb for all machines" rc_is 1
+check "(the message says so)" out_has "the arch inside"
+packages "$w/dist" 1.2.3 - - - - - - - kuickshare 1.2.2-1 x86_64
+job_verify
+check "verify refuses a pkg of another version" rc_is 1
+check "(the message says so)" out_has "the tag says '1.2.3-1'"
+packages "$w/dist" 1.2.3 - - - - - - - kuickshare 1.2.3-1 aarch64
+job_verify
+check "verify refuses a pkg for another machine" rc_is 1
+check "(the message says so)" out_has "the arch inside"
+echo garbage > "$w/dist/KuickShare-x86_64.rpm"
+job_verify
+check "verify refuses a file that is not a valid rpm" rc_is 1
+check "(package-info's own message is in the log)" out_has "not a valid rpm"
+packages "$w/dist" 1.2.3
+echo garbage > "$w/dist/KuickShare-x86_64.deb"
+job_verify
+check "verify refuses a file that is not a valid deb" rc_is 1
+check "(package-info's own message is in the log)" out_has "not a valid deb"
+packages "$w/dist" 1.2.3
+echo garbage > "$w/dist/KuickShare-x86_64.pkg.tar.zst"
+job_verify
+check "verify refuses a file that is not a valid pkg" rc_is 1
+check "(package-info's own message is in the log)" out_has "not a valid pkg"
+packages "$w/dist" 1.2.3
+job_verify
+check "with the honest packages everything passes again" rc_is 0
+job_sign
+job_publish
+check "the whole run publishes the release with the packages" rc_is 0
+check "(and it has all eight assets)" state_is "published 8 latest"
+end_case "inner identities: name, version, release, revision and arch of the three packages are the tag's, or verify refuses; garbage is refused by package-info itself"
 
 # ---- 5. tag and version ----
 make_world 5
@@ -1624,7 +1769,7 @@ FAKE_GH_PARTIAL=1
 export FAKE_GH_FAIL FAKE_GH_PARTIAL
 job_publish
 check "publish fails when an upload fails" rc_fails
-check "the release is still a draft" state_is "draft 3 -"
+check "the release is still a draft" state_is "draft 6 -"
 check "gh-pages was not touched" same "$(pages_head)" "$base_sha"
 FAKE_GH_FAIL=
 FAKE_GH_PARTIAL=
@@ -1633,8 +1778,8 @@ job_publish
 check "the rerun completes" rc_is 0
 check "(it removed the unfinished upload)" out_has "removing the unfinished upload"
 check "(it found the finished files by their content)" out_has "already on the release"
-check "the release is complete" state_is "published 5 latest"
-check "no file was uploaded twice" same "$(gh_count 'upload KuickShare-x86_64.AppImage')$(gh_count 'upload KuickShare-x86_64.AppImage.zsync')$(gh_count 'upload KuickShare-x86_64.flatpak')" 111
+check "the release is complete" state_is "published 8 latest"
+check "no file was uploaded twice" same "$(gh_count 'upload KuickShare-x86_64.AppImage')$(gh_count 'upload KuickShare-x86_64.AppImage.zsync')$(gh_count 'upload KuickShare-x86_64.rpm')$(gh_count 'upload KuickShare-x86_64.deb')$(gh_count 'upload KuickShare-x86_64.pkg.tar.zst')$(gh_count 'upload KuickShare-x86_64.flatpak')" 111111
 end_case "upload fails partway: draft stays, rerun finishes without uploading again"
 
 # ---- 7b. the list of releases lags behind the creation of the draft ----
@@ -1647,7 +1792,7 @@ export FAKE_GH_LIST_LAG
 job_publish
 check "publish waits for the new draft to be listed and completes" rc_is 0
 check "(it said it was waiting)" out_has "not listed yet"
-check "the release is complete" state_is "published 5 latest"
+check "the release is complete" state_is "published 8 latest"
 check "one draft was created" same "$(gh_count "create $RELEASE_TAG draft=True")" 1
 make_world 42
 build_jobs
@@ -1663,7 +1808,7 @@ FAKE_GH_LIST_LAG=
 export FAKE_GH_LIST_LAG
 job_publish
 check "the rerun finds the draft and completes" rc_is 0
-check "the release is complete after the rerun" state_is "published 5 latest"
+check "the release is complete after the rerun" state_is "published 8 latest"
 check "still one draft created" same "$(gh_count "create $RELEASE_TAG draft=True")" 1
 end_case "the list of releases lags behind a new draft: publish waits; past the wait it fails and the rerun finishes"
 
@@ -1693,7 +1838,7 @@ gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --titl
 job_publish
 check "publish completes a release that was published by hand" rc_is 0
 check "(with a warning)" out_has "warning"
-check "the release has all five assets and is the latest" state_is "published 5 latest"
+check "the release has all five assets and is the latest" state_is "published 8 latest"
 end_case "release published by hand: the missing assets are added, with a warning"
 
 # ---- 10. gh-pages pushed, release publication failed ----
@@ -1715,12 +1860,12 @@ job_publish
 check "publish fails when the release cannot be published" rc_fails
 check "(the push was skipped on the rerun)" out_has "already has this site"
 check "gh-pages is as the first run left it" same "$(pages_head)" "$pushed"
-check "the release is still a draft" state_is "draft 5 -"
+check "the release is still a draft" state_is "draft 8 -"
 FAKE_GH_FAIL=
 export FAKE_GH_FAIL
 job_publish
 check "the third run completes" rc_is 0
-check "the release is published and the latest" state_is "published 5 latest"
+check "the release is published and the latest" state_is "published 8 latest"
 check "gh-pages-previous still holds the old repository" same "$(git -C "$origin" rev-parse refs/heads/gh-pages-previous)" "$base_sha"
 end_case "gh-pages pushed but release not published: reruns skip the push and finish"
 
@@ -1741,7 +1886,7 @@ check "publish exits 3 when gh-pages is not the base" rc_is 3
 check "(the message says another release got there first)" out_has "another release got there first"
 check "gh-pages is untouched" same "$(pages_head)" "$moved"
 check "there is no gh-pages-previous" not git -C "$origin" rev-parse --verify -q refs/heads/gh-pages-previous
-check "the release is still a draft" state_is "draft 5 -"
+check "the release is still a draft" state_is "draft 8 -"
 end_case "base moved: exit 3, origin untouched, release stays a draft"
 
 # ---- 12. rollback from gh-pages-previous ----
@@ -1752,10 +1897,10 @@ git -C "$w/checkout" push -q --force origin FETCH_HEAD:refs/heads/gh-pages
 check "gh-pages is the old repository again" same "$(pages_head)" "$base_sha"
 check "the old summary is served again" same "$(pages_file repo/summary)" "$(git -C "$site" show HEAD:repo/summary)"
 gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=true
-check "the release can be put back to draft" state_is "draft 5 -"
+check "the release can be put back to draft" state_is "draft 8 -"
 job_publish
 check "running the publish job again repeats the release" rc_is 0
-check "(and it is complete)" state_is "published 5 latest"
+check "(and it is complete)" state_is "published 8 latest"
 check "gh-pages has the new site again" same "$(pages_file repo/summary)" "$(tar -xOf "$w/signed/site.tar" ./repo/summary)"
 end_case "rollback: gh-pages-previous restores the old repository; the publish job can be run again"
 
@@ -1793,12 +1938,12 @@ check "(the message says nothing moved)" out_has "neither branch has moved"
 check "(and does not blame another writer)" not out_has "another writer"
 check "gh-pages is untouched" same "$(pages_head)" "$base_sha"
 check "gh-pages-previous was not written either" not git -C "$origin" rev-parse --verify -q refs/heads/gh-pages-previous
-check "the release is still a draft" state_is "draft 5 -"
+check "the release is still a draft" state_is "draft 8 -"
 rm "$origin/hooks/update"
 job_publish
 check "the rerun completes" rc_is 0
 check "gh-pages-previous holds the old repository" same "$(git -C "$origin" rev-parse refs/heads/gh-pages-previous)" "$base_sha"
-check "the release is published and the latest" state_is "published 5 latest"
+check "the release is published and the latest" state_is "published 8 latest"
 end_case "push refused by the server: exit 1, neither branch moved, the rerun completes"
 
 # ---- 15. a writer gets in during the push ----
@@ -1817,7 +1962,7 @@ check "publish exits 3 when gh-pages moved during the push" rc_is 3
 check "(the message says another writer changed it)" out_has "another writer"
 check "gh-pages is the other writer's commit, not ours" not same "$(pages_head)" "$base_sha"
 check "gh-pages-previous was not written" not git -C "$origin" rev-parse --verify -q refs/heads/gh-pages-previous
-check "the release is still a draft" state_is "draft 5 -"
+check "the release is still a draft" state_is "draft 8 -"
 end_case "a writer moves gh-pages during the push: exit 3, nothing of ours pushed"
 
 # ---- 15b. the push lands, the acknowledgement is lost ----
@@ -1838,7 +1983,7 @@ check "(the client did see the failure)" out_has "hung up unexpectedly"
 check "(the message says the push had landed)" out_has "the push had landed"
 check "gh-pages is the new site" same "$(pages_file repo/summary)" "$(tar -xOf "$w/signed/site.tar" ./repo/summary)"
 check "gh-pages-previous holds the old repository" same "$(git -C "$origin" rev-parse refs/heads/gh-pages-previous)" "$base_sha"
-check "the release is published and the latest" state_is "published 5 latest"
+check "the release is published and the latest" state_is "published 8 latest"
 end_case "the push lands but its acknowledgement is lost: the run goes on and publishes"
 
 # ---- 16. gh-pages-previous refused, gh-pages alone would pass ----
@@ -1853,7 +1998,7 @@ job_publish
 check "publish fails when gh-pages-previous is refused" rc_is 1
 check "gh-pages is untouched (the push is atomic)" same "$(pages_head)" "$base_sha"
 check "gh-pages-previous does not exist" not git -C "$origin" rev-parse --verify -q refs/heads/gh-pages-previous
-check "the release is still a draft" state_is "draft 5 -"
+check "the release is still a draft" state_is "draft 8 -"
 end_case "gh-pages-previous refused: gh-pages does not move either"
 
 # ---- 17. the first release: there is no gh-pages yet ----
@@ -1878,7 +2023,7 @@ check "publish exits 0 with SITE_BASE_SHA=-" rc_is 0
 check "gh-pages exists now" test -n "$(pages_head)"
 check "there is no gh-pages-previous" not git -C "$origin" rev-parse --verify -q refs/heads/gh-pages-previous
 check "gh-pages is the new site" same "$(pages_file repo/summary)" "$(tar -xOf "$w/signed/site.tar" ./repo/summary)"
-check "the release is published and the latest" state_is "published 5 latest"
+check "the release is published and the latest" state_is "published 8 latest"
 end_case "first release: no gh-pages, SITE_BASE_SHA=-: pushed without gh-pages-previous"
 
 # ---- 18. no secret anywhere ----

@@ -5,9 +5,9 @@ name: Release
 #
 #   validate        the tag names the version of the sources and the commit, which is on main
 #   ci-gate         the CI run for that commit, pushed to main, finished green
-#   build-*         build and test the AppImage, the tarball and the Flatpak. No secret, no write permission; the Flatpak
-#                   commits are exported unsigned
-#   verify          the exact set of files, their hashes, their version
+#   build-*         build and test the AppImage, the tarball, the rpm, the .deb, the Arch package and the Flatpak. No
+#                   secret, no write permission; the Flatpak commits are exported unsigned
+#   verify          the exact set of files, their hashes and the identity inside each (the version of the tag)
 #   prepare-flatpak the Flatpak repository on top of gh-pages, unsigned: everything that parses the build's output. No secret
 #   check-flatpak   another keyless machine: checks everything prepare made (and gh-pages), and archives the checked repository.
 #                   No environment, no secret. Its outputs pin what the next job reads
@@ -35,8 +35,9 @@ defaults:
 
 env:
   SITE_URL: https://the-beper.github.io/KuickShare
-  # The Rust of the tarball build, bumped by hand (CONTRIBUTING.md, Pinned tools). The Flatpak build uses the SDK extension at
-  # the commit pinned in build/flatpak/build-flatpak.sh; the AppImage uses the Rust of its image.
+  # The Rust of the tarball build, bumped by hand (CONTRIBUTING.md, Pinned tools). The rpm build uses the cargo of the
+  # fedora45 image, the flatpak the SDK extension pinned in build/flatpak/build-flatpak.sh, the deb the rustc of the
+  # Ubuntu archive (what the PPA will run), and the Arch package the rust of the AppImage image.
   RUST_VERSION: "1.99.1"
 
 jobs:
@@ -185,6 +186,135 @@ jobs:
           retention-days: 14
           compression-level: 0
 
+  build-rpm:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      rpm_sha256: ${{ steps.hash.outputs.rpm }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # The fedora45 image of images.yml, the one build-tarball runs in (it carries rpm-build, rust and cargo), by digest
+      # (bump: CONTRIBUTING.md, Pinned tools; the fedora45 digests of build-tarball and this job move in the same bump).
+      # A failed pull fails the job.
+      - name: Pull the build image
+        run: |
+          podman pull ghcr.io/the-beper/kuickshare-build:fedora45@sha256:0da038b579457e83f700797c1344f5e7f3f608d06d49f5fd23c5d2ea842ec6e8
+          podman tag ghcr.io/the-beper/kuickshare-build:fedora45@sha256:0da038b579457e83f700797c1344f5e7f3f608d06d49f5fd23c5d2ea842ec6e8 localhost/kuickshare-build:fedora45
+
+      # The script enters the image itself and works on the checkout; the smoke test below runs in bare Fedora containers.
+      - name: Build the rpm
+        run: build/packaging/build-rpm.sh
+
+      - name: Test
+        env:
+          KUICKSHARE_EXPECT_VERSION: ${{ needs.validate.outputs.version }}
+        run: build/packaging/test-rpm.sh dist/KuickShare-x86_64.rpm
+
+      - name: Hash
+        id: hash
+        run: echo "rpm=$(sha256sum dist/KuickShare-x86_64.rpm | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-rpm
+          path: dist/KuickShare-x86_64.rpm
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  build-deb:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    outputs:
+      deb_sha256: ${{ steps.hash.outputs.deb }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # The ubuntu26 image of images.yml (rustc/cargo of the Ubuntu archive: the PPA reality), by digest. PLACEHOLDER: the
+      # image is first published by images.yml when this lands on main - a local image build does not count. Before the
+      # first release, replace the zeros with the digest line of its Digest step (CONTRIBUTING.md, Pinned tools). Until
+      # then the pull fails and the release simply has no deb: never an unreviewed image.
+      - name: Pull the build image
+        run: |
+          podman pull ghcr.io/the-beper/kuickshare-build:ubuntu26@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          podman tag ghcr.io/the-beper/kuickshare-build:ubuntu26@sha256:0000000000000000000000000000000000000000000000000000000000000000 localhost/kuickshare-build:ubuntu26
+
+      - name: Build the deb
+        run: build/packaging/build-deb.sh
+
+      - name: Test
+        env:
+          KUICKSHARE_EXPECT_VERSION: ${{ needs.validate.outputs.version }}
+        run: build/packaging/test-deb.sh dist/KuickShare-x86_64.deb
+
+      - name: Hash
+        id: hash
+        run: echo "deb=$(sha256sum dist/KuickShare-x86_64.deb | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-deb
+          path: dist/KuickShare-x86_64.deb
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  build-arch:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      pkg_sha256: ${{ steps.hash.outputs.pkg }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # The Arch image of images.yml, the same one build-appimage runs in (by digest: the two arch digests move in the
+      # same bump), tagged to the name build-arch.sh looks for.
+      - name: Pull the build image
+        run: |
+          podman pull ghcr.io/the-beper/kuickshare-appimage:arch@sha256:61389bc5e90c7c859d9b4d13c5b0cf5bdee9e79f67010f510648ed75beaeddf7
+          podman tag ghcr.io/the-beper/kuickshare-appimage:arch@sha256:61389bc5e90c7c859d9b4d13c5b0cf5bdee9e79f67010f510648ed75beaeddf7 localhost/kuickshare-appimage:arch
+
+      # The script runs makepkg in the image as an unprivileged user (--userns=keep-id); the smoke test below runs in a
+      # bare Arch container.
+      - name: Build the Arch package
+        run: build/packaging/build-arch.sh
+
+      - name: Test
+        env:
+          KUICKSHARE_EXPECT_VERSION: ${{ needs.validate.outputs.version }}
+        run: build/packaging/test-arch.sh dist/KuickShare-x86_64.pkg.tar.zst
+
+      - name: Hash
+        id: hash
+        run: echo "pkg=$(sha256sum dist/KuickShare-x86_64.pkg.tar.zst | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-pkg
+          path: dist/KuickShare-x86_64.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
   # Builds the bundle and exports the commits WITHOUT a signature, onto an anonymous clone of the published repository (so that
   # they keep their parent). This job has no secret and no write token. It runs on the plain runner, not in a job container
   # (which would be a rootful, --privileged Docker container): the scripts start the build image with rootless podman, and
@@ -273,7 +403,7 @@ jobs:
           compression-level: 0
 
   verify:
-    needs: [validate, build-appimage, build-tarball, build-flatpak]
+    needs: [validate, build-appimage, build-tarball, build-rpm, build-deb, build-arch, build-flatpak]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -300,6 +430,9 @@ jobs:
           EXPECT_SHA256_ZSYNC: ${{ needs.build-appimage.outputs.zsync_sha256 }}
           EXPECT_SHA256_TARBALL: ${{ needs.build-tarball.outputs.tarball_sha256 }}
           EXPECT_SHA256_FLATPAK: ${{ needs.build-flatpak.outputs.flatpak_sha256 }}
+          EXPECT_SHA256_RPM: ${{ needs.build-rpm.outputs.rpm_sha256 }}
+          EXPECT_SHA256_DEB: ${{ needs.build-deb.outputs.deb_sha256 }}
+          EXPECT_SHA256_PKG: ${{ needs.build-arch.outputs.pkg_sha256 }}
         run: |
           build/release/verify-assets.sh release-assets
           echo "sums=$(sha256sum release-assets/SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"

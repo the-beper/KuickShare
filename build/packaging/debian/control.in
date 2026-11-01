@@ -1,0 +1,25 @@
+Source: kuickshare
+Section: net
+Priority: optional
+Maintainer: KuickShare Developers <the-beper@users.noreply.github.com>
+Rules-Requires-Root: no
+Build-Depends: cargo, cmake, debhelper-compat (= 13), extra-cmake-modules,
+ gettext, g++, libdbus-1-dev, libkf6coreaddons-dev, libkf6crash-dev,
+ libkf6dbusaddons-dev, libkf6i18n-dev, libkf6jobwidgets-dev,
+ libkf6notifications-dev, libkf6statusnotifieritem-dev, libkirigami-dev,
+ ninja-build, pkg-config, protobuf-compiler, qt6-base-dev, qt6-declarative-dev, rustc
+
+Package: kuickshare
+Architecture: amd64
+Depends: dbus, qml6-module-org-kde-desktop, qml6-module-org-kde-kirigami,
+ qml6-module-org-kde-kirigamiaddons-formcard, qml6-module-org-kde-ki18n,
+ qml6-module-qtqml-workerscript, qml6-module-qtquick,
+ qml6-module-qtquick-controls, qml6-module-qtquick-dialogs,
+ qml6-module-qtquick-layouts, qml6-module-qtquick-shapes,
+ qml6-module-qtquick-templates, qml6-module-qtquick-window, qt6-svg-plugins,
+ ${misc:Depends}, ${shlibs:Depends}
+Description: Share files between devices on the same network
+ Nothing to configure: transfer with a click or drag and drop, over Wi-Fi or Wi-Fi Direct.
+ .
+ Built against the Qt 6 of Ubuntu 26.04 (resolute): the *runtime* QML module set
+ (the Depends above) is proven by build/packaging/test-deb.sh in a bare container.
