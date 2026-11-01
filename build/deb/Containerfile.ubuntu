@@ -1,6 +1,5 @@
 # Build image of the deb package (build/packaging/build-deb.sh): Ubuntu 26.04 with the exact dev
-# packages the deb recipe builds against, and the rustc/cargo of the Ubuntu archive (that is also what
-# Launchpad would build with in phase 7 — installing the image is the rust-1.93.1 feasibility test).
+# packages the deb recipe builds against, and the rustc/cargo of the Ubuntu archive.
 # The base image ships no ca-certificates: install it first, crates.io fetches need TLS.
 # The image is published by images.yml; release.yml names it by digest (CONTRIBUTING.md, Pinned tools).
 FROM docker.io/library/ubuntu:26.04

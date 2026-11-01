@@ -196,9 +196,8 @@ jobs:
           persist-credentials: false
 
       # The fedora45 image of images.yml, tagged to the name build-env.sh looks for. main's published
-      # image can predate what this branch's recipe needs (rpmbuild first shipped with this packaging
-      # work): when it does, build the image here from this branch's Containerfile — what images.yml
-      # publishes from main after the merge; from then on every run pulls it and only probes.
+      # image can predate what this branch's recipe needs: when it does, build the image here from this
+      # branch's Containerfile — what images.yml publishes from main after the merge.
       - name: Pull the build image
         run: |
           podman pull ghcr.io/the-beper/kuickshare-build:fedora45
@@ -226,8 +225,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # The ubuntu26 image of images.yml (rustc/cargo of the Ubuntu archive: the PPA reality) first
-      # publishes from main: until then, pull requests build this branch's Containerfile instead.
+      # The ubuntu26 image of images.yml (rustc/cargo of the Ubuntu archive). If it cannot be pulled,
+      # build it from this branch's Containerfile.
       - name: Pull the build image
         run: |
           if podman pull ghcr.io/the-beper/kuickshare-build:ubuntu26; then

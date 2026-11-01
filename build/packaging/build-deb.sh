@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds dist/KuickShare-x86_64.deb as an Ubuntu 26.04 package (dpkg-buildpackage -us -uc -b) from the
 # source tarball and the rendered debian/ recipe. Runs inside the ubuntu26 build image
-# (build/deb/Containerfile.ubuntu, whose rustc/cargo are the Ubuntu archive's, like the PPA's later):
+# (build/deb/Containerfile.ubuntu, whose rustc/cargo are the Ubuntu archive's):
 #     build/packaging/build-deb.sh
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)

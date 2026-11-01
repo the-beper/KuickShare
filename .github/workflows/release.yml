@@ -37,7 +37,7 @@ env:
   SITE_URL: https://the-beper.github.io/KuickShare
   # The Rust of the tarball build, bumped by hand (CONTRIBUTING.md, Pinned tools). The rpm build uses the cargo of the
   # fedora45 image, the flatpak the SDK extension pinned in build/flatpak/build-flatpak.sh, the deb the rustc of the
-  # Ubuntu archive (what the PPA will run), and the Arch package the rust of the AppImage image.
+  # Ubuntu archive, and the Arch package the rust of the AppImage image.
   RUST_VERSION: "1.99.1"
 
 jobs:
@@ -243,7 +243,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      # The ubuntu26 image of images.yml (rustc/cargo of the Ubuntu archive: the PPA reality), by digest
+      # The ubuntu26 image of images.yml (rustc/cargo of the Ubuntu archive), by digest
       # (bump: CONTRIBUTING.md, Pinned tools). A failed pull fails the job.
       - name: Pull the build image
         run: |

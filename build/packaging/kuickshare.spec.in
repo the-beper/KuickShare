@@ -1,6 +1,6 @@
 # Rendered by build/packaging/render.sh (@VERSION@, @DATE_RPM@): the version is never edited here.
-# The same spec is used by the CI build (rpmbuild in the build image, _sourcedir at dist/tmp/packaging)
-# and by COPR in phase 5. The runtime Requires list the QML modules the app loads by hand (rpmbuild
+# The same spec is used by the CI build (rpmbuild in the build image, _sourcedir at dist/tmp/packaging).
+# The runtime Requires list the QML modules the app loads by hand (rpmbuild
 # only auto-requires the shared libraries it can see inside the run tree); the list is proven complete
 # by build/packaging/test-rpm.sh (install with weak deps off in a bare Fedora container, run offscreen).
 Name: kuickshare

@@ -1,7 +1,6 @@
 # Rendered by build/packaging/render.sh (@VERSION@, @SHA256@): edit the template, never this file.
 # pkgver must match the tag: check-version.sh compares src/shell/CMakeLists.txt, this recipe carries no
-# version to bump by hand. Source is the checksum-pinned tarball made by source-tarball.sh; the AUR
-# package in phase 6 is this file with source=(https://github.com/…/KuickShare/releases/…).
+# version to bump by hand. Source is the checksum-pinned tarball made by source-tarball.sh.
 pkgname=kuickshare
 pkgver=@VERSION@
 pkgrel=1
@@ -9,7 +8,7 @@ pkgdesc="Share files between devices on the same network"
 url="https://github.com/the-beper/KuickShare"
 license=(GPL-3.0-or-later)
 arch=(x86_64)
-# Release package, not the AUR one: no -debug subpackage (the binaries get stripped; the tests and
+# No -debug subpackage (the binaries get stripped; the tests and
 # the checks build with symbols anyway).
 options=(!debug)
 depends=(dbus kirigami ki18n kcoreaddons kcrash kdbusaddons kjobwidgets knotifications
