@@ -55,12 +55,15 @@ KDE Connect would be the natural choice, but its data transfer has been unreliab
 
 ## Install
 
-Three packages, all for KDE Plasma 6:
+Five packages, all for KDE Plasma 6:
 
 | Package | For | How |
 |---|---|---|
 | Flatpak | Any distribution | Add the repository and install (below); updates arrive through the software center |
 | AppImage | Any distribution | Download [`KuickShare-x86_64.AppImage`](https://github.com/the-beper/KuickShare/releases/latest/download/KuickShare-x86_64.AppImage) (stable link to the latest release), make it executable and run it. It brings its own libraries and installs nothing; use it with an AppImage manager such as [Gear Lever](https://github.com/mijorus/gearlever), [AM / AppMan](https://github.com/ivan-hc/AM) or [soar](https://github.com/pkgforge/soar) |
+| rpm | Fedora-based distributions | Download [`KuickShare-x86_64.rpm`](https://github.com/the-beper/KuickShare/releases/latest/download/KuickShare-x86_64.rpm) and install it with the software center or `sudo dnf install ./KuickShare-x86_64.rpm` |
+| deb | Ubuntu 26.04 and newer | Download [`KuickShare-x86_64.deb`](https://github.com/the-beper/KuickShare/releases/latest/download/KuickShare-x86_64.deb) and install it with the software center or `sudo apt install ./KuickShare-x86_64.deb` |
+| Arch | Arch Linux | Download [`KuickShare-x86_64.pkg.tar.zst`](https://github.com/the-beper/KuickShare/releases/latest/download/KuickShare-x86_64.pkg.tar.zst) and install it with `sudo pacman -U ./KuickShare-x86_64.pkg.tar.zst` |
 | Tarball | Fedora and distributions with Qt 6 and KDE Frameworks 6 | Download `KuickShare-x86_64.tar.gz`, extract it and run `install.sh`: it installs into `~/.local` and uses the system libraries |
 
 ```sh

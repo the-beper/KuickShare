@@ -117,6 +117,51 @@ What the tarball installer writes, under `XDG_DATA_HOME` and `XDG_CONFIG_HOME` w
 
 Uninstalling removes all of these except the data listed under [Where things are stored](#where-things-are-stored), which `--purge` removes as well.
 
+### rpm
+
+For Fedora (and rpm distributions it is known to work on): a system package into `/usr`, managed by the rpm database like any other package. The latest release is always at `https://github.com/the-beper/KuickShare/releases/latest/download/KuickShare-x86_64.rpm`.
+
+```sh
+sudo dnf install ./KuickShare-x86_64.rpm
+```
+
+| Command | Effect |
+|---|---|
+| `sudo dnf install ./KuickShare-x86_64.rpm` | Install or update (also in the software center, by opening the file) |
+| `sudo dnf remove kuickshare` | Remove the program; settings, history and paired devices stay |
+
+The runtime dependencies (Qt 6, KDE Frameworks 6 and their QML modules) come from the distribution's repositories. Uninstalling leaves `~/.config/kuickshare/` (settings, history, paired devices); delete it by hand to purge.
+
+### deb
+
+For Ubuntu 26.04 and newer (apt distributions it is known to work on): a system package into `/usr`, managed by the dpkg database. The latest release is always at `https://github.com/the-beper/KuickShare/releases/latest/download/KuickShare-x86_64.deb`.
+
+```sh
+sudo apt install ./KuickShare-x86_64.deb
+```
+
+| Command | Effect |
+|---|---|
+| `sudo apt install ./KuickShare-x86_64.deb` | Install or update (also in the software center, by opening the file) |
+| `sudo apt remove kuickshare` | Remove the program; settings, history and paired devices stay |
+
+Uninstalling leaves `~/.config/kuickshare/` (settings, history, paired devices); delete it by hand to purge.
+
+### Arch package
+
+For Arch Linux: a system package into `/usr`, managed by pacman like any other. The latest release is always at `https://github.com/the-beper/KuickShare/releases/latest/download/KuickShare-x86_64.pkg.tar.zst`.
+
+```sh
+sudo pacman -U ./KuickShare-x86_64.pkg.tar.zst
+```
+
+| Command | Effect |
+|---|---|
+| `sudo pacman -U ./KuickShare-x86_64.pkg.tar.zst` | Install or update; later updates are manual (this package is not in a repository) |
+| `sudo pacman -R kuickshare` | Remove the program; settings, history and paired devices stay |
+
+Uninstalling leaves `~/.config/kuickshare/` (settings, history, paired devices); delete it by hand to purge.
+
 ## First run
 
 The window opens on the Send page and a tray icon appears. The computer is visible to nearby devices under the hostname, until you change the name in Preferences.
