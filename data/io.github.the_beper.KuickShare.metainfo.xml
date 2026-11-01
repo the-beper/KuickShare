@@ -71,6 +71,14 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.7.1" date="2026-11-01">
+      <description>
+        <p>Additional install options</p>
+        <ul>
+          <li>Add RPM, DEB and ARCH packaging</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.7.0" date="2026-11-01">
       <description>
         <p>KuickShare now follows the KDE Human Interface Guidelines more closely: clearer labels, keyboard and screen reader friendly links, errors that stay until read and a quieter tray icon.</p>
