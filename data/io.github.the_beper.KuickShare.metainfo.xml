@@ -71,6 +71,14 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.7.2" date="2026-11-05">
+      <description>
+        <p>Fixed notification Copy</p>
+        <ul>
+          <li>The Copy button for text and URLs in the notification now works correctly</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.7.1" date="2026-11-01">
       <description>
         <p>Additional install options</p>
