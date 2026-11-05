@@ -1345,6 +1345,22 @@ void CoreBridge::openDownloadFolder() const
 void CoreBridge::copyToClipboard(const QString &text) const
 {
     QGuiApplication::clipboard()->setText(text);
+
+    // A tray-only app on Wayland never maps a window, so Qt cannot claim the
+    // selection: the write above is silently dropped by the compositor (the
+    // Copy action of a notification copies nothing when only the tray is open).
+    // Klipper sits in every Plasma session and can place the text itself; when
+    // it is not there (other desktops) the call fails quietly and the Qt route
+    // above stays the only one.
+    if (QGuiApplication::platformName() == QLatin1String("wayland"))
+    {
+        QDBusMessage call = QDBusMessage::createMethodCall(QStringLiteral("org.kde.klipper"),
+                                                           QStringLiteral("/klipper"),
+                                                           QStringLiteral("org.kde.klipper.klipper"),
+                                                           QStringLiteral("setClipboardContents"));
+        call.setArguments({text});
+        QDBusConnection::sessionBus().asyncCall(call, 1000);
+    }
 }
 
 void CoreBridge::openLink(const QString &url) const

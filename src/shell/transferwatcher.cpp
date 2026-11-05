@@ -1,8 +1,6 @@
 #include "transferwatcher.h"
 
-#include <QClipboard>
 #include <QDesktopServices>
-#include <QGuiApplication>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QUrl>
@@ -321,8 +319,8 @@ void TransferWatcher::notifyReceived(const QString &id, const QString &who, cons
         notification->setTitle(isLink ? i18nc("@title:notification", "Link Received") : i18nc("@title:notification", "Text Received"));
         notification->setText(i18n("From %1:\n%2", who.toHtmlEscaped(), shortened(text).toHtmlEscaped()));
         auto *copy = notification->addAction(isLink ? i18nc("@action:button", "Copy Link") : i18nc("@action:button", "Copy Text"));
-        connect(copy, &KNotificationAction::activated, this, [text]
-                { QGuiApplication::clipboard()->setText(text); });
+        connect(copy, &KNotificationAction::activated, this, [this, text]
+                { m_core->copyToClipboard(text); });
         if (isLink)
         {
             auto *open = notification->addAction(i18nc("@action:button", "Open Link"));
