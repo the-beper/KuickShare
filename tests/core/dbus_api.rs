@@ -22,6 +22,7 @@ const PROPS: &str = "org.freedesktop.DBus.Properties";
 
 struct Daemon {
     dir: PathBuf,
+    address: String,
     bus: Child,
     core: Child,
     conn: Connection,
@@ -99,6 +100,7 @@ impl Daemon {
 
         let daemon = Self {
             dir,
+            address,
             bus,
             core,
             conn,
@@ -226,6 +228,59 @@ async fn starts_with_the_default_settings() {
     assert_eq!(daemon.get::<u32>("HistoryKeepDays").await, 0);
     assert_eq!(daemon.json("History").await, serde_json::json!([]));
     assert_eq!(daemon.json("AllowedDevices").await, serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn nothing_is_in_flight_on_a_fresh_daemon() {
+    let daemon = Daemon::start("busy", None).await;
+
+    assert!(!daemon.get::<bool>("TransferBusy").await);
+    // The shell only reads it: the core alone knows what runs.
+    assert!(
+        try_set(&daemon, "TransferBusy", Variant::from(true))
+            .await
+            .is_err()
+    );
+    assert!(!daemon.get::<bool>("TransferBusy").await);
+}
+
+#[tokio::test]
+async fn the_window_flag_is_taken_back_when_the_shell_leaves_the_bus() {
+    let daemon = Daemon::start("window", None).await;
+    assert!(!daemon.get::<bool>("WindowOpen").await);
+    daemon.set("WindowOpen", Variant::from(true)).await;
+    assert!(daemon.get::<bool>("WindowOpen").await);
+
+    // The shell owns its own name while its window lives. The core starts watching a moment
+    // after it takes its name, so the shell comes and goes until the watch has seen it.
+    let shell = connect(&daemon.address).await;
+    for _ in 0..20 {
+        shell.request_name("org.kde.kuickshare").await.unwrap();
+        daemon.set("WindowOpen", Variant::from(true)).await;
+        shell.release_name("org.kde.kuickshare").await.unwrap();
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if !daemon.get::<bool>("WindowOpen").await {
+                return;
+            }
+        }
+    }
+    panic!("WindowOpen stayed true after the shell left the bus");
+}
+
+#[tokio::test]
+async fn quit_stops_the_daemon() {
+    let mut daemon = Daemon::start("quit", None).await;
+
+    daemon.call("Quit", &()).await.unwrap();
+
+    for _ in 0..150 {
+        if daemon.core.try_wait().unwrap().is_some() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("kuickshared did not stop after Quit");
 }
 
 #[tokio::test]

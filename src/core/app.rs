@@ -397,8 +397,16 @@ pub struct Core {
     /// Whether the allowed list is used; shared with the task that accepts transfers.
     trusted_enabled: Arc<AtomicBool>,
     conn: Option<Connection>,
+    /// Whether the window is open (`WindowOpen`): its toast reports how a transfer ended, so the
+    /// same notifications stay off. The shell sets it; the desktop reads it.
+    window_open: Arc<AtomicBool>,
+    /// The merged transfer events of the engine, for the desktop (tray, notifications), which the
+    /// shell used to consume as D-Bus signals of `TransferUpdated` (see `desktop::spawn`).
+    desktop_events: Option<mpsc::UnboundedSender<TransferEvent>>,
     /// Temporary hiding (not persisted), e.g. while Do Not Disturb is on.
     suspended: bool,
+    /// Whether the notification daemon's Do Not Disturb is on (see `set_dnd`).
+    dnd: bool,
     /// Temporary visibility (not persisted), set by `make_visible_for`.
     temp_visible: Option<TempVisible>,
     temp_visible_gen: u64,
@@ -446,7 +454,10 @@ impl Core {
             trust_events: Some(trust_events),
             trusted_ips: TrustedIps::default(),
             conn: None,
+            window_open: Arc::new(AtomicBool::new(false)),
+            desktop_events: None,
             suspended: false,
+            dnd: false,
             temp_visible: None,
             temp_visible_gen: 0,
             last_lan_lookup: None,
@@ -511,6 +522,12 @@ impl Core {
         if let Some(conn) = &self.conn {
             for event in &unfinished {
                 dbus::emit_transfer(conn, event).await;
+            }
+        }
+        // The desktop closes its prompts on a final state, the same as the shell did.
+        if let Some(desktop) = &self.desktop_events {
+            for event in &unfinished {
+                let _ = desktop.send(event.clone());
             }
         }
     }
@@ -661,6 +678,10 @@ impl Core {
         // The defaults have the upgrade off, with its consent.
         self.set_consent(false);
         self.trust.set_name(self.device_name());
+        // The default of `HideWhenDnd` may differ from what it was.
+        if self.dnd {
+            self.apply_dnd();
+        }
         Ok(())
     }
 
@@ -812,7 +833,7 @@ impl Core {
         if let Some(window) = temp_window(seconds) {
             self.temp_visible_gen += 1;
             let id = self.temp_visible_gen;
-            let until = unix_now() + window.as_secs() as i64;
+            let until = history::now() + window.as_secs() as i64;
             let task = tokio::spawn(expire_temp_visible(self.handle.clone(), id, until));
             self.temp_visible = Some(TempVisible { id, until, task });
         }
@@ -848,9 +869,97 @@ impl Core {
         self.apply_visibility();
     }
 
+    /// Whether the app window is open (`WindowOpen`). Its toast reports how a transfer ended, so
+    /// the desktop keeps the end-of-transfer notifications off then.
+    pub fn window_open(&self) -> bool {
+        self.window_open.load(Ordering::Relaxed)
+    }
+
+    pub fn set_window_open(&mut self, open: bool) {
+        self.window_open.store(open, Ordering::Relaxed);
+    }
+
+    /// The transfers in flight, those not heard of for too long left out (see `drop_stale`): what
+    /// `is_idle` and the tray state go by, so a transfer whose end was lost never counts for ever.
+    fn live_transfers(&self) -> std::sync::MutexGuard<'_, HashMap<String, TransferEvent>> {
+        let mut active = self.active.lock().unwrap();
+        drop_stale(&mut active, history::now());
+        active
+    }
+
+    /// Whether an incoming transfer waits for the user's consent: the tray wakes for it.
+    pub fn transfer_waiting(&self) -> bool {
+        self.live_transfers()
+            .values()
+            .any(|t| t.kind == "inbound" && t.state == "WaitingForUserConsent")
+    }
+
+    /// Whether a transfer runs or is on its way (anything but a waiting consent that a final
+    /// state would end): the tray says so. A send still choosing its route, scanning or dialing
+    /// lives in the `SendBook` only, and counts too.
+    pub fn transfer_busy(&self) -> bool {
+        !self.lib_actions.sends.is_empty()
+            || self.live_transfers().values().any(|t| {
+                !dbus::final_state(&t.state)
+                    && (t.kind != "inbound" || t.state != "WaitingForUserConsent")
+            })
+    }
+
+    /// Whether quitting would lose a transfer: one that is busy or waits for its consent. What
+    /// the tray's Quit and the shell's quit question (`TransferBusy`) decide by.
+    pub fn transfer_in_flight(&self) -> bool {
+        // One look at `active`: two (busy, then waiting) could both miss a transfer that goes
+        // from waiting to running between them.
+        !self.lib_actions.sends.is_empty()
+            || self
+                .live_transfers()
+                .values()
+                .any(|t| !dbus::final_state(&t.state))
+    }
+
+    /// Takes the sending end the desktop reads merged transfer events on (see `set_desktop`).
+    pub fn set_desktop(&mut self, events: mpsc::UnboundedSender<TransferEvent>) {
+        self.desktop_events = Some(events);
+    }
+
+    /// Whether a temporary visibility is running (until its expiry task ends it).
+    pub fn temp_visible_active(&self) -> bool {
+        self.temp_visible.is_some()
+    }
+
+    /// The visibility the nearby devices see, temporary visibility included, Do Not Disturb
+    /// excluded. The engine (`apply_visibility`) and the tray menu's checkmark both read this, so
+    /// they cannot disagree.
+    pub fn effective_visible(&self) -> bool {
+        effective_visible(
+            self.settings.visible,
+            self.temp_visible_active(),
+            self.suspended,
+        )
+    }
+
+    /// Stores the option and applies it at once when Do Not Disturb is on.
     pub fn set_hide_when_dnd(&mut self, hide: bool) {
         self.settings.hide_when_dnd = hide;
         self.save();
+        if self.dnd {
+            self.apply_dnd();
+        }
+    }
+
+    /// Tells the core whether Do Not Disturb is on (the desktop watches the notification daemon):
+    /// with `HideWhenDnd` this computer hides while it is.
+    pub fn set_dnd(&mut self, on: bool) {
+        self.dnd = on;
+        self.apply_dnd();
+    }
+
+    /// Hides while Do Not Disturb is on and the option says so; a no-op does not reach the library.
+    fn apply_dnd(&mut self) {
+        let hide = self.dnd && self.settings.hide_when_dnd;
+        if hide != self.suspended {
+            self.set_suspended(hide);
+        }
     }
 
     fn apply_visibility(&mut self) {
@@ -858,14 +967,6 @@ impl Core {
         if let Some(engine) = &mut self.engine {
             engine.rqs.change_visibility(visibility(visible));
         }
-    }
-
-    fn effective_visible(&self) -> bool {
-        effective_visible(
-            self.settings.visible,
-            self.temp_visible.is_some(),
-            self.suspended,
-        )
     }
 
     /// The handle the D-Bus service uses for Accept and Decline (see `LibActions`).
@@ -1119,9 +1220,7 @@ impl Core {
     }
 
     fn is_idle(&self) -> bool {
-        let mut active = self.active.lock().unwrap();
-        drop_stale(&mut active, history::now());
-        active.is_empty()
+        self.live_transfers().is_empty()
     }
 
     /// Fails while a transfer runs or a send is still starting (choosing its route, or queued and
@@ -1202,6 +1301,7 @@ impl Core {
                 trusted_enabled: self.trusted_enabled.clone(),
                 consents: self.consents.clone(),
                 generation: self.consents.generation(),
+                desktop: self.desktop_events.clone(),
                 core: self.handle.clone(),
             },
             rqs.message_sender.subscribe(),
@@ -2058,17 +2158,11 @@ fn temp_window(seconds: u32) -> Option<Duration> {
     (seconds > 0).then(|| Duration::from_secs(seconds.min(MAX_TEMP_VISIBLE_SECS).into()))
 }
 
-fn unix_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
-}
-
 /// Waits until the wall clock reaches `until` (Unix seconds), in steps: a monotonic sleep does not
 /// count the time the system spent suspended.
 async fn expire_temp_visible(core: Weak<Mutex<Core>>, id: u64, until: i64) {
     loop {
-        let left = until - unix_now();
+        let left = until - history::now();
         if left <= 0 {
             break;
         }
@@ -2344,9 +2438,10 @@ mod tests {
     }
 
     fn transfer(last_event: i64) -> TransferEvent {
-        let mut transfer = TransferEvent::default();
-        transfer.last_event = last_event;
-        transfer
+        TransferEvent {
+            last_event,
+            ..TransferEvent::default()
+        }
     }
 
     #[test]
@@ -2466,6 +2561,72 @@ mod tests {
         let mut left: Vec<_> = active.keys().cloned().collect();
         left.sort();
         assert_eq!(left, ["quiet but alive", "recent"]);
+    }
+
+    #[test]
+    fn a_consent_that_waits_is_in_flight_but_not_busy() {
+        let core = test_core();
+        assert!(!core.transfer_busy() && !core.transfer_waiting() && !core.transfer_in_flight());
+        seed_active(
+            &core,
+            "10.0.0.5:4000",
+            "inbound",
+            "WaitingForUserConsent",
+            "a",
+        );
+        assert!(core.transfer_waiting());
+        assert!(!core.transfer_busy());
+        assert!(core.transfer_in_flight());
+        seed_active(&core, "10.0.0.6:4000", "outbound", "SendingFiles", "b");
+        assert!(core.transfer_busy());
+    }
+
+    #[test]
+    fn a_send_that_is_still_starting_is_busy() {
+        let core = test_core();
+        // Scanning or dialing: the send is in the book, the library has not heard of it yet.
+        let pending = core.lib_actions.sends().begin("ble:ABCD");
+        assert!(core.transfer_busy());
+        assert!(core.transfer_in_flight());
+        drop(pending);
+        assert!(!core.transfer_busy());
+        assert!(!core.transfer_in_flight());
+    }
+
+    #[test]
+    fn a_transfer_whose_end_was_lost_stops_counting() {
+        let core = test_core();
+        for (id, kind, state) in [
+            ("10.0.0.5:4000", "outbound", "SendingFiles"),
+            ("10.0.0.6:4000", "inbound", "WaitingForUserConsent"),
+        ] {
+            let event = TransferEvent {
+                last_event: history::now() - STALE_AFTER_SECS - 1,
+                ..TransferEvent::for_test(id, kind, state, "phone")
+            };
+            core.active.lock().unwrap().insert(id.to_owned(), event);
+        }
+        assert!(!core.transfer_busy());
+        assert!(!core.transfer_waiting());
+        assert!(!core.transfer_in_flight());
+    }
+
+    #[test]
+    fn hide_when_dnd_applies_at_once_while_do_not_disturb_is_on() {
+        let mut core = test_core();
+        core.settings.hide_when_dnd = true;
+        core.set_dnd(true);
+        assert!(core.suspended());
+        core.set_hide_when_dnd(false);
+        assert!(!core.suspended());
+        core.set_hide_when_dnd(true);
+        assert!(core.suspended());
+        core.set_dnd(false);
+        assert!(!core.suspended());
+        // Without Do Not Disturb the option changes nothing.
+        core.set_hide_when_dnd(false);
+        core.set_hide_when_dnd(true);
+        assert!(!core.suspended());
     }
 
     // --- The lifecycle of a send, a restart and the exit -------------------------------------

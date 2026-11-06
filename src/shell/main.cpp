@@ -9,7 +9,6 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QIcon>
-#include <QMenu>
 #include <QPointer>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
@@ -22,15 +21,12 @@
 #include <KLocalizedQmlContext>
 #include <KLocalizedString>
 #include <KSignalHandler>
-#include <KStatusNotifierItem>
 
 #include "corebridge.h"
 #include "devicematch.h"
 #include "devicemodel.h"
 #include "instance.h"
 #include "integration.h"
-#include "dndwatcher.h"
-#include "transferwatcher.h"
 #include "updatewatcher.h"
 
 int main(int argc, char *argv[])
@@ -53,13 +49,16 @@ int main(int argc, char *argv[])
     KAboutData::setApplicationData(about);
     // The app icons are installed with the application; fall back to a stock icon when running from a build tree.
     const QString appIcon = QIcon::hasThemeIcon(QStringLiteral("io.github.the_beper.KuickShare")) ? QStringLiteral("io.github.the_beper.KuickShare") : QStringLiteral("emblem-shared");
-    const QString trayIcon = QIcon::hasThemeIcon(QStringLiteral("io.github.the_beper.KuickShare-symbolic")) ? QStringLiteral("io.github.the_beper.KuickShare-symbolic") : appIcon;
     QApplication::setWindowIcon(QIcon::fromTheme(appIcon));
 
-    const QCommandLineOption background(QStringLiteral("background"), i18n("Start hidden in the system tray"));
+    const QCommandLineOption background(QStringLiteral("background"), i18n("Start the sharing service and exit"));
     const QCommandLineOption page(QStringList{QStringLiteral("page")}, i18n("Open the given page: send, transfers, settings or help"), QStringLiteral("page"));
     const QCommandLineOption device(QStringLiteral("device"), i18n("Send the files to the nearby device with this name"), QStringLiteral("name"));
     const QCommandLineOption replace(QStringLiteral("replace"), i18n("Quit a running instance and take its place"));
+    const QCommandLineOption openFiles(QStringLiteral("open-files"), i18n("Open the Send page with the file dialog open"));
+    const QCommandLineOption clipboard(QStringLiteral("clipboard"), i18n("Open the Send page with the clipboard ready to paste"));
+    const QCommandLineOption transfer(QStringList{QStringLiteral("transfer")}, i18n("Open the given transfer on the Transfers page"), QStringLiteral("id"));
+    const QCommandLineOption requestQuit(QStringLiteral("request-quit"), i18n("Quit, asking first when a transfer is in progress"));
     auto setupParser = [&](QCommandLineParser &p)
     {
         about.setupCommandLine(&p);
@@ -67,6 +66,10 @@ int main(int argc, char *argv[])
         p.addOption(replace);
         p.addOption(page);
         p.addOption(device);
+        p.addOption(openFiles);
+        p.addOption(clipboard);
+        p.addOption(transfer);
+        p.addOption(requestQuit);
         p.addPositionalArgument(QStringLiteral("files"), i18n("Files to send"), QStringLiteral("[files...]"));
     };
     QCommandLineParser parser;
@@ -83,10 +86,13 @@ int main(int argc, char *argv[])
     KDBusService service(KDBusService::Unique);
 
     CoreBridge core;
-    TransferWatcher transfers(&core);
-    DndWatcher dnd(&core);
 
     std::unique_ptr<QQmlApplicationEngine> engine;
+    // The tray and the notifications belong to the core. Set when a user quit (`Qt.quit()` in the
+    // window, also after `--request-quit`) or when the window went away with "Keep running in the background" off: the core is
+    // stopped by `Quit` then, at the end of the event loop.
+    bool quitting = false;
+    bool stopBackground = false;
 
     // An update installed under a running instance: start the new version once idle (no transfer, window closed).
     UpdateWatcher updates;
@@ -148,6 +154,9 @@ int main(int argc, char *argv[])
             return qobject_cast<QQuickWindow *>(engine->rootObjects().constFirst());
         }
         engine = std::make_unique<QQmlApplicationEngine>();
+        // `Qt.quit()` in the window (Ctrl+Q, the quit dialog) is a user quit: the service stops too.
+        QObject::connect(engine.get(), &QQmlEngine::quit, &app, [&quitting]
+                         { quitting = true; });
         KLocalization::setupLocalizedContext(engine.get());
         QVariantMap initial{{QStringLiteral("core"), QVariant::fromValue(&core)}, {QStringLiteral("askIntegration"), askIntegration}};
         if (!startPage.isEmpty())
@@ -164,22 +173,33 @@ int main(int argc, char *argv[])
             return nullptr;
         }
         QPointer<QQuickWindow> window = qobject_cast<QQuickWindow *>(engine->rootObjects().constFirst());
-        QObject::connect(window, &QQuickWindow::visibleChanged, &app, [&engine, &app, &restartIfIdle, window](bool visible)
+        // `window` by value: this local is gone when the handler runs.
+        QObject::connect(window, &QQuickWindow::visibleChanged, &app, [&, window](bool visible)
                          {
+            // The toast of the window replaces the end-of-transfer notifications then.
+            core.setWindowOpen(visible);
             if (visible)
             {
                 return;
             }
             // Not from inside the close handler that hid the window.
-            QTimer::singleShot(0, &app, [&engine, &restartIfIdle, window]
+            QTimer::singleShot(0, &app, [&engine, &restartIfIdle, window, &core, &stopBackground, &app]
                                {
                 if (window && !window->isVisible())
                 {
+                    // The event loop ends a moment later (app.quit below): the write must
+                    // land while the process is still on the bus.
+                    core.setWindowOpen(false, true);
                     engine.reset();
 #ifdef __GLIBC__
                     malloc_trim(0);
 #endif
+                    // The shell is only the window: the background (tray, notifications) is
+                    // the core's. With "Keep running in the background" off nothing is left
+                    // to run: the core quits too, and this process goes out.
+                    stopBackground = !core.trayIcon();
                     restartIfIdle(true);
+                    app.quit();
                 } }); });
         return window;
     };
@@ -191,15 +211,6 @@ int main(int argc, char *argv[])
             window->show();
             window->raise();
             window->requestActivate();
-        }
-    };
-    // Do not open the old version over a newer installed one: the new instance opens the window and replaces this one.
-    // Only for a plain open: the page, transfer or action asked for would be lost.
-    auto openWindow = [&]
-    {
-        if (!restartIfIdle(false))
-        {
-            showWindow();
         }
     };
     // Set by queueFiles when a folder was refused (too many files, or none): a `--device` send must not go on.
@@ -345,21 +356,35 @@ int main(int argc, char *argv[])
         devicePoll.start();
         checkDevice();
     };
-    QObject::connect(&service, &KDBusService::activateRequested, &app, [&](const QStringList &arguments, const QString &workingDirectory)
-                     {
-        QCommandLineParser other;
-        setupParser(other);
-        other.parse(arguments);
+
+    // What a fresh start and an activation with these arguments do: the same set of actions
+    // both times, so a second `kuickshare --open-files` lands like the first one did. The tray
+    // and the notifications belong to the core, which asks through arguments like these.
+    auto handleArguments = [&](const QCommandLineParser &other, const QString &workingDirectory)
+    {
         const QStringList queued = queueFiles(other.positionalArguments(), workingDirectory);
+        if (other.isSet(requestQuit))
+        {
+            // The whole app stops: the core quits after the engine and the Wi-Fi are done.
+            // A transfer in progress asks first (the dialog lives in the window; the core
+            // opened this shell only to ask). `quitting` is set when the window's `Qt.quit()`
+            // runs, so a cancelled dialog leaves the service alone.
+            showWindow();
+            if (engine)
+            {
+                QMetaObject::invokeMethod(ensureWindow(), "requestQuit");
+            }
+            return;
+        }
+        if (other.isSet(device) && queueRefused)
+        {
+            // The error is already shown and the expanded files stay queued; nothing is sent,
+            // not even older queue contents.
+            showWindow();
+            return;
+        }
         if (other.isSet(device))
         {
-            if (queueRefused)
-            {
-                // The error is already shown and the expanded files stay queued; nothing is sent, not even older queue contents.
-                endDeviceSend(false);
-                showWindow();
-                return;
-            }
             if (!other.isSet(background))
             {
                 showWindow();
@@ -367,165 +392,92 @@ int main(int argc, char *argv[])
             startDeviceSend(other.value(device), queued);
             return;
         }
-        showWindow(); });
-    const QStringList queued = queueFiles(parser.positionalArguments(), QDir::currentPath());
-    if (!parser.isSet(background))
-    {
-        showWindow();
-    }
-    if (parser.isSet(device) && queueRefused)
-    {
-        showWindow();
-    }
-    else if (parser.isSet(device))
-    {
-        startDeviceSend(parser.value(device), queued);
-    }
-
-    // The window and its engine exist only while shown.
-    transfers.setWindowActiveCheck([&engine]
-                                   {
-        if (!engine || engine->rootObjects().isEmpty())
+        // The things the core (tray, notifications) and a file manager open with. `--page
+        // settings` and a second tool can be combined; a plain open follows when none arrived.
+        if (other.isSet(openFiles) || other.isSet(clipboard) || other.isSet(transfer)
+            || other.value(page) == QLatin1String("settings"))
         {
-            return false;
-        }
-        const auto *window = qobject_cast<QQuickWindow *>(engine->rootObjects().constFirst());
-        return window && window->isVisible() && window->isActive(); });
-
-    QObject::connect(&transfers, &TransferWatcher::viewRequested, &app, [&](const QString &id)
-                     {
-        showWindow();
-        if (engine)
-        {
-            QMetaObject::invokeMethod(ensureWindow(), "showTransfer", Q_ARG(QVariant, id));
-        } });
-
-    auto inWindow = [&](const char *function)
-    {
-        return [&, function]
-        {
-            showWindow();
-            if (engine)
+            if (other.isSet(openFiles) || other.isSet(clipboard) || other.isSet(transfer))
             {
-                QMetaObject::invokeMethod(ensureWindow(), function);
+                showWindow();
+                if (engine)
+                {
+                    if (other.isSet(openFiles))
+                    {
+                        QMetaObject::invokeMethod(ensureWindow(), "openFiles");
+                    }
+                    if (other.isSet(clipboard))
+                    {
+                        QMetaObject::invokeMethod(ensureWindow(), "pasteClipboard");
+                    }
+                    if (other.isSet(transfer))
+                    {
+                        QMetaObject::invokeMethod(ensureWindow(), "showTransfer", Q_ARG(QVariant, QVariant(other.value(transfer))));
+                    }
+                }
             }
-        };
-    };
-
-    // The tray item is made the first time the setting asks for it (the core reports the setting once
-    // connected). It then stays until exit, Passive while the setting is off: an item removed at runtime
-    // can stay listed in the tray, where it registers with its connection name in a Flatpak (inferred).
-    std::unique_ptr<KStatusNotifierItem> tray;
-    auto createTray = [&]
-    {
-        auto item = std::make_unique<KStatusNotifierItem>();
-        KStatusNotifierItem *sni = item.get();
-        sni->setCategory(KStatusNotifierItem::ApplicationStatus);
-        sni->setIconByName(trayIcon);
-        sni->setAttentionIconByName(trayIcon);
-        sni->setTitle(QStringLiteral("KuickShare"));
-        sni->setStandardActionsEnabled(false);
-        QObject::connect(sni, &KStatusNotifierItem::activateRequested, &app, openWindow);
-
-        auto *menu = new QMenu();
-        menu->addAction(QIcon::fromTheme(QStringLiteral("window-new")), i18nc("@action:inmenu", "Open KuickShare"), openWindow);
-        menu->addSeparator();
-        menu->addAction(QIcon::fromTheme(QStringLiteral("document-send")), i18nc("@action:inmenu", "Send Files…"), inWindow("openFiles"));
-        menu->addAction(QIcon::fromTheme(QStringLiteral("edit-paste")), i18nc("@action:inmenu", "Send Clipboard"), inWindow("pasteClipboard"));
-        auto *visible = menu->addAction(QIcon::fromTheme(QStringLiteral("visibility")), i18nc("@action:inmenu", "Visible to Nearby Devices"));
-        visible->setCheckable(true);
-        visible->setChecked(core.visible());
-        QObject::connect(visible, &QAction::triggered, &core, &CoreBridge::setVisible);
-        QObject::connect(&core, &CoreBridge::visibleChanged, visible, [visible, &core]
-                         { visible->setChecked(core.visible()); });
-        // The label stays the same in both states; the time left is in the tray's tooltip.
-        auto *visibleFor = menu->addAction(QIcon::fromTheme(QStringLiteral("chronometer")), i18nc("@action:inmenu", "Visible for 10 Minutes"));
-        visibleFor->setCheckable(true);
-        auto *visibleForTimer = new QTimer(visibleFor);
-        visibleForTimer->setInterval(30000);
-        auto updateVisibleFor = [visibleFor, &core, sni, trayIcon]
-        {
-            const qint64 left = core.visibleUntil() - QDateTime::currentSecsSinceEpoch();
-            const bool active = core.visibleUntil() > 0 && left > 0;
-            visibleFor->setChecked(active);
-            const int minutes = static_cast<int>((left + 59) / 60);
-            sni->setToolTip(trayIcon, QStringLiteral("KuickShare"),
-                            active ? i18ncp("@info:tooltip", "Visible for %1 more minute", "Visible for %1 more minutes", minutes) : QString());
-        };
-        QObject::connect(visibleForTimer, &QTimer::timeout, visibleFor, updateVisibleFor);
-        QObject::connect(&core, &CoreBridge::visibleUntilChanged, visibleFor, [visibleForTimer, &core, updateVisibleFor]
-                         {
-            core.visibleUntil() > 0 ? visibleForTimer->start() : visibleForTimer->stop();
-            updateVisibleFor(); });
-        QObject::connect(visibleFor, &QAction::triggered, &core, [&core, updateVisibleFor]
-                         {
-            core.makeVisibleFor(core.visibleUntil() > QDateTime::currentSecsSinceEpoch() ? 0 : 600);
-            updateVisibleFor(); // the core's answer fixes the state if the call fails
-        });
-        // The item can be made while a temporary visibility runs.
-        if (core.visibleUntil() > 0)
-        {
-            visibleForTimer->start();
-        }
-        updateVisibleFor();
-        menu->addSeparator();
-        menu->addAction(QIcon::fromTheme(QStringLiteral("configure")), i18nc("@action:inmenu", "Preferences"), inWindow("showSettings"));
-
-        auto requestQuit = inWindow("requestQuit");
-        menu->addAction(QIcon::fromTheme(QStringLiteral("application-exit")), i18nc("@action:inmenu", "Quit"), [&, sni, requestQuit]
-                        {
-            if (core.transferActive())
+            if (other.value(page) == QLatin1String("settings"))
             {
-                requestQuit();
+                showWindow();
+                if (engine)
+                {
+                    QMetaObject::invokeMethod(ensureWindow(), "showSettings");
+                }
             }
-            else
-            {
-                sni->setStatus(KStatusNotifierItem::Passive);
-                app.quit();
-            } });
-        sni->setContextMenu(menu);
-        return item;
-    };
-    // As the HIG asks, the icon stands out only when there is something to report: Active during a
-    // transfer or a temporary visibility, NeedsAttention while a request waits for an answer, and
-    // otherwise Passive (among the tray's hidden icons).
-    auto applyTray = [&]
-    {
-        if (!tray && core.trayIcon())
-        {
-            tray = createTray();
-        }
-        if (!tray)
-        {
             return;
         }
-        if (!core.trayIcon())
+        // `--background` with files (or a refused folder) still shows the window: it holds the
+        // queue or the error, and a window never shown would keep this process alive.
+        if (!other.isSet(background) || !queued.isEmpty() || queueRefused)
         {
-            tray->setStatus(KStatusNotifierItem::Passive);
+            showWindow();
         }
-        else if (core.transfers()->waiting())
+    };
+
+    QObject::connect(&service, &KDBusService::activateRequested, &app, [&](const QStringList &arguments, const QString &workingDirectory)
+                     {
+        QCommandLineParser other;
+        setupParser(other);
+        other.parse(arguments);
+        handleArguments(other, workingDirectory); });
+    // `--background` (autostart entry, a restart over an update): the core started in the
+    // CoreBridge constructor owns the background from here on. The shell leaves only after
+    // the core is on the bus: a fresh connection runs the side effects of it (the Dolphin
+    // entry, the autostart). Nothing else here keeps the process going.
+    if (parser.isSet(background) && parser.positionalArguments().isEmpty() && !parser.isSet(device)
+        && !parser.isSet(openFiles) && !parser.isSet(clipboard) && !parser.isSet(transfer)
+        && !parser.isSet(requestQuit))
+    {
+        if (core.connected())
         {
-            tray->setStatus(KStatusNotifierItem::NeedsAttention);
-        }
-        else if (core.transferBusy() || core.visibleUntil() > QDateTime::currentSecsSinceEpoch())
-        {
-            tray->setStatus(KStatusNotifierItem::Active);
+            QTimer::singleShot(0, &app, [&app]
+            { app.quit(); });
         }
         else
         {
-            tray->setStatus(KStatusNotifierItem::Passive);
+            // The Dolphin entry and friends are written inside the first property refresh
+            // after the core connects; then the job here is done. A refresh that never gets
+            // its answer, or an odd core, is covered by the timeout.
+            QObject::connect(&core, &CoreBridge::firstPropertiesReady, &app, [&app]
+            { app.quit(); }, Qt::SingleShotConnection);
+            QTimer::singleShot(10000, &app, [&app]
+            { app.quit(); });
         }
-    };
-    applyTray();
-    // Declared after `tray`, so it goes first at exit and takes these connections with it.
-    QObject trayContext;
-    QObject::connect(&core, &CoreBridge::trayIconChanged, &trayContext, applyTray);
-    QObject::connect(&core, &CoreBridge::transferBusyChanged, &trayContext, applyTray);
-    QObject::connect(&core, &CoreBridge::visibleUntilChanged, &trayContext, applyTray);
-    QObject::connect(core.transfers(), &TransferModel::waitingChanged, &trayContext, applyTray);
+    }
+    else
+    {
+        handleArguments(parser, QDir::currentPath());
+    }
 
     const int code = app.exec();
     // The window outlives the objects its handlers refer to otherwise.
     engine.reset();
+    core.setWindowOpen(false, true);
+    // A user quit (`--request-quit`), or a window hidden while "Keep running in the background"
+    // is off, stops the service through its `Quit`.
+    if (quitting || stopBackground)
+    {
+        core.stopService();
+    }
     return code;
 }

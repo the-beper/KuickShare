@@ -54,7 +54,7 @@ The **AppImage ships them**, so their licenses apply to that file too:
 | Software | License |
 | --- | --- |
 | Qt 6 (Base, Declarative, SVG) | LGPL-3.0 (modules also available under GPL) |
-| KDE Frameworks 6 (KI18n, KConfig, KCoreAddons, KDBusAddons, KIO, KIconThemes, KNotifications, KStatusNotifierItem) | mostly LGPL-2.0-or-later / LGPL-2.1-or-later; see each framework |
+| KDE Frameworks 6 (KI18n, KConfig, KCoreAddons, KDBusAddons, KIO, KIconThemes) | mostly LGPL-2.0-or-later / LGPL-2.1-or-later; see each framework |
 | Kirigami | LGPL-2.0-or-later |
 | kirigami-addons | LGPL-2.0-or-later (some parts GPL/MIT; unverified per file) |
 | Breeze icon theme | LGPL-3.0-or-later |

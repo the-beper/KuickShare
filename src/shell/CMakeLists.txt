@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(kuickshare VERSION 1.7.2 LANGUAGES CXX)
+project(kuickshare VERSION 1.8.0 LANGUAGES CXX)
 # Defines BUILD_TESTING (ON by default): packages pass -DBUILD_TESTING=OFF, build/check.sh -DBUILD_TESTING=ON.
 include(CTest)
 add_compile_definitions(KUICKSHARE_VERSION="${PROJECT_VERSION}")
@@ -23,7 +23,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(KUICKSHARED_PATH "" CACHE FILEPATH "Built kuickshared, installed next to the shell (system packages)")
 
 find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 DBus Widgets)
-find_package(KF6 REQUIRED COMPONENTS Kirigami I18n CoreAddons Crash DBusAddons StatusNotifierItem Notifications JobWidgets)
+find_package(KF6 REQUIRED COMPONENTS Kirigami I18n CoreAddons Crash DBusAddons)
 include(ECMFindQmlModule)
 ecm_find_qmlmodule(org.kde.kirigami REQUIRED)
 
@@ -36,9 +36,6 @@ qt_add_executable(kuickshare
     autostart.cpp
     dolphinmenu.cpp
     integration.cpp
-    transferjob.cpp
-    transferwatcher.cpp
-    dndwatcher.cpp
     instance.cpp
     updatewatcher.cpp
 )
@@ -85,7 +82,7 @@ qt_add_qml_module(kuickshare
 
 target_link_libraries(kuickshare PRIVATE
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::DBus Qt6::Widgets
-    KF6::Kirigami KF6::I18n KF6::I18nQml KF6::CoreAddons KF6::Crash KF6::DBusAddons KF6::StatusNotifierItem KF6::Notifications KF6::JobWidgets
+    KF6::Kirigami KF6::I18n KF6::I18nQml KF6::CoreAddons KF6::Crash KF6::DBusAddons
 )
 
 # Qt 6.12+ (Arch) refuses executables that copy-relocate its data symbols.

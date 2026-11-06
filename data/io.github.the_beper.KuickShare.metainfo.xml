@@ -71,6 +71,17 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.8.0" date="2026-11-06">
+      <description>
+        <p>Much lighter in the background: the tray and notifications now live in the service</p>
+        <ul>
+          <li>The tray icon and the notifications are handled by the background service, and the window process now exits when you close the window</li>
+          <li>Memory used while running in the background drops from about 95 MB to about 15 MB</li>
+          <li>Ctrl+Q and the Quit dialog now stop the background service as well</li>
+          <li>Fixed the tray and notification actions that open the window in the Flatpak</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.7.2" date="2026-11-05">
       <description>
         <p>Fixed notification Copy</p>

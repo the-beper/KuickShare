@@ -1,6 +1,7 @@
 #include "updatewatcher.h"
 
 #include "launcher.h"
+#include "portalspawn.h"
 
 #include <QCoreApplication>
 #include <QDBusArgument>
@@ -23,15 +24,6 @@ namespace
     const QString portalPath = QStringLiteral("/org/freedesktop/portal/Flatpak");
     const QString portalInterface = QStringLiteral("org.freedesktop.portal.Flatpak");
     constexpr uint spawnLatestVersion = 2;
-
-    // A plain QVariantMap would be marshalled as a{sv}; the portal wants these maps with other types.
-    QVariant emptyMap(QMetaType keyType, QMetaType valueType)
-    {
-        QDBusArgument argument;
-        argument.beginMap(keyType, valueType);
-        argument.endMap();
-        return QVariant::fromValue(argument);
-    }
 }
 
 UpdateWatcher::UpdateWatcher(QObject *parent)
@@ -119,14 +111,16 @@ bool UpdateWatcher::startReplacement(bool background)
     }
     if (Launcher::inFlatpak())
     {
-        // The portal reads argv as NUL-terminated byte strings.
-        QByteArrayList argv{QFile::encodeName(QCoreApplication::applicationFilePath()) + '\0'};
+        // The portal reads argv as NUL-terminated byte strings (`aay`; QByteArrayList does not
+        // marshal: the smoke test caught it, see portalspawn.h).
+        QStringList items{QCoreApplication::applicationFilePath()};
         for (const QString &argument : arguments)
         {
-            argv << argument.toUtf8() + '\0';
+            items << argument;
         }
+        const QVariant argv = PortalSpawn::byteArgv(items);
         auto spawn = QDBusMessage::createMethodCall(portalService, portalPath, portalInterface, QStringLiteral("Spawn"));
-        spawn << QByteArray("/\0", 2) << QVariant::fromValue(argv) << emptyMap(QMetaType::fromType<uint>(), QMetaType::fromType<QDBusUnixFileDescriptor>()) << emptyMap(QMetaType::fromType<QString>(), QMetaType::fromType<QString>()) << spawnLatestVersion << QVariantMap();
+        spawn << QByteArray("/\0", 2) << argv << PortalSpawn::emptyMap(QMetaType::fromType<uint>(), QMetaType::fromType<QDBusUnixFileDescriptor>()) << PortalSpawn::emptyMap(QMetaType::fromType<QString>(), QMetaType::fromType<QString>()) << spawnLatestVersion << QVariantMap();
         const QDBusMessage reply = QDBusConnection::sessionBus().call(spawn, QDBus::Block, 5000);
         if (reply.type() != QDBusMessage::ReplyMessage)
         {

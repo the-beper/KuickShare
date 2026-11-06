@@ -14,8 +14,7 @@ finish-args:
   - --device=dri
   # KDBusService (single instance) names the shell org.kde.kuickshare; without it the app does not start.
   - --own-name=org.kde.kuickshare
-  # Bluetooth is used to find devices; sending over Bluetooth dials an L2CAP socket, which the
-  # sandbox's seccomp filter blocks without the bluetooth feature.
+  # Bluetooth is used to find devices; sending over Bluetooth dials an L2CAP socket, which the sandbox's seccomp filter blocks without the bluetooth feature.
   - --system-talk-name=org.bluez
   - --allow=bluetooth
   # Wi-Fi upgrade: hotspot and join through NetworkManager (off unless enabled in the settings).
@@ -26,7 +25,8 @@ finish-args:
   - --system-talk-name=org.freedesktop.PolicyKit1
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
-  - --talk-name=org.kde.JobViewServer
+  # The core sets the clipboard for the copy actions of a text or link notice; klipper is the normal server of a Plasma session.
+  - --talk-name=org.kde.klipper
   # Received files; a download folder elsewhere needs a broader grant.
   - --filesystem=xdg-download
   # The Dolphin entry and the autostart entry live on the host.

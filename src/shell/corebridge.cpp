@@ -3,13 +3,16 @@
 #include <QCoreApplication>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
+#include <QDBusArgument>
 #include <QDBusError>
 #include <QDBusPendingCall>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
 #include <QDBusServiceWatcher>
+#include <QDBusUnixFileDescriptor>
 #include <QDBusVariant>
 #include <QDebug>
+#include <QElapsedTimer>
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QFileInfo>
@@ -24,7 +27,9 @@
 #include <QStandardPaths>
 #include <QLocale>
 #include <QMimeDatabase>
+#include <QProcess>
 #include <QRegularExpression>
+#include <QThread>
 
 #include <KLocalizedString>
 
@@ -35,6 +40,7 @@
 #include "dolphinmenu.h"
 #include "integration.h"
 #include "launcher.h"
+#include "portalspawn.h"
 
 namespace
 {
@@ -46,6 +52,28 @@ namespace
     QDBusMessage methodCall(const QString &interface, const QString &method)
     {
         return QDBusMessage::createMethodCall(service, path, interface, method);
+    }
+
+    /// Asks the core whether a transfer is busy (`TransferBusy`), for a shell that started
+    /// after the transfer did and so has nothing in its model. The call blocks the GUI thread
+    /// up to 2 s: it is made rarely (a quit question, the 30 s idle timer of an update).
+    /// `modelSays` is the answer when the core is not there or does not reply.
+    bool coreTransferBusy(bool modelSays)
+    {
+        auto bus = QDBusConnection::sessionBus();
+        const QDBusReply<bool> registered = bus.interface()->isServiceRegistered(service);
+        if (!registered.isValid() || !registered.value())
+        {
+            return modelSays;
+        }
+        QDBusMessage get = methodCall(propsIface, QStringLiteral("Get"));
+        get << iface << QStringLiteral("TransferBusy");
+        const QDBusMessage reply = bus.call(get, QDBus::Block, 2000);
+        if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty())
+        {
+            return modelSays;
+        }
+        return reply.arguments().constFirst().value<QDBusVariant>().variant().toBool();
     }
 }
 
@@ -109,6 +137,17 @@ CoreBridge::CoreBridge(QObject *parent)
     m_discoveryStopTimer.setInterval(30000);
     connect(&m_discoveryStopTimer, &QTimer::timeout, this, &CoreBridge::stopDiscoveryNow);
 
+    // The core shows up on the bus a few seconds after being started detached; when it never
+    // does, the "service not running" offer comes back.
+    m_serviceStartTimer.setSingleShot(true);
+    connect(&m_serviceStartTimer, &QTimer::timeout, this, [this]
+            {
+        if (m_serviceStarting && !m_connected)
+        {
+            m_serviceStarting = false;
+            emit serviceStartingChanged();
+        } });
+
     // A report goes stale when its time to live is over (see `adoptRequirements`).
     m_requirementsStaleTimer.setSingleShot(true);
     connect(&m_requirementsStaleTimer, &QTimer::timeout, this, [this]
@@ -134,41 +173,137 @@ CoreBridge::CoreBridge(QObject *parent)
     }
 }
 
-CoreBridge::~CoreBridge()
+CoreBridge::~CoreBridge() = default;
+
+void CoreBridge::startService()
 {
-    if (m_core.state() != QProcess::NotRunning)
+    // A core that runs but never took its bus name cannot be reached or stopped by D-Bus: the
+    // pid file says which process it is.
+    killStaleCore();
+    startCore();
+}
+
+// Blocks the GUI thread up to 3 s; it runs only at start, before any window is shown.
+void CoreBridge::killStaleCore()
+{
+    QFile pidFile(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/kuickshared.pid"));
+    if (!pidFile.open(QIODevice::ReadOnly | QIODevice::Text))
     {
-        m_core.terminate();
-        m_core.waitForFinished(3000);
+        return;
     }
+    bool ok = false;
+    const qint64 pid = pidFile.readAll().trimmed().toLongLong(&ok);
+    pidFile.close();
+    if (!ok || pid <= 0)
+    {
+        return;
+    }
+    const QDBusReply<bool> registered = QDBusConnection::sessionBus().interface()->isServiceRegistered(service);
+    if (registered.isValid() && registered.value())
+    {
+        // It serves: there is nothing stuck to kill.
+        return;
+    }
+    // Only a process named `kuickshared` is a candidate: the pid file may name a process of
+    // another sandbox (Flatpak), whose /proc entry is not readable from here; then nothing is
+    // killed at all.
+    QFile processInfo(QStringLiteral("/proc/%1/comm").arg(pid));
+    if (!processInfo.open(QIODevice::ReadOnly | QIODevice::Text) || processInfo.readAll().trimmed() != "kuickshared")
+    {
+        return;
+    }
+    // `kill` is not a call the core could take: terminate it the way a SIGTERM would. The core
+    // waits at most 3 s for its own shutdown; then the name is free for the fresh one.
+    QProcess::startDetached(QStringLiteral("kill"), {QStringLiteral("-TERM"), QString::number(pid)});
+    QElapsedTimer wait;
+    wait.start();
+    while (wait.elapsed() < 3000)
+    {
+        QThread::msleep(100);
+        const QDBusReply<bool> running = QDBusConnection::sessionBus().interface()->isServiceRegistered(service);
+        if (!running.isValid() || !running.value())
+        {
+            return;
+        }
+    }
+}
+
+// Blocks the GUI thread up to 5 s for the call and 8 s for the stop; it runs only at exit,
+// when the window is gone.
+bool CoreBridge::stopService()
+{
+    if (!m_connected)
+    {
+        return true;
+    }
+    const QDBusReply<void> reply = QDBusConnection::sessionBus().call(methodCall(iface, QStringLiteral("Quit")), QDBus::Block, 5000);
+    if (!reply.isValid())
+    {
+        qWarning() << "the core did not take Quit:" << reply.error().message();
+        return false;
+    }
+    // The graceful stop takes a few seconds (the engine first, then the Wi-Fi cleanup).
+    QElapsedTimer wait;
+    wait.start();
+    while (wait.elapsed() < 8000)
+    {
+        QThread::msleep(100);
+        const QDBusReply<bool> running = QDBusConnection::sessionBus().interface()->isServiceRegistered(service);
+        if (!running.isValid() || !running.value())
+        {
+            return true;
+        }
+    }
+    qWarning() << "the core still serves after Quit";
+    return false;
 }
 
 void CoreBridge::startCore()
 {
-    m_core.setProcessChannelMode(QProcess::ForwardedChannels);
-    m_core.start(QCoreApplication::applicationDirPath() + QStringLiteral("/kuickshared"));
+    // The core is detached: it owns the background (tray, notifications) and outlives this
+    // window. It starts either through the Flatpak portal (the install runs inside the same
+    // sandbox) or as a detached sibling of this binary.
     m_serviceStarting = true;
     emit serviceStartingChanged();
-    // Starting ends when the service shows up on the bus (see onServiceRegistered), or fails here.
-    auto stopStarting = [this] {
-        if (m_serviceStarting && !m_connected) {
-            m_serviceStarting = false;
-            emit serviceStartingChanged();
+    // Starting ends when the service shows up on the bus (see onServiceRegistered). When it
+    // never does, the user gets the "Start Service" offer when this timer clears the state.
+    m_serviceStartTimer.stop();
+    m_serviceStartTimer.start(10000);
+    const QString corePath = QCoreApplication::applicationDirPath() + QStringLiteral("/kuickshared");
+    if (Launcher::inFlatpak())
+    {
+        // The portal reads argv as NUL-terminated byte strings (`aay`), and spawns the app of
+        // this one inside its own sandbox.
+        const QVariant argv = PortalSpawn::byteArgv({corePath});
+        auto spawn = QDBusMessage::createMethodCall(QStringLiteral("org.freedesktop.portal.Flatpak"), QStringLiteral("/org/freedesktop/portal/Flatpak"), QStringLiteral("org.freedesktop.portal.Flatpak"), QStringLiteral("Spawn"));
+        spawn << QByteArray("/\0", 2) << argv << PortalSpawn::emptyMap(QMetaType::fromType<uint>(), QMetaType::fromType<QDBusUnixFileDescriptor>()) << PortalSpawn::emptyMap(QMetaType::fromType<QString>(), QMetaType::fromType<QString>()) << 2u << QVariantMap();
+        const QDBusMessage reply = QDBusConnection::sessionBus().call(spawn, QDBus::Block, 5000);
+        if (reply.type() == QDBusMessage::ReplyMessage)
+        {
+            return;
         }
-    };
-    disconnect(&m_core, nullptr, this, nullptr);
-    connect(&m_core, &QProcess::errorOccurred, this, stopStarting);
-    connect(&m_core, &QProcess::finished, this, stopStarting);
-}
-
-void CoreBridge::startService()
-{
-    if (m_core.state() != QProcess::NotRunning) {
-        // A service that is up but not on the bus is stuck: start over.
-        m_core.kill();
-        m_core.waitForFinished(2000);
+        qWarning() << "Flatpak portal Spawn of the core failed:" << reply.errorName() << reply.errorMessage();
+        // Without a portal (a test container holds a session bus and no desktop): the core is
+        // inside this sandbox too, and a detached start of it outlives this window the same
+        // way. The direct starts below do that.
     }
-    startCore();
+    QProcess process;
+    if (Launcher::inAppImage())
+    {
+        // The variables of the running image point at its own mount (see updatewatcher); the
+        // started one sets them again for itself.
+        auto environment = QProcessEnvironment::systemEnvironment();
+        environment.remove(QStringLiteral("ARGV0"));
+        environment.remove(QStringLiteral("APPDIR"));
+        process.setProgram(corePath);
+        process.setProcessEnvironment(environment);
+        process.startDetached();
+        return;
+    }
+    if (!QProcess::startDetached(corePath, {}))
+    {
+        qWarning() << "cannot start detached KuickShare core" << corePath;
+    }
 }
 
 void CoreBridge::setUpdateInstalled(bool installed)
@@ -179,14 +314,15 @@ void CoreBridge::setUpdateInstalled(bool installed)
     }
 }
 
+// The model only knows the transfers that ran while this shell was up; the core knows all.
 bool CoreBridge::transferActive() const
 {
-    return m_transfers.hasActive();
+    return m_transfers.hasActive() || coreTransferBusy(false);
 }
 
 bool CoreBridge::transferLive() const
 {
-    return m_transfers.hasLive();
+    return m_transfers.hasLive() || coreTransferBusy(false);
 }
 
 void CoreBridge::resetSettings()
@@ -280,12 +416,18 @@ QStringList CoreBridge::clipboardFiles() const
 void CoreBridge::onServiceRegistered()
 {
     m_connected = true;
-    if (m_serviceStarting) {
+    if (m_serviceStarting)
+    {
         m_serviceStarting = false;
+        m_serviceStartTimer.stop();
         emit serviceStartingChanged();
     }
     m_suspended = false; // a fresh core is not suspended
     emit suspendedChanged();
+    // A fresh core does not know whether the window shows: tell it again.
+    QDBusMessage window = methodCall(propsIface, QStringLiteral("Set"));
+    window << iface << QStringLiteral("WindowOpen") << QVariant::fromValue(QDBusVariant(m_windowOpen));
+    callAsync(window);
     emit connectedChanged();
     // A report of an earlier core says nothing about this one, and its late replies are ignored.
     m_requirementsTracker.invalidate();
@@ -413,6 +555,7 @@ void CoreBridge::refreshProperties()
             }
             m_dolphinSyncFailed = !synced;
         }
+        emit firstPropertiesReady();
         emit visibleChanged();
         if (visibleUntilDiffers) {
             emit visibleUntilChanged();
@@ -1461,15 +1604,33 @@ void CoreBridge::setHideWhenDnd(bool hide)
     setRemoteProperty(QStringLiteral("HideWhenDnd"), hide);
 }
 
-void CoreBridge::setSuspended(bool suspended)
+void CoreBridge::setWindowOpen(bool open, bool sync)
 {
-    if (suspended == m_suspended)
+    // A sync call writes also when the value is unchanged: the async write of the same value
+    // (from the window's visibility handler) may not have left before the process ends.
+    if (open == m_windowOpen && !sync)
     {
         return;
     }
-    m_suspended = suspended;
-    emit suspendedChanged();
-    setRemoteProperty(QStringLiteral("Suspended"), suspended);
+    m_windowOpen = open;
+    if (!m_connected)
+    {
+        // A fresh core gets the current state when it connects (see onServiceRegistered).
+        return;
+    }
+    if (sync)
+    {
+        // At the end of main the event loop is over: an async call never reaches the bus.
+        QDBusMessage message = methodCall(propsIface, QStringLiteral("Set"));
+        message << iface << QStringLiteral("WindowOpen") << QVariant::fromValue(QDBusVariant(m_windowOpen));
+        const QDBusReply<void> reply = QDBusConnection::sessionBus().call(message, QDBus::Block, 2000);
+        if (!reply.isValid())
+        {
+            qWarning() << "the core did not take WindowOpen:" << reply.error().message();
+        }
+        return;
+    }
+    setRemoteProperty(QStringLiteral("WindowOpen"), m_windowOpen);
 }
 
 void CoreBridge::setAutostart(bool enabled)

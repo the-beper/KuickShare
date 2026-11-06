@@ -5,6 +5,14 @@
 targets = ["x86_64-unknown-linux-gnu"]
 
 [advisories]
+# ksni (the tray) is on zbus 5, whose zbus_names, zvariant and zvariant_derive are now marked
+# unmaintained: their code moved into zbus 6, which the core itself uses. No vulnerability is
+# reported. Remove these entries when ksni moves to zbus 6 (0.3.7 is the newest).
+ignore = [
+    { id = "RUSTSEC-2026-0370", reason = "unmaintained crate of zbus 5, only through ksni" },
+    { id = "RUSTSEC-2026-0371", reason = "unmaintained crate of zbus 5, only through ksni" },
+    { id = "RUSTSEC-2026-0372", reason = "unmaintained crate of zbus 5, only through ksni" },
+]
 
 [licenses]
 allow = [

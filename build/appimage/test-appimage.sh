@@ -82,15 +82,26 @@ ok "direct launch, core answers: $(owner | tail -1)"
 ok "no QML or plugin errors"
 
 echo hello >"$HOME/hello.txt"
+# A second launch (what Dolphin does) hands its file to the running window and exits. After
+# `--background` only the core is left, so a window is started first (offscreen it stays open).
+"$app" >"$HOME/window.log" 2>&1 &
+wpid=$!
+window() {
+    dbus-send --session --print-reply --dest=org.kde.kuickshare /MainApplication \
+        org.freedesktop.DBus.Properties.Get string:org.qtproject.Qt.QCoreApplication string:applicationVersion 2>/dev/null
+}
+for _ in $(seq 20); do window >/dev/null && break; sleep 1; done
+window >/dev/null || { cat "$HOME/window.log"; fail "the window instance did not start"; }
 timeout 60 "$app" "$HOME/hello.txt" >/dev/null 2>&1 || fail "the second launch did not hand over to the running instance"
 ok "second launch hands over"
 
-bad=$(files | grep -v -E '^\./\.(local/share|config)/kuickshare/|^\./(app\.log|hello\.txt)$' || true)
+bad=$(files | grep -v -E '^\./\.(local/share|config|cache)/kuickshare/|^\./(app\.log|window\.log|hello\.txt)$' || true)
 [ -z "$bad" ] || fail "files outside the app's own data: $bad"
 ok "wrote only its own data: $(files | grep -c kuickshare) files"
-kill "$pid" 2>/dev/null || true
-wait "$pid" 2>/dev/null || true
-for _ in $(seq 10); do owner >/dev/null 2>&1 || break; sleep 1; done
+kill "$wpid" 2>/dev/null || true
+wait "$pid" "$wpid" 2>/dev/null || true
+dbus-send --session --print-reply --dest=$id /io/github/the_beper/KuickShare ${id}1.Quit >/dev/null 2>&1 || true
+for _ in $(seq 20); do owner >/dev/null 2>&1 || break; sleep 1; done
 
 if command -v Xvfb >/dev/null; then
     newhome
