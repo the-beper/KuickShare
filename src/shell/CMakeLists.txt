@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(kuickshare VERSION 1.7.2 LANGUAGES CXX)
+project(kuickshare VERSION 1.8.0 LANGUAGES CXX)
 # Defines BUILD_TESTING (ON by default): packages pass -DBUILD_TESTING=OFF, build/check.sh -DBUILD_TESTING=ON.
 include(CTest)
 add_compile_definitions(KUICKSHARE_VERSION="${PROJECT_VERSION}")
