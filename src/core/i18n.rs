@@ -52,8 +52,10 @@ pub(crate) fn catalog() -> &'static Option<Catalog> {
 
 /// Translates `msgid` and fills `%1`, `%2`, … with the remaining macro arguments in order.
 ///
-/// Written for compile-time string literals (the ones the catalogs extract); for anything
-/// else there are [`lookup`] and [`lookup_plural`].
+/// Written for string literals only: `po/extract.sh` reads them from the source, so a
+/// variable as the msgid is never in a catalog. A msgid with a typographic quote or a
+/// non-ASCII character writes it as is (the extraction does not read `\u{…}`). For anything
+/// computed there are [`lookup`] and [`lookup_plural`].
 macro_rules! i18n {
     ($msgid:expr $(,)?) => {
         $crate::i18n::lookup(None, $msgid, &[])
@@ -63,8 +65,8 @@ macro_rules! i18n {
     };
 }
 
-/// Translates the plural of `msgid`/`msgid_plural` for `minutes`/`minutes_text` of the tray
-/// tooltip: `n` picks the form, the rest of the arguments fill `%1`, `%2`, … in order.
+/// As [`i18n!`], with a context (`i18nc`): the same msgid under another context is another
+/// catalog entry (`"@action:button"`, `"@title:notification"`, …).
 macro_rules! i18nc {
     ($ctx:expr, $msgid:expr $(,)?) => {
         $crate::i18n::lookup(Some($ctx), $msgid, &[])
@@ -74,8 +76,8 @@ macro_rules! i18nc {
     };
 }
 
-/// A plural with a context (`i18ncp`): as [`i18n!`], with the context, the plural forms and the
-/// count that picks the form.
+/// A plural with a context (`i18ncp`): the msgid and its plural form, and the count `n` that
+/// picks the form; the rest of the arguments fill `%1`, `%2`, … in order.
 macro_rules! i18ncp {
     ($ctx:expr, $msgid:expr, $msgid_plural:expr, $n:expr $(,)?) => {
         $crate::i18n::lookup_plural(Some($ctx), $msgid, $msgid_plural, $n, &[])

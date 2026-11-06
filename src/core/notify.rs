@@ -8,6 +8,7 @@
 //! live here.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -35,6 +36,10 @@ const SERVICE: &str = "org.freedesktop.Notifications";
 
 /// While the daemon is gone, the notifications are retried this often.
 pub(crate) const RETRY_DELAY: Duration = Duration::from_secs(3);
+
+/// How long a call to the notification server may take: a frozen server must not hold the caller
+/// (the single task of [`crate::desktop`], which also serves the tray and the consents).
+const CALL_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The expiries the shell's notifications had.
 const NOTICE_TIMEOUT: i32 = 7_000;
@@ -144,8 +149,8 @@ struct Text {
     icon: &'static str,
     summary: String,
     body: String,
-    /// Action key and label, in turns (the freedesktop order: key first).
-    actions: Vec<&'static str>,
+    /// Action key and translated label; `Notify` takes them flat, key first.
+    actions: Vec<(&'static str, String)>,
     expire: i32,
 }
 
@@ -157,7 +162,7 @@ fn text_of(notice: &Notice) -> Text {
             pin,
             offer_trust,
         } => {
-            let who = plain_who(device, "A nearby device");
+            let who = plain_who(device, i18n!("A nearby device"));
             let mut body = if pin.is_empty() {
                 i18n!("%1 wants to share with you", &who)
             } else {
@@ -167,20 +172,23 @@ fn text_of(notice: &Notice) -> Text {
             if *offer_trust {
                 body.push('\n');
                 body.push_str(&i18n!(
-                    "\u{201C}Accept and Trust\u{201D} recognises this device by its name and network \
+                    "“Accept and Trust” recognises this device by its name and network \
                      address, which another device on the same network can copy",
                 ));
             }
-            let mut actions = vec![button(ACCEPT, "Accept")];
+            let mut actions = vec![(ACCEPT, i18nc!("@action:button", "Accept"))];
             if *offer_trust {
-                actions.push(button(ACCEPT_AND_TRUST, "Accept and Trust"));
+                actions.push((
+                    ACCEPT_AND_TRUST,
+                    i18nc!("@action:button", "Accept and Trust"),
+                ));
             }
-            actions.push(button(DECLINE, "Decline"));
+            actions.push((DECLINE, i18nc!("@action:button", "Decline")));
             Text {
                 icon: APP_ICON,
                 summary: i18nc!("@title:notification", "Incoming Transfer"),
                 body,
-                actions: pairs(actions),
+                actions,
                 expire: PERSISTENT,
             }
         }
@@ -189,17 +197,17 @@ fn text_of(notice: &Notice) -> Text {
             text,
             is_link,
         } => {
-            let who = plain_who(device, "a nearby device");
+            let who = plain_who(device, i18n!("a nearby device"));
             let shortened = plain(&shortened(text));
             let mut actions = vec![if *is_link {
-                button(COPY, "Copy Link")
+                (COPY, i18nc!("@action:button", "Copy Link"))
             } else {
-                button(COPY, "Copy Text")
+                (COPY, i18nc!("@action:button", "Copy Text"))
             }];
             if *is_link {
-                actions.push(button(OPEN_LINK, "Open Link"));
+                actions.push((OPEN_LINK, i18nc!("@action:button", "Open Link")));
             }
-            actions.push(button(VIEW, "View"));
+            actions.push((VIEW, i18nc!("@action:button", "View")));
             Text {
                 icon: APP_ICON,
                 summary: if *is_link {
@@ -208,29 +216,33 @@ fn text_of(notice: &Notice) -> Text {
                     i18nc!("@title:notification", "Text Received")
                 },
                 body: i18n!("From %1:\n%2", &who, &shortened),
-                actions: pairs(actions),
+                actions,
                 expire: NOTICE_TIMEOUT,
             }
         }
         Notice::Files { device, path } => {
-            let who = plain_who(device, "a nearby device");
+            let who = plain_who(device, i18n!("a nearby device"));
             let mut actions = Vec::new();
             if path.is_some() {
-                actions.push(button(OPEN_FILE, "Open File"));
+                actions.push((OPEN_FILE, i18nc!("@action:button", "Open File")));
             }
-            actions.push(button(OPEN_FOLDER, "Open Folder"));
+            actions.push((OPEN_FOLDER, i18nc!("@action:button", "Open Folder")));
             Text {
                 icon: APP_ICON,
                 summary: i18nc!("@title:notification", "Files Received"),
                 body: i18n!("From %1", &who),
-                actions: pairs(actions),
+                actions,
                 expire: NOTICE_TIMEOUT,
             }
         }
         Notice::Refusal { device, reason } => Text {
             icon: WARNING_ICON,
             summary: i18nc!("@title:notification", "Offer Refused"),
-            body: i18n!("From %1: %2", &plain_who(device, "a nearby device"), reason),
+            body: i18n!(
+                "From %1: %2",
+                &plain_who(device, i18n!("a nearby device")),
+                reason
+            ),
             actions: Vec::new(),
             expire: NOTICE_TIMEOUT,
         },
@@ -238,7 +250,7 @@ fn text_of(notice: &Notice) -> Text {
             device,
             over_bluetooth,
         } => {
-            let who = plain_who(device, "a nearby device");
+            let who = plain_who(device, i18n!("a nearby device"));
             let body = if *over_bluetooth {
                 i18n!(
                     "Could not start the transfer to %1 over Bluetooth\nCheck that Bluetooth is on and \
@@ -265,32 +277,12 @@ fn text_of(notice: &Notice) -> Text {
             summary: i18nc!("@title:notification", "Transfer Interrupted"),
             body: i18n!(
                 "The connection with %1 was lost\nKeep both devices close and awake, then try again",
-                &plain_who(device, "a nearby device"),
+                &plain_who(device, i18n!("a nearby device")),
             ),
             actions: Vec::new(),
             expire: NOTICE_TIMEOUT,
         },
     }
-}
-
-/// A button: the key of our action, and its label in one of the catalogs.
-fn button(key: &'static str, label: &'static str) -> (&'static str, String) {
-    (key, i18nc!("@action:button", label))
-}
-
-/// The flat action list of the daemon: the key and the label, in turns. The labels out
-/// of [`crate::i18n`] must outlive the call (see [`to_static`]).
-fn pairs(actions: Vec<(&'static str, String)>) -> Vec<&'static str> {
-    actions
-        .into_iter()
-        .flat_map(|(key, label)| [key, to_static(&label)])
-        .collect()
-}
-
-/// Keeps one string alive for `'static` (see [`Box::leak`]): a class of texts of a few
-/// words per notification shown, freed when the daemon drops its copy.
-fn to_static(text: &str) -> &'static str {
-    Box::leak(text.to_owned().into_boxed_str())
 }
 
 /// A `<` or `>` cannot reach a body text: the names and the previews come from
@@ -300,23 +292,22 @@ fn plain(text: &str) -> String {
     text.replace('<', "\u{2039}").replace('>', "\u{203A}")
 }
 
-/// The device to name, or the translation of `fallback`: senders may omit the name, and
-/// the shell said "a nearby device" then (capitalised in a prompt).
-fn plain_who(device: &str, fallback: &'static str) -> String {
-    plain(&if device.is_empty() {
-        i18n!(fallback)
+/// The device to name, or `fallback` (already translated, at the call: the catalogs only see
+/// literals): senders may omit the name, and the shell said "a nearby device" then
+/// (capitalised in a prompt).
+fn plain_who(device: &str, fallback: String) -> String {
+    plain(if device.is_empty() {
+        fallback.as_str()
     } else {
-        device.to_owned()
+        device
     })
 }
 
 /// The text shown at most 200 characters, as the shell did with previews.
 fn shortened(text: &str) -> String {
-    if text.len() > 200 {
-        let cut = text.char_indices().nth(200).map_or(text.len(), |(i, _)| i);
-        format!("{}\u{2026}", &text[..cut])
-    } else {
-        text.to_owned()
+    match text.char_indices().nth(200) {
+        Some((cut, _)) => format!("{}\u{2026}", &text[..cut]),
+        None => text.to_owned(),
     }
 }
 
@@ -332,6 +323,29 @@ pub fn looks_like_link(text: &str) -> bool {
         return false;
     };
     !rest.is_empty() && !text.chars().any(char::is_whitespace)
+}
+
+/// Runs one call to the notification server for at most [`CALL_TIMEOUT`]; a call that takes
+/// longer is a failure like any other.
+async fn bounded<T>(call: impl Future<Output = zbus::Result<T>>) -> zbus::Result<T> {
+    match tokio::time::timeout(CALL_TIMEOUT, call).await {
+        Ok(outcome) => outcome,
+        Err(_) => Err(zbus::Error::Failure(
+            "the notification server did not answer in time".to_owned(),
+        )),
+    }
+}
+
+/// Whether the close of notification `closed` is a dismissal. A press is followed by the close
+/// of the same notification; that close belongs to the answer already given and must not undo
+/// it (the memory of the press ends with it).
+fn is_dismissal(last_pressed: &mut Option<u32>, closed: u32) -> bool {
+    if *last_pressed == Some(closed) {
+        *last_pressed = None;
+        false
+    } else {
+        true
+    }
 }
 
 /// The client of the daemon; it never takes the `Core` lock.
@@ -355,7 +369,8 @@ impl Notifier {
     }
 
     /// Shows one notice, replacing `replaces`'s previous one whenever it belongs to the
-    /// same transfer, and answers with the server id.
+    /// same transfer, and answers with the server id. `None` when it could not be shown, also
+    /// when the server did not answer in time.
     pub async fn show(&self, notice: &Notice, replaces: u32) -> Option<u32> {
         let text = text_of(notice);
         // The urgency is normal for everything the shell showed with `NormalUrgency`.
@@ -363,37 +378,45 @@ impl Notifier {
             ("urgency", Variant::U8(1)),
             ("desktop-entry", Variant::from(APP_ICON)),
         ]);
-        let shown = match self.proxy().await {
-            Ok(proxy) => {
-                proxy
-                    .notify(
-                        APP_NAME,
-                        replaces,
-                        text.icon,
-                        &text.summary,
-                        &text.body,
-                        text.actions,
-                        hints,
-                        text.expire,
-                    )
-                    .await
-            }
-            Err(e) => Err(e),
-        };
+        // The flat list of the call: key and label, in turns.
+        let actions: Vec<&str> = text
+            .actions
+            .iter()
+            .flat_map(|(key, label)| [*key, label.as_str()])
+            .collect();
+        let shown = bounded(async {
+            let proxy = self.proxy().await?;
+            proxy
+                .notify(
+                    APP_NAME,
+                    replaces,
+                    text.icon,
+                    &text.summary,
+                    &text.body,
+                    actions,
+                    hints,
+                    text.expire,
+                )
+                .await
+        })
+        .await;
         match shown {
             Ok(id) => Some(id),
             Err(e) => {
-                tracing::warn!("no notification shown: {e}");
+                // Debug, not warn: without a notification server every retry of the desktop
+                // (every few seconds while a prompt waits) fails the same way.
+                tracing::debug!("no notification shown: {e}");
                 None
             }
         }
     }
 
     pub async fn close(&self, server_id: u32) {
-        let outcome = match self.proxy().await {
-            Ok(proxy) => proxy.close_notification(server_id).await,
-            Err(e) => Err(e),
-        };
+        let outcome = bounded(async {
+            let proxy = self.proxy().await?;
+            proxy.close_notification(server_id).await
+        })
+        .await;
         if let Err(e) = outcome {
             // A notice that closed itself first is not a problem.
             tracing::debug!("cannot close notification {server_id}: {e}");
@@ -442,11 +465,17 @@ impl Notifier {
                 return;
             }
         };
+        // The notification of the last press: its close, which follows, is no dismissal.
+        let mut pressed_id: Option<u32> = None;
         loop {
+            // Biased: Plasma sends `ActionInvoked` and then `NotificationClosed` for a press, and
+            // when both are waiting the press must be read first or the answer is lost.
             tokio::select! {
+                biased;
                 pressed = invoked.next() => {
                     let Some(pressed) = pressed else { return };
                     if let Ok(args) = pressed.args() {
+                        pressed_id = Some(args.id);
                         let _ = events.send(Event::Answered {
                             server_id: args.id,
                             key: args.action_key,
@@ -455,7 +484,9 @@ impl Notifier {
                 }
                 gone = closed.next() => {
                     let Some(gone) = gone else { return };
-                    if let Ok(args) = gone.args() {
+                    if let Ok(args) = gone.args()
+                        && is_dismissal(&mut pressed_id, args.id)
+                    {
                         let _ = events.send(Event::Dismissed { server_id: args.id });
                     }
                 }
@@ -480,5 +511,66 @@ impl Notifier {
     async fn bus_watch(&self) -> zbus::Result<fdo::NameOwnerChangedStream> {
         let dbus = fdo::DBusProxy::builder(&self.connection).build().await?;
         dbus.receive_name_owner_changed().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_texts_are_kept_whole() {
+        assert_eq!(shortened("hello"), "hello");
+        // 200 characters of two bytes each are over 200 bytes, yet not over 200 characters.
+        let two_bytes = "é".repeat(200);
+        assert_eq!(shortened(&two_bytes), two_bytes);
+        let ascii = "a".repeat(200);
+        assert_eq!(shortened(&ascii), ascii);
+    }
+
+    #[test]
+    fn long_texts_are_cut_by_characters() {
+        let ascii = "a".repeat(201);
+        assert_eq!(shortened(&ascii), format!("{}\u{2026}", "a".repeat(200)));
+        let multi_byte = "é".repeat(250);
+        assert_eq!(
+            shortened(&multi_byte),
+            format!("{}\u{2026}", "é".repeat(200))
+        );
+    }
+
+    #[test]
+    fn only_web_links_are_links() {
+        assert!(looks_like_link("http://example.org"));
+        assert!(looks_like_link("  HTTPS://Example.org/a?b=c  "));
+        assert!(!looks_like_link("ftp://example.org"));
+        assert!(!looks_like_link("file:///etc/passwd"));
+        assert!(!looks_like_link("javascript:alert(1)"));
+        assert!(!looks_like_link("https://"));
+        assert!(!looks_like_link("https://a b"));
+        assert!(!looks_like_link("see https://example.org"));
+        assert!(!looks_like_link(""));
+    }
+
+    #[test]
+    fn the_close_after_a_press_is_no_dismissal() {
+        let mut last = None;
+        assert!(is_dismissal(&mut last, 7), "no press yet");
+        last = Some(7);
+        assert!(is_dismissal(&mut last, 8), "another notification");
+        assert_eq!(last, Some(7), "the press is still waiting for its close");
+        assert!(!is_dismissal(&mut last, 7), "the close of the press");
+        assert_eq!(last, None);
+        assert!(is_dismissal(&mut last, 7), "a later close of a reused id");
+    }
+
+    #[test]
+    fn markup_cannot_reach_a_body() {
+        assert_eq!(plain("<b>x</b>"), "\u{2039}b\u{203A}x\u{2039}/b\u{203A}");
+        assert_eq!(plain_who("", "Someone".to_owned()), "Someone");
+        assert_eq!(
+            plain_who("<Eve>", "Someone".to_owned()),
+            "\u{2039}Eve\u{203A}"
+        );
     }
 }

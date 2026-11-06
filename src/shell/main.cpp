@@ -426,7 +426,9 @@ int main(int argc, char *argv[])
             }
             return;
         }
-        if (!other.isSet(background))
+        // `--background` with files (or a refused folder) still shows the window: it holds the
+        // queue or the error, and a window never shown would keep this process alive.
+        if (!other.isSet(background) || !queued.isEmpty() || queueRefused)
         {
             showWindow();
         }
@@ -446,10 +448,6 @@ int main(int argc, char *argv[])
         && !parser.isSet(openFiles) && !parser.isSet(clipboard) && !parser.isSet(transfer)
         && !parser.isSet(requestQuit))
     {
-        auto stopWait = std::make_unique<QTimer>();
-        stopWait->setSingleShot(true);
-        QObject::connect(stopWait.get(), &QTimer::timeout, &app, [&app]
-        { app.quit(); });
         if (core.connected())
         {
             QTimer::singleShot(0, &app, [&app]
@@ -459,15 +457,12 @@ int main(int argc, char *argv[])
         {
             // The Dolphin entry and friends are written inside the first property refresh
             // after the core connects; then the job here is done. A refresh that never gets
-            // its answer, or an odd core, is covered by the timeout above.
-            QObject::connect(&core, &CoreBridge::firstPropertiesReady, &app, [&app, wait = stopWait.get()]
-            {
-                wait->stop();
-                wait->deleteLater();
-                app.quit(); });
-            stopWait->start(10000);
+            // its answer, or an odd core, is covered by the timeout.
+            QObject::connect(&core, &CoreBridge::firstPropertiesReady, &app, [&app]
+            { app.quit(); }, Qt::SingleShotConnection);
+            QTimer::singleShot(10000, &app, [&app]
+            { app.quit(); });
         }
-        stopWait.release();
     }
     else
     {

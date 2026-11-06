@@ -26,8 +26,7 @@ namespace PortalSpawn
     // `items` as an array of NUL-terminated byte strings (`aay`), the portal's argv shape.
     inline QVariant byteArgv(const QStringList &items)
     {
-        // QByteArrayList is not registered for D-Bus marshalling (the smoke test caught that),
-        // and a plain binary narration of `aay` is not either: the argument is built by hand.
+        // QByteArrayList is not registered for D-Bus marshalling, so the array is built by hand.
         QDBusArgument argument;
         argument.beginArray(QMetaType::fromType<QByteArray>());
         for (const QString &item : items)

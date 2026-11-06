@@ -54,14 +54,26 @@ namespace
         return QDBusMessage::createMethodCall(service, path, interface, method);
     }
 
-    // A plain QVariantMap would be marshalled as a{sv}; the portal wants these maps with other
-    // types. See also `PortalSpawn` in portalspawn.h, which the portal calls share.
-    QVariant emptyMap(QMetaType keyType, QMetaType valueType)
+    /// Asks the core whether a transfer is busy (`TransferBusy`), for a shell that started
+    /// after the transfer did and so has nothing in its model. The call blocks the GUI thread
+    /// up to 2 s: it is made rarely (a quit question, the 30 s idle timer of an update).
+    /// `modelSays` is the answer when the core is not there or does not reply.
+    bool coreTransferBusy(bool modelSays)
     {
-        QDBusArgument argument;
-        argument.beginMap(keyType, valueType);
-        argument.endMap();
-        return QVariant::fromValue(argument);
+        auto bus = QDBusConnection::sessionBus();
+        const QDBusReply<bool> registered = bus.interface()->isServiceRegistered(service);
+        if (!registered.isValid() || !registered.value())
+        {
+            return modelSays;
+        }
+        QDBusMessage get = methodCall(propsIface, QStringLiteral("Get"));
+        get << iface << QStringLiteral("TransferBusy");
+        const QDBusMessage reply = bus.call(get, QDBus::Block, 2000);
+        if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty())
+        {
+            return modelSays;
+        }
+        return reply.arguments().constFirst().value<QDBusVariant>().variant().toBool();
     }
 }
 
@@ -171,6 +183,7 @@ void CoreBridge::startService()
     startCore();
 }
 
+// Blocks the GUI thread up to 3 s; it runs only at start, before any window is shown.
 void CoreBridge::killStaleCore()
 {
     QFile pidFile(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/kuickshared.pid"));
@@ -191,9 +204,9 @@ void CoreBridge::killStaleCore()
         // It serves: there is nothing stuck to kill.
         return;
     }
-    // Only the matching process is a candidate: in the Flatpak sandbox this pid number would
-    // be reachable only in the sandbox the core was born in, and reading /proc of another one
-    // fails modernized: then no kill happens at all.
+    // Only a process named `kuickshared` is a candidate: the pid file may name a process of
+    // another sandbox (Flatpak), whose /proc entry is not readable from here; then nothing is
+    // killed at all.
     QFile processInfo(QStringLiteral("/proc/%1/comm").arg(pid));
     if (!processInfo.open(QIODevice::ReadOnly | QIODevice::Text) || processInfo.readAll().trimmed() != "kuickshared")
     {
@@ -215,6 +228,8 @@ void CoreBridge::killStaleCore()
     }
 }
 
+// Blocks the GUI thread up to 5 s for the call and 8 s for the stop; it runs only at exit,
+// when the window is gone.
 bool CoreBridge::stopService()
 {
     if (!m_connected)
@@ -245,9 +260,9 @@ bool CoreBridge::stopService()
 
 void CoreBridge::startCore()
 {
-    // The core is detached: it owns the background (the tray out of the shell now), and
-    // outlives this window. It starts either through the Flatpak portal (the install runs
-    // inside the same sandbox) or as a detached sibling of this binary.
+    // The core is detached: it owns the background (tray, notifications) and outlives this
+    // window. It starts either through the Flatpak portal (the install runs inside the same
+    // sandbox) or as a detached sibling of this binary.
     m_serviceStarting = true;
     emit serviceStartingChanged();
     // Starting ends when the service shows up on the bus (see onServiceRegistered). When it
@@ -261,7 +276,7 @@ void CoreBridge::startCore()
         // this one inside its own sandbox.
         const QVariant argv = PortalSpawn::byteArgv({corePath});
         auto spawn = QDBusMessage::createMethodCall(QStringLiteral("org.freedesktop.portal.Flatpak"), QStringLiteral("/org/freedesktop/portal/Flatpak"), QStringLiteral("org.freedesktop.portal.Flatpak"), QStringLiteral("Spawn"));
-        spawn << QByteArray("/\0", 2) << argv << emptyMap(QMetaType::fromType<uint>(), QMetaType::fromType<QDBusUnixFileDescriptor>()) << emptyMap(QMetaType::fromType<QString>(), QMetaType::fromType<QString>()) << 2u << QVariantMap();
+        spawn << QByteArray("/\0", 2) << argv << PortalSpawn::emptyMap(QMetaType::fromType<uint>(), QMetaType::fromType<QDBusUnixFileDescriptor>()) << PortalSpawn::emptyMap(QMetaType::fromType<QString>(), QMetaType::fromType<QString>()) << 2u << QVariantMap();
         const QDBusMessage reply = QDBusConnection::sessionBus().call(spawn, QDBus::Block, 5000);
         if (reply.type() == QDBusMessage::ReplyMessage)
         {
@@ -299,14 +314,15 @@ void CoreBridge::setUpdateInstalled(bool installed)
     }
 }
 
+// The model only knows the transfers that ran while this shell was up; the core knows all.
 bool CoreBridge::transferActive() const
 {
-    return m_transfers.hasActive();
+    return m_transfers.hasActive() || coreTransferBusy(false);
 }
 
 bool CoreBridge::transferLive() const
 {
-    return m_transfers.hasLive();
+    return m_transfers.hasLive() || coreTransferBusy(false);
 }
 
 void CoreBridge::resetSettings()
@@ -1590,7 +1606,9 @@ void CoreBridge::setHideWhenDnd(bool hide)
 
 void CoreBridge::setWindowOpen(bool open, bool sync)
 {
-    if (open == m_windowOpen)
+    // A sync call writes also when the value is unchanged: the async write of the same value
+    // (from the window's visibility handler) may not have left before the process ends.
+    if (open == m_windowOpen && !sync)
     {
         return;
     }

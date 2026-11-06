@@ -618,7 +618,16 @@ impl Service {
 
     #[zbus(property)]
     async fn set_hide_when_dnd(&self, hide: bool) {
-        self.core.lock().await.set_hide_when_dnd(hide);
+        let conn = {
+            let mut core = self.core.lock().await;
+            core.set_hide_when_dnd(hide);
+            core.connection()
+        };
+        // It may flip `Suspended` (Do Not Disturb is on). Emitted from a task: the getters need
+        // the interface lock this setter still holds.
+        if let Some(conn) = conn {
+            tokio::spawn(async move { emit_visibility_changed(&conn).await });
+        }
     }
 
     /// Temporarily hides this computer without changing `Visible`; not persisted.
@@ -634,7 +643,7 @@ impl Service {
 
     /// Whether the shell's window is open: it reports how a transfer ended (its own toast), so
     /// the notifications of an ending transfer stay off while it is. The shell sets it while the
-    /// window is visible.
+    /// window is visible; the core takes it back when the shell leaves the bus (`desktop`).
     #[zbus(property)]
     async fn window_open(&self) -> bool {
         self.core.lock().await.window_open()
@@ -643,6 +652,21 @@ impl Service {
     #[zbus(property)]
     async fn set_window_open(&self, open: bool) {
         self.core.lock().await.set_window_open(open);
+    }
+
+    /// Whether a transfer is in flight (running, starting, or waiting for its consent): quitting
+    /// would lose it. Read-only; the shell reads it right before it asks to quit, since a window
+    /// started later knows nothing of the transfers already running.
+    #[zbus(property)]
+    async fn transfer_busy(&self) -> bool {
+        self.core.lock().await.transfer_in_flight()
+    }
+
+    /// The version of this service (`CARGO_PKG_VERSION`). A shell of another version replaces a
+    /// headless core that reports a different one (`Instance::replaceRunning`).
+    #[zbus(property)]
+    async fn version(&self) -> String {
+        env!("CARGO_PKG_VERSION").to_string()
     }
 
     /// Stops the service the way a SIGTERM reaches it (the engine first, then the Wi-Fi
@@ -1864,6 +1888,22 @@ pub async fn emit_visible_until_changed(connection: &Connection) {
     };
     if let Err(e) = emitted.await {
         tracing::warn!("failed to emit VisibleUntil: {e}");
+    }
+}
+
+/// A change made inside the core (a tray action) reaches an open window the way the setters'
+/// own changes do: `Visible`, `VisibleUntil` and `Suspended` are announced.
+pub async fn emit_visibility_changed(connection: &Connection) {
+    let emitted = async {
+        let iface = interface_ref(connection).await?;
+        let service = iface.get().await;
+        let emitter = iface.signal_emitter();
+        service.visible_changed(emitter).await?;
+        service.visible_until_changed(emitter).await?;
+        service.suspended_changed(emitter).await
+    };
+    if let Err(e) = emitted.await {
+        tracing::warn!("failed to emit the visibility properties: {e}");
     }
 }
 

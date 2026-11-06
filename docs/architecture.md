@@ -49,13 +49,13 @@ flowchart LR
     TR <-->|"TCP 47891, Noise XX"| PEER["Other KuickShare computer"]
 ```
 
-[StatusNotifierItem through `ksni`]: https://docs.rs/ksni/
+[StatusNotifierItem through `ksni`]: https://docs.rs/ksni/ "the only Rust crate that implements the tray protocol; it brings its own zbus (an older major version) next to the project's"
 
 ### Who starts whom
 
 - The shell starts the core, detached: at startup `CoreBridge` checks whether the bus name is owned. If it is, the shell attaches to that core. If not, it starts `kuickshared` from its own directory (in a Flatpak through the portal's `Spawn`, otherwise `startDetached`) and leaves the child alone: the owner of the background is now detached.
 - The core starts the shell for actions that need the window (a menu entry, a notification action): it spawns `kuickshare` next to itself with an argument (`--open-files`, `--clipboard`, `--transfer <id>`, `--page settings`, or `--request-quit`), through the portal in a Flatpak or detached elsewhere, and a single-instance shell (`KDBusService::Unique`) hands those arguments to the running window when one exists.
-- A launch of a different version, or with `--replace`, first asks the running shell to `quit()` over D-Bus, asks the core to `Quit` too (its tray goes with it), waits for both to leave the bus (`src/shell/instance.cpp`), then starts normally. An update takes over both sides; a transfer running in the old shell is lost.
+- A launch of a different version, or with `--replace`, first asks the running shell to `quit()` over D-Bus, asks the core to `Quit` too (its tray goes with it), waits for both to leave the bus (`src/shell/instance.cpp`), then starts normally. With no shell on the bus, a core that reports another version (`Version`) is asked to `Quit` the same way, unless a transfer is in flight (`TransferBusy`); a core that does not answer is left alone. An update takes over both sides; a transfer running in the old shell is lost.
 - `UpdateWatcher` (`src/shell/updatewatcher.cpp`) notices an update installed under a running Flatpak (portal update monitor) or AppImage (the `$APPIMAGE` file replaced, after 5 s without changes). Once no transfer is active and the window is closed, `main.cpp` returns from `app.exec()` as any window close does, and the replacement it started (`kuickshare --replace --background`, portal `Spawn` in a Flatpak) replaces both the old shell and its core. With the window open, a banner offers "Restart", which starts the replacement the same way without `--background`, so the new version's window comes up. While a replacement is starting, further triggers are ignored for 15 s. The tarball installer restarts the app itself. Both watchers are unverified on a real desktop *(inferred from the portal specification)*.
 - On exit, the shell leaves the core running (that is the point of the split). A user quit (Ctrl+Q or the quit dialog of the window, which `--request-quit` opens), or the closing of the last window with "Keep running in the background" off, ends with a `Quit` call; the core stops the engine, releases the Wi-Fi within 2 s and takes its bus name and pid file away. The core stops itself on SIGTERM or Ctrl+C, and the same way on a tray `Quit` while idle.
 - Autostart is a `.desktop` file in `~/.config/autostart` that runs `kuickshare --background`: a shell that starts the core if missing, then exits. What is left running is the headless core with its tray.
@@ -391,7 +391,7 @@ Assumes the attacker is on the same LAN, or a malicious app runs as the same use
 Remote names are data chosen by the sender. The shell handles them in three places:
 
 - `CoreBridge::plain()` replaces `<` and `>` with the single angle quotes U+2039 and U+203A, so a name cannot be read as rich text by a label. It is applied to device names, file lists, trusted and allowed device names, and pairing peer names and messages, whether they come from live signals or from the history.
-- Notifications (`TransferWatcher`) pass device name, PIN and text preview through `toHtmlEscaped()`. The preview is shortened first.
+- The core's notifications (`src/core/notify.rs`) pass device name, PIN and text preview through `plain()`, which replaces `<` and `>` with the same angle quotes as `CoreBridge::plain()`. The preview is shortened first (200 characters).
 - The text preview and the history text in the transfers page use `Text.PlainText`.
 
 Not done: direction and zero-width characters are not removed from names shown in the UI. The core's guard covers file names only, so a device name can still contain them.

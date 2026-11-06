@@ -91,7 +91,7 @@ Bluetooth devices are listed only while `WifiUpgrade` is on, can be sent to but 
 | `ForgetAllowed` | `(s name, s mac)` | Remove an entry from the list; unknown entries are ignored | none |
 | `AllowedDevices` | `() -> s` | Always-accepted devices, JSON (see [Always-accepted devices](#always-accepted-devices)) | none |
 | `MakeVisibleFor` | `(u seconds)` | Be visible for `seconds` even when `Visible` is false (capped at 24 h; 0 cancels). Not persisted; setting `Visible`, `ResetSettings` or a core restart ends it. `VisibleUntil` reports the end. The window keeps running while `Suspended` (the computer stays hidden) | none |
-| `ResetSettings` | `()` | Put every persisted property back to its default and restart sharing. This also takes back the firewall consent (`InsecureHotspotAllowed` becomes `false`). The always-accepted list and the `TrustedDevicesReset` notice are kept; `Suspended` is not touched | A transfer is in progress; restart failed (settings are put back) |
+| `ResetSettings` | `()` | Put every persisted property back to its default and restart sharing. This also takes back the firewall consent (`InsecureHotspotAllowed` becomes `false`). The always-accepted list and the `TrustedDevicesReset` notice are kept; `Suspended` follows Do Not Disturb again (`HideWhenDnd`) | A transfer is in progress; restart failed (settings are put back) |
 | `Quit` | `()` | Stop the service the way a SIGTERM reaches it: the engine first, then the Wi-Fi cleanup, then the process ends and the bus name goes. The shell asks before it quits itself, so the tray disappears with the whole app | none |
 
 `Cancel` only fails when the service is not running; an unknown or already finished `id` is not reported as an error (inferred from the code, which has no check for it).
@@ -129,7 +129,7 @@ One direction usable, or something that could not be checked, is not an error: t
 
 ## Properties
 
-All properties are read-write except `VisibleUntil`, `InsecureHotspotAllowed` and `TrustedDevicesReset`. Persisted ones are saved to `~/.config/kuickshare/settings.json` (JSON keys in snake case, e.g. `history_keep_days`); a partial or missing file falls back to the defaults, an unparsable one is moved to `settings.json.bak`.
+All properties are read-write except `VisibleUntil`, `InsecureHotspotAllowed`, `TrustedDevicesReset`, `TransferBusy` and `Version`. Persisted ones are saved to `~/.config/kuickshare/settings.json` (JSON keys in snake case, e.g. `history_keep_days`); a partial or missing file falls back to the defaults, an unparsable one is moved to `settings.json.bak`.
 
 | Property | Type | Default | Persisted | Effect and errors |
 |---|---|---|---|---|
@@ -140,7 +140,9 @@ All properties are read-write except `VisibleUntil`, `InsecureHotspotAllowed` an
 | `VisibleUntil` | `x` | `0` | no | Unix seconds when the temporary visibility from `MakeVisibleFor` ends; `0` when none is active. Read-only, not persisted. The window keeps running while `Suspended` |
 | `Suspended` | `b` | `false` | no | Hides the computer without changing `Visible`. The core sets it while Do Not Disturb is on and `HideWhenDnd` too |
 | `HideWhenDnd` | `b` | `true` | yes | Applied by the core's own watch of the notification service: it sets `Suspended` while Do Not Disturb is on |
-| `WindowOpen` | `b` | `false` | no | The shell sets it while its window shows. The core keeps the end-of-transfer notifications off then: they would sit behind the window's toast |
+| `WindowOpen` | `b` | `false` | no | The shell sets it while its window shows. The core keeps the end-of-transfer notifications off then: they would sit behind the window's toast. The core sets it back to `false` when the shell (`org.kde.kuickshare`) leaves the bus |
+| `TransferBusy` | `b` | `false` | no | Read-only. `true` while a transfer is running, starting (a send still scanning or dialing) or waiting for its consent. The shell reads it right before it asks to quit: a window started later knows nothing of the transfers already running |
+| `Version` | `s` | the package version | no | Read-only. A shell of another version quits an idle core that reports a different one (see [who starts whom](architecture.md#who-starts-whom)) |
 | `HistoryEnabled` | `b` | `true` | yes | Off: new transfers are not recorded (`history_uid` stays 0); entries already saved stay |
 | `HistoryKeepDays` | `u` | `0` (keep for ever) | yes | Entries older than this are deleted, immediately and each time the history is read or written |
 | `TrayIcon` | `b` | `true` | yes | Whether the service shows the tray item at all (the shell's "Keep running in the background" switch); off keeps the item Passive |

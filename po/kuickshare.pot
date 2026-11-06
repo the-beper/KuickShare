@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: kuickshare 1.0.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 18:33+0000\n"
+"POT-Creation-Date: 2026-11-06 20:00+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -18,640 +18,820 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
-#: src/shell/corebridge.cpp:687
+#: src/core/desktop.rs:89 src/core/desktop.rs:1147 src/shell/corebridge.cpp:738
+msgid "The offer has too many files"
+msgstr ""
+
+#: src/core/desktop.rs:91 src/core/desktop.rs:1151 src/shell/corebridge.cpp:742
+msgid "There is not enough free space in the download folder"
+msgstr ""
+
+#: src/core/desktop.rs:93 src/core/desktop.rs:1155 src/shell/corebridge.cpp:746
+msgid "The download folder cannot be used"
+msgstr ""
+
+#: src/core/desktop.rs:94 src/core/desktop.rs:1159 src/shell/corebridge.cpp:750
+msgid "A file name in the offer cannot be saved"
+msgstr ""
+
+#: src/core/desktop.rs:95 src/core/desktop.rs:1161 src/core/desktop.rs:1164
+#: src/shell/corebridge.cpp:754
+msgid "The offer is malformed"
+msgstr ""
+
+#: src/core/desktop.rs:99 src/core/desktop.rs:1169 src/shell/corebridge.cpp:757
+msgid "The offer was refused"
+msgstr ""
+
+#: src/core/notify.rs:165
+msgid "A nearby device"
+msgstr ""
+
+#: src/core/notify.rs:167
+msgid "%1 wants to share with you"
+msgstr ""
+
+#: src/core/notify.rs:170
+msgid ""
+"%1 wants to share with you\n"
+"PIN: %2"
+msgstr ""
+
+#: src/core/notify.rs:175
+msgid ""
+"“Accept and Trust” recognises this device by its name and network address, "
+"which another device on the same network can copy"
+msgstr ""
+
+#: src/core/notify.rs:179
+msgctxt "@action:button"
+msgid "Accept"
+msgstr ""
+
+#: src/core/notify.rs:183
+msgctxt "@action:button"
+msgid "Accept and Trust"
+msgstr ""
+
+#: src/core/notify.rs:186
+msgctxt "@action:button"
+msgid "Decline"
+msgstr ""
+
+#: src/core/notify.rs:189
+msgctxt "@title:notification"
+msgid "Incoming Transfer"
+msgstr ""
+
+#: src/core/notify.rs:200 src/core/notify.rs:224 src/core/notify.rs:243
+#: src/core/notify.rs:253 src/core/notify.rs:280
+msgid "a nearby device"
+msgstr ""
+
+#: src/core/notify.rs:203
+msgctxt "@action:button"
+msgid "Copy Link"
+msgstr ""
+
+#: src/core/notify.rs:205
+msgctxt "@action:button"
+msgid "Copy Text"
+msgstr ""
+
+#: src/core/notify.rs:208
+msgctxt "@action:button"
+msgid "Open Link"
+msgstr ""
+
+#: src/core/notify.rs:210
+msgctxt "@action:button"
+msgid "View"
+msgstr ""
+
+#: src/core/notify.rs:214
+msgctxt "@title:notification"
+msgid "Link Received"
+msgstr ""
+
+#: src/core/notify.rs:216
+msgctxt "@title:notification"
+msgid "Text Received"
+msgstr ""
+
+#: src/core/notify.rs:218
+msgid ""
+"From %1:\n"
+"%2"
+msgstr ""
+
+#: src/core/notify.rs:227
+msgctxt "@action:button"
+msgid "Open File"
+msgstr ""
+
+#: src/core/notify.rs:229
+msgctxt "@action:button"
+msgid "Open Folder"
+msgstr ""
+
+#: src/core/notify.rs:232
+msgctxt "@title:notification"
+msgid "Files Received"
+msgstr ""
+
+#: src/core/notify.rs:233
+msgid "From %1"
+msgstr ""
+
+#: src/core/notify.rs:240
+msgctxt "@title:notification"
+msgid "Offer Refused"
+msgstr ""
+
+#: src/core/notify.rs:242
+msgid "From %1: %2"
+msgstr ""
+
+#: src/core/notify.rs:256
+msgid ""
+"Could not start the transfer to %1 over Bluetooth\n"
+"Check that Bluetooth is on and the device is nearby, then try again"
+msgstr ""
+
+#: src/core/notify.rs:262
+msgid ""
+"%1 declined the transfer or could not receive it\n"
+"Check the other device and its free space, then try again"
+msgstr ""
+
+#: src/core/notify.rs:269
+msgctxt "@title:notification"
+msgid "Transfer Not Accepted"
+msgstr ""
+
+#: src/core/notify.rs:277
+msgctxt "@title:notification"
+msgid "Transfer Interrupted"
+msgstr ""
+
+#: src/core/notify.rs:279
+msgid ""
+"The connection with %1 was lost\n"
+"Keep both devices close and awake, then try again"
+msgstr ""
+
+#: src/core/tray.rs:128
+msgctxt "@info:tooltip"
+msgid "Visible for %1 more minute"
+msgid_plural "Visible for %1 more minutes"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/core/tray.rs:160
+msgctxt "@action:inmenu"
+msgid "Open KuickShare"
+msgstr ""
+
+#: src/core/tray.rs:167
+msgctxt "@action:inmenu"
+msgid "Send Files…"
+msgstr ""
+
+#: src/core/tray.rs:173
+msgctxt "@action:inmenu"
+msgid "Send Clipboard"
+msgstr ""
+
+#: src/core/tray.rs:180
+msgctxt "@action:inmenu"
+msgid "Visible to Nearby Devices"
+msgstr ""
+
+#: src/core/tray.rs:187
+msgctxt "@action:inmenu"
+msgid "Visible for 10 Minutes"
+msgstr ""
+
+#: src/core/tray.rs:195 src/shell/qml/Main.qml:309
+msgctxt "@action:inmenu"
+msgid "Preferences"
+msgstr ""
+
+#: src/core/tray.rs:201
+msgctxt "@action:inmenu"
+msgid "Quit"
+msgstr ""
+
+#: src/shell/corebridge.cpp:716
 msgid "This transfer is no longer waiting for an answer"
 msgstr ""
 
-#: src/shell/corebridge.cpp:694
+#: src/shell/corebridge.cpp:723
 msgid "This device cannot be trusted: its network address is not known"
 msgstr ""
 
-#: src/shell/corebridge.cpp:696
+#: src/shell/corebridge.cpp:725
 msgid "This device cannot be trusted: it sent no name"
 msgstr ""
 
-#: src/shell/corebridge.cpp:698
+#: src/shell/corebridge.cpp:727
 msgid ""
 "This device cannot be trusted: its network address now belongs to another "
 "device"
 msgstr ""
 
-#: src/shell/corebridge.cpp:709
-msgid "The offer has too many files"
-msgstr ""
-
-#: src/shell/corebridge.cpp:713
-msgid "There is not enough free space in the download folder"
-msgstr ""
-
-#: src/shell/corebridge.cpp:717
-msgid "The download folder cannot be used"
-msgstr ""
-
-#: src/shell/corebridge.cpp:721
-msgid "A file name in the offer cannot be saved"
-msgstr ""
-
-#: src/shell/corebridge.cpp:725
-msgid "The offer is malformed"
-msgstr ""
-
-#: src/shell/corebridge.cpp:728
-msgid "The offer was refused"
-msgstr ""
-
-#: src/shell/corebridge.cpp:763
+#: src/shell/corebridge.cpp:792
 msgid "Bluetooth (BlueZ)"
 msgstr ""
 
-#: src/shell/corebridge.cpp:766
+#: src/shell/corebridge.cpp:795
 msgid "NetworkManager"
 msgstr ""
 
-#: src/shell/corebridge.cpp:769
+#: src/shell/corebridge.cpp:798
 msgid "Wi-Fi adapter"
 msgstr ""
 
-#: src/shell/corebridge.cpp:772
+#: src/shell/corebridge.cpp:801
 msgid "Hotspot addresses (dnsmasq)"
 msgstr ""
 
-#: src/shell/corebridge.cpp:775
+#: src/shell/corebridge.cpp:804
 msgid "Firewall (firewalld)"
 msgstr ""
 
-#: src/shell/corebridge.cpp:778
+#: src/shell/corebridge.cpp:807
 msgid "Flatpak permissions"
 msgstr ""
 
-#: src/shell/corebridge.cpp:793
+#: src/shell/corebridge.cpp:822
 msgid "The check took too long"
 msgstr ""
 
-#: src/shell/corebridge.cpp:793
+#: src/shell/corebridge.cpp:822
 msgid ""
 "Refresh to check again; if it keeps happening, the service it asks may be "
 "busy or stuck"
 msgstr ""
 
-#: src/shell/corebridge.cpp:796
+#: src/shell/corebridge.cpp:825
 msgid "The system message bus could not be reached"
 msgstr ""
 
-#: src/shell/corebridge.cpp:796
+#: src/shell/corebridge.cpp:825
 msgid "The check needs the system D-Bus; refresh to try again"
 msgstr ""
 
-#: src/shell/corebridge.cpp:799
+#: src/shell/corebridge.cpp:828
 msgid "The service gave an answer that could not be understood"
 msgstr ""
 
-#: src/shell/corebridge.cpp:799
+#: src/shell/corebridge.cpp:828
 msgid "Refresh to try again; if it persists, update the service"
 msgstr ""
 
-#: src/shell/corebridge.cpp:802
+#: src/shell/corebridge.cpp:831
 msgid "The check failed"
 msgstr ""
 
-#: src/shell/corebridge.cpp:802
+#: src/shell/corebridge.cpp:831
 msgid "Refresh to try again"
 msgstr ""
 
-#: src/shell/corebridge.cpp:805
+#: src/shell/corebridge.cpp:834
 msgid "Not checked, because something it depends on is not ready"
 msgstr ""
 
-#: src/shell/corebridge.cpp:805
+#: src/shell/corebridge.cpp:834
 msgid "Fix the items that are blocked or unknown first"
 msgstr ""
 
-#: src/shell/corebridge.cpp:810
+#: src/shell/corebridge.cpp:839
 msgid "The Bluetooth service is not running"
 msgstr ""
 
-#: src/shell/corebridge.cpp:810
+#: src/shell/corebridge.cpp:839
 msgid ""
 "Start the Bluetooth service; if BlueZ is not installed, install it first"
 msgstr ""
 
-#: src/shell/corebridge.cpp:813
+#: src/shell/corebridge.cpp:842
 msgid "The Bluetooth service is installed but not running"
 msgstr ""
 
-#: src/shell/corebridge.cpp:813 src/shell/corebridge.cpp:866
+#: src/shell/corebridge.cpp:842 src/shell/corebridge.cpp:895
 msgid "It starts when something needs it; to start it now, use the command"
 msgstr ""
 
-#: src/shell/corebridge.cpp:816
+#: src/shell/corebridge.cpp:845
 msgid "The sandbox hides the Bluetooth service"
 msgstr ""
 
-#: src/shell/corebridge.cpp:816
+#: src/shell/corebridge.cpp:845
 msgid "Allow the sandbox to talk to BlueZ, then restart KuickShare"
 msgstr ""
 
-#: src/shell/corebridge.cpp:820
+#: src/shell/corebridge.cpp:849
 msgid "No Bluetooth adapter was found"
 msgstr ""
 
-#: src/shell/corebridge.cpp:820
+#: src/shell/corebridge.cpp:849
 msgid ""
 "Plug in or enable a Bluetooth adapter; if one is installed, check that its "
 "driver is loaded"
 msgstr ""
 
-#: src/shell/corebridge.cpp:824
+#: src/shell/corebridge.cpp:853
 msgid "The Bluetooth adapter is turned off"
 msgstr ""
 
-#: src/shell/corebridge.cpp:824
+#: src/shell/corebridge.cpp:853
 msgid ""
 "KuickShare turns it on when it needs it; you can also turn Bluetooth on in "
 "the system settings"
 msgstr ""
 
-#: src/shell/corebridge.cpp:827
+#: src/shell/corebridge.cpp:856
 msgid "Blocked by a radio switch"
 msgstr ""
 
-#: src/shell/corebridge.cpp:827
+#: src/shell/corebridge.cpp:856
 msgid "Turn Bluetooth on in the system settings"
 msgstr ""
 
-#: src/shell/corebridge.cpp:831
+#: src/shell/corebridge.cpp:860
 msgid "The Bluetooth adapter does not support Bluetooth Low Energy"
 msgstr ""
 
-#: src/shell/corebridge.cpp:831
+#: src/shell/corebridge.cpp:860
 msgid "Use an adapter that supports Bluetooth 4.0 or newer"
 msgstr ""
 
-#: src/shell/corebridge.cpp:834
+#: src/shell/corebridge.cpp:863
 msgid "BlueZ does not report what the adapter can do"
 msgstr ""
 
-#: src/shell/corebridge.cpp:834 src/shell/corebridge.cpp:848
+#: src/shell/corebridge.cpp:863 src/shell/corebridge.cpp:877
 msgid "This may still work; a newer BlueZ reports it"
 msgstr ""
 
-#: src/shell/corebridge.cpp:838
+#: src/shell/corebridge.cpp:867
 msgid "The Bluetooth adapter cannot advertise"
 msgstr ""
 
-#: src/shell/corebridge.cpp:838
+#: src/shell/corebridge.cpp:867
 msgid ""
 "Receiving by Bluetooth needs an adapter that can advertise; sending is not "
 "affected"
 msgstr ""
 
-#: src/shell/corebridge.cpp:841
+#: src/shell/corebridge.cpp:870
 msgid "The adapter has no free advertising slot now"
 msgstr ""
 
-#: src/shell/corebridge.cpp:841
+#: src/shell/corebridge.cpp:870
 msgid "Another program uses them; close it and refresh"
 msgstr ""
 
-#: src/shell/corebridge.cpp:845
+#: src/shell/corebridge.cpp:874
 msgid "The Bluetooth adapter cannot scan for devices"
 msgstr ""
 
-#: src/shell/corebridge.cpp:845
+#: src/shell/corebridge.cpp:874
 msgid "Sending needs an adapter that can scan; use another one"
 msgstr ""
 
-#: src/shell/corebridge.cpp:848
+#: src/shell/corebridge.cpp:877
 msgid "BlueZ does not report how the adapter can scan"
 msgstr ""
 
-#: src/shell/corebridge.cpp:852
+#: src/shell/corebridge.cpp:881
 msgid "BlueZ offers no GATT services"
 msgstr ""
 
-#: src/shell/corebridge.cpp:852
+#: src/shell/corebridge.cpp:881
 msgid "Update BlueZ to a version with GATT support"
 msgstr ""
 
-#: src/shell/corebridge.cpp:856
+#: src/shell/corebridge.cpp:885
 msgid "The sandbox does not allow Bluetooth sockets"
 msgstr ""
 
-#: src/shell/corebridge.cpp:856
+#: src/shell/corebridge.cpp:885
 msgid ""
 "Transfers still work over a slower path; allow Bluetooth for the Flatpak to "
 "use the faster one"
 msgstr ""
 
-#: src/shell/corebridge.cpp:859
+#: src/shell/corebridge.cpp:888
 msgid "The kernel does not report Bluetooth socket support"
 msgstr ""
 
-#: src/shell/corebridge.cpp:859
+#: src/shell/corebridge.cpp:888
 msgid "Transfers still work over a slower path if it is missing"
 msgstr ""
 
-#: src/shell/corebridge.cpp:863
+#: src/shell/corebridge.cpp:892
 msgid "NetworkManager is not running"
 msgstr ""
 
-#: src/shell/corebridge.cpp:863
+#: src/shell/corebridge.cpp:892
 msgid ""
 "Wi-Fi Direct needs NetworkManager; start it, or install it if this system "
 "uses another network tool"
 msgstr ""
 
-#: src/shell/corebridge.cpp:866
+#: src/shell/corebridge.cpp:895
 msgid "NetworkManager is installed but not running"
 msgstr ""
 
-#: src/shell/corebridge.cpp:869
+#: src/shell/corebridge.cpp:898
 msgid "The sandbox hides NetworkManager"
 msgstr ""
 
-#: src/shell/corebridge.cpp:869
+#: src/shell/corebridge.cpp:898
 msgid "Allow the sandbox to talk to NetworkManager, then restart KuickShare"
 msgstr ""
 
-#: src/shell/corebridge.cpp:873
+#: src/shell/corebridge.cpp:902
 msgid "Networking is turned off in NetworkManager"
 msgstr ""
 
-#: src/shell/corebridge.cpp:873
+#: src/shell/corebridge.cpp:902
 msgid "Turn networking on in the network settings"
 msgstr ""
 
-#: src/shell/corebridge.cpp:877
+#: src/shell/corebridge.cpp:906
 msgid "Wi-Fi is turned off"
 msgstr ""
 
-#: src/shell/corebridge.cpp:877
+#: src/shell/corebridge.cpp:906
 msgid "Turn Wi-Fi on in the system settings"
 msgstr ""
 
-#: src/shell/corebridge.cpp:881
+#: src/shell/corebridge.cpp:910
 msgid "A hardware switch has turned the Wi-Fi radio off"
 msgstr ""
 
-#: src/shell/corebridge.cpp:881
+#: src/shell/corebridge.cpp:910
 msgid "Use the Wi-Fi switch or key of this system"
 msgstr ""
 
-#: src/shell/corebridge.cpp:885
+#: src/shell/corebridge.cpp:914
 msgid "There are several Wi-Fi adapters; the first one is used"
 msgstr ""
 
-#: src/shell/corebridge.cpp:885
+#: src/shell/corebridge.cpp:914
 msgid "If transfers fail, turn off the adapters you do not need"
 msgstr ""
 
-#: src/shell/corebridge.cpp:888
+#: src/shell/corebridge.cpp:917
 msgid "No Wi-Fi adapter was found"
 msgstr ""
 
-#: src/shell/corebridge.cpp:888
+#: src/shell/corebridge.cpp:917
 msgid ""
 "Plug in a Wi-Fi adapter, or check that the driver of the built-in one is "
 "loaded"
 msgstr ""
 
-#: src/shell/corebridge.cpp:892
+#: src/shell/corebridge.cpp:921
 msgid "NetworkManager does not manage the Wi-Fi adapter"
 msgstr ""
 
-#: src/shell/corebridge.cpp:892
+#: src/shell/corebridge.cpp:921
 msgid ""
 "Let NetworkManager manage it: another network tool or an unmanaged-devices "
 "setting may be holding it"
 msgstr ""
 
-#: src/shell/corebridge.cpp:896
+#: src/shell/corebridge.cpp:925
 msgid "The Wi-Fi adapter needs firmware that is not installed"
 msgstr ""
 
-#: src/shell/corebridge.cpp:896
+#: src/shell/corebridge.cpp:925
 msgid ""
 "Install the firmware package for the adapter (often linux-firmware), then "
 "restart this system"
 msgstr ""
 
-#: src/shell/corebridge.cpp:900
+#: src/shell/corebridge.cpp:929
 msgid "The NetworkManager plugin for the Wi-Fi adapter is missing"
 msgstr ""
 
-#: src/shell/corebridge.cpp:900
+#: src/shell/corebridge.cpp:929
 msgid ""
 "Install the NetworkManager Wi-Fi plugin package of your distribution, then "
 "restart NetworkManager"
 msgstr ""
 
-#: src/shell/corebridge.cpp:903
+#: src/shell/corebridge.cpp:932
 msgid "NetworkManager reports the Wi-Fi adapter as unavailable"
 msgstr ""
 
-#: src/shell/corebridge.cpp:903
+#: src/shell/corebridge.cpp:932
 msgid "Check that its driver loaded and its radio is on"
 msgstr ""
 
-#: src/shell/corebridge.cpp:907
+#: src/shell/corebridge.cpp:936
 msgid "NetworkManager asks for authentication to control the network"
 msgstr ""
 
-#: src/shell/corebridge.cpp:907
+#: src/shell/corebridge.cpp:936
 msgid ""
 "The hotspot may prompt for a password or be refused; allow network control "
 "for your user in the PolicyKit settings"
 msgstr ""
 
-#: src/shell/corebridge.cpp:910
+#: src/shell/corebridge.cpp:939
 msgid "NetworkManager does not allow this user to control the network"
 msgstr ""
 
-#: src/shell/corebridge.cpp:910
+#: src/shell/corebridge.cpp:939
 msgid ""
 "Ask the administrator to allow network control and changes to system "
 "connections for your user"
 msgstr ""
 
-#: src/shell/corebridge.cpp:914
+#: src/shell/corebridge.cpp:943
 msgid "Joining Wi-Fi cannot work: something it needs is blocked"
 msgstr ""
 
-#: src/shell/corebridge.cpp:914
+#: src/shell/corebridge.cpp:943
 msgid "Fix the blocked items of NetworkManager and the Wi-Fi adapter"
 msgstr ""
 
-#: src/shell/corebridge.cpp:917
+#: src/shell/corebridge.cpp:946
 msgid ""
 "It is not known whether joining Wi-Fi works: something it needs could not be "
 "checked"
 msgstr ""
 
-#: src/shell/corebridge.cpp:917
+#: src/shell/corebridge.cpp:946
 msgid "Refresh when the items above are sorted out"
 msgstr ""
 
-#: src/shell/corebridge.cpp:920 src/shell/corebridge.cpp:942
+#: src/shell/corebridge.cpp:949 src/shell/corebridge.cpp:971
 msgid "The sandbox has no network access"
 msgstr ""
 
-#: src/shell/corebridge.cpp:920 src/shell/corebridge.cpp:942
+#: src/shell/corebridge.cpp:949 src/shell/corebridge.cpp:971
 msgid "Allow the network for the Flatpak"
 msgstr ""
 
-#: src/shell/corebridge.cpp:924
+#: src/shell/corebridge.cpp:953
 msgid "The Wi-Fi adapter cannot create a hotspot"
 msgstr ""
 
-#: src/shell/corebridge.cpp:924
+#: src/shell/corebridge.cpp:953
 msgid ""
 "Receiving by Wi-Fi needs an adapter with access point mode; Bluetooth still "
 "works"
 msgstr ""
 
-#: src/shell/corebridge.cpp:927
+#: src/shell/corebridge.cpp:956
 msgid "The Wi-Fi adapter cannot protect a hotspot with WPA2"
 msgstr ""
 
-#: src/shell/corebridge.cpp:927
+#: src/shell/corebridge.cpp:956
 msgid "Receiving by Wi-Fi needs WPA2 on the adapter; Bluetooth still works"
 msgstr ""
 
-#: src/shell/corebridge.cpp:930
+#: src/shell/corebridge.cpp:959
 msgid "The Wi-Fi adapter reports no 2.4 GHz or 5 GHz band for a hotspot"
 msgstr ""
 
-#: src/shell/corebridge.cpp:930
+#: src/shell/corebridge.cpp:959
 msgid "Receiving by Wi-Fi needs one of them; Bluetooth still works"
 msgstr ""
 
-#: src/shell/corebridge.cpp:933
+#: src/shell/corebridge.cpp:962
 msgid "The Wi-Fi driver does not report what the adapter can do"
 msgstr ""
 
-#: src/shell/corebridge.cpp:933
+#: src/shell/corebridge.cpp:962
 msgid "The hotspot may still work; it could not be checked"
 msgstr ""
 
-#: src/shell/corebridge.cpp:936
+#: src/shell/corebridge.cpp:965
 msgid "NetworkManager asks for authentication to share a connection"
 msgstr ""
 
-#: src/shell/corebridge.cpp:936
+#: src/shell/corebridge.cpp:965
 msgid ""
 "The hotspot may prompt for a password or be refused; allow it in the "
 "PolicyKit settings"
 msgstr ""
 
-#: src/shell/corebridge.cpp:939
+#: src/shell/corebridge.cpp:968
 msgid "This user may not share a connection"
 msgstr ""
 
-#: src/shell/corebridge.cpp:939
+#: src/shell/corebridge.cpp:968
 msgid "Ask the administrator to allow sharing connections in NetworkManager"
 msgstr ""
 
-#: src/shell/corebridge.cpp:946
+#: src/shell/corebridge.cpp:975
 msgid "dnsmasq is installed"
 msgstr ""
 
-#: src/shell/corebridge.cpp:949
+#: src/shell/corebridge.cpp:978
 msgid "The hotspot already handed out addresses in this session"
 msgstr ""
 
-#: src/shell/corebridge.cpp:952
+#: src/shell/corebridge.cpp:981
 msgid "dnsmasq was not found"
 msgstr ""
 
-#: src/shell/corebridge.cpp:952
+#: src/shell/corebridge.cpp:981
 msgid ""
 "The hotspot hands out addresses with dnsmasq; install the dnsmasq or dnsmasq-"
 "base package"
 msgstr ""
 
-#: src/shell/corebridge.cpp:955
+#: src/shell/corebridge.cpp:984
 msgid "Checked when the first hotspot starts"
 msgstr ""
 
-#: src/shell/corebridge.cpp:955
+#: src/shell/corebridge.cpp:984
 msgid "The sandbox cannot look for dnsmasq on this system"
 msgstr ""
 
-#: src/shell/corebridge.cpp:958
+#: src/shell/corebridge.cpp:987
 msgid "The hotspot could not start its address service"
 msgstr ""
 
-#: src/shell/corebridge.cpp:958
+#: src/shell/corebridge.cpp:987
 msgid "Install the dnsmasq or dnsmasq-base package"
 msgstr ""
 
-#: src/shell/corebridge.cpp:962
+#: src/shell/corebridge.cpp:991
 msgid "The firewall service (firewalld) is not running"
 msgstr ""
 
-#: src/shell/corebridge.cpp:962
+#: src/shell/corebridge.cpp:991
 msgid ""
 "KuickShare cannot open the hotspot port by itself; it asks you before the "
 "hotspot uses an open zone"
 msgstr ""
 
-#: src/shell/corebridge.cpp:965
+#: src/shell/corebridge.cpp:994
 msgid "The sandbox hides the firewall service"
 msgstr ""
 
-#: src/shell/corebridge.cpp:965
+#: src/shell/corebridge.cpp:994
 msgid "Allow the sandbox to talk to firewalld, then restart KuickShare"
 msgstr ""
 
-#: src/shell/corebridge.cpp:968
+#: src/shell/corebridge.cpp:997
 msgid "The firewall has no zone for the hotspot (nm-shared)"
 msgstr ""
 
-#: src/shell/corebridge.cpp:968
+#: src/shell/corebridge.cpp:997
 msgid "The hotspot may be blocked or open; add the zone or check its rules"
 msgstr ""
 
-#: src/shell/corebridge.cpp:971
+#: src/shell/corebridge.cpp:1000
 msgid "Changing the firewall asks for authentication"
 msgstr ""
 
-#: src/shell/corebridge.cpp:971
+#: src/shell/corebridge.cpp:1000
 msgid "Opening the hotspot port may prompt for a password or be refused"
 msgstr ""
 
-#: src/shell/corebridge.cpp:974
+#: src/shell/corebridge.cpp:1003
 msgid "This user may not change the firewall"
 msgstr ""
 
-#: src/shell/corebridge.cpp:974
+#: src/shell/corebridge.cpp:1003
 msgid "The hotspot port cannot be opened; ask the administrator to allow it"
 msgstr ""
 
-#: src/shell/corebridge.cpp:977
+#: src/shell/corebridge.cpp:1006
 msgid "It cannot be checked whether this user may change the firewall"
 msgstr ""
 
-#: src/shell/corebridge.cpp:977
+#: src/shell/corebridge.cpp:1006
 msgid "polkit could not be asked without a prompt; the hotspot is tried anyway"
 msgstr ""
 
-#: src/shell/corebridge.cpp:980
+#: src/shell/corebridge.cpp:1009
 msgid "The firewall refused the hotspot in this session"
 msgstr ""
 
-#: src/shell/corebridge.cpp:980
+#: src/shell/corebridge.cpp:1009
 msgid ""
 "Allow the hotspot in the firewall, or let it use an open zone when asked"
 msgstr ""
 
-#: src/shell/corebridge.cpp:983
+#: src/shell/corebridge.cpp:1012
 msgid "You allowed the hotspot to use an open firewall zone in this session"
 msgstr ""
 
-#: src/shell/corebridge.cpp:983
+#: src/shell/corebridge.cpp:1012
 msgid "Turning the setting off takes this back"
 msgstr ""
 
-#: src/shell/corebridge.cpp:988
+#: src/shell/corebridge.cpp:1017
 msgid "The Flatpak lacks permissions it needs"
 msgstr ""
 
-#: src/shell/corebridge.cpp:988
+#: src/shell/corebridge.cpp:1017
 msgid "Allow them, then restart KuickShare"
 msgstr ""
 
-#: src/shell/corebridge.cpp:991
+#: src/shell/corebridge.cpp:1020
 msgid "The Flatpak can see the whole file system"
 msgstr ""
 
-#: src/shell/corebridge.cpp:991
+#: src/shell/corebridge.cpp:1020
 msgid "It does not need to; take that permission away"
 msgstr ""
 
-#: src/shell/corebridge.cpp:995
+#: src/shell/corebridge.cpp:1024
 msgid "No more information is available"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1002
+#: src/shell/corebridge.cpp:1031
 msgctxt "@info:status requirement check"
 msgid "Ready"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1004
+#: src/shell/corebridge.cpp:1033
 msgctxt "@info:status requirement check"
 msgid "Warning"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1006
+#: src/shell/corebridge.cpp:1035
 msgctxt "@info:status requirement check"
 msgid "Blocked"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1008
+#: src/shell/corebridge.cpp:1037
 msgctxt "@info:status requirement check"
 msgid "Checking"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1012
+#: src/shell/corebridge.cpp:1041
 msgctxt "@info:status requirement check"
 msgid "Unknown"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1036
+#: src/shell/corebridge.cpp:1065
 msgctxt "@info:status capability"
 msgid "Available"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1038
+#: src/shell/corebridge.cpp:1067
 msgctxt "@info:status capability"
 msgid "Limited"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1040
+#: src/shell/corebridge.cpp:1069
 msgctxt "@info:status capability"
 msgid "Unavailable"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1044
+#: src/shell/corebridge.cpp:1073
 msgctxt "@info:status capability"
 msgid "Unknown"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1337
+#: src/shell/corebridge.cpp:1366
 msgid "Could not update Dolphin’s context menu"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1361
+#: src/shell/corebridge.cpp:1390
 msgid "Could not update the application menu"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1372
+#: src/shell/corebridge.cpp:1401
 msgid "Could not add KuickShare to the menus"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1429 src/shell/corebridge.cpp:1436
+#: src/shell/corebridge.cpp:1458 src/shell/corebridge.cpp:1465
 msgid "The sharing service did not accept the request"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1549
+#: src/shell/corebridge.cpp:1578
 msgid ""
 "The Flatpak has no access to %1. Allow it with: flatpak override --user --"
 "filesystem=\"%1\" %2"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1600
+#: src/shell/corebridge.cpp:1643
 msgid "Could not update the autostart entry"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1714
+#: src/shell/corebridge.cpp:1757
 msgid "The folder %1 has more than %2 files"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1718
+#: src/shell/corebridge.cpp:1761
 msgid "The folder %1 has no files to send"
 msgstr ""
 
-#: src/shell/corebridge.cpp:1753
+#: src/shell/corebridge.cpp:1796
 msgid "Only local files and folders can be shared"
 msgstr ""
 
@@ -695,19 +875,19 @@ msgstr ""
 msgid "Files to send"
 msgstr ""
 
-#: src/shell/main.cpp:295
+#: src/shell/main.cpp:301
 msgid "Several devices are named %1"
 msgstr ""
 
-#: src/shell/main.cpp:302
+#: src/shell/main.cpp:308
 msgid "No device named %1 found"
 msgstr ""
 
-#: src/shell/main.cpp:319 src/shell/qml/SendPage.qml:496
+#: src/shell/main.cpp:325 src/shell/qml/SendPage.qml:496
 msgid "A transfer is in progress. You can send again when it ends"
 msgstr ""
 
-#: src/shell/main.cpp:343
+#: src/shell/main.cpp:349
 msgid "No files to send"
 msgstr ""
 
@@ -988,11 +1168,6 @@ msgstr ""
 #: src/shell/qml/Main.qml:293
 msgctxt "@action:button"
 msgid "More"
-msgstr ""
-
-#: src/shell/qml/Main.qml:309
-msgctxt "@action:inmenu"
-msgid "Preferences"
 msgstr ""
 
 #: src/shell/qml/Main.qml:316

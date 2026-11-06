@@ -317,7 +317,7 @@ private:
     void setRequirementsBusy(bool busy);
     void loadHistory();
     void startCore();
-    /// The core is started detached now: the pid file of one that is stuck shows {{@code kill}} which.
+    /// Terminates a core that runs but never took its bus name, found through its pid file. Blocks up to 3 s.
     void killStaleCore();
     void loadHistorySize();
     void updateClipboard();

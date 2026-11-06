@@ -1,15 +1,14 @@
-//! The desktop legs that the shell did with Qt, moved into a task of the core: the tray icon
-//! ([`crate::tray`]), the notifications ([`crate::notify`]), Do Not Disturb, the clipboard and
-//! the way the window and the files open. The background is headless now: the core runs alone,
-//! and the shell only exists while the user works with its window.
+//! The desktop legs of the core: the tray icon ([`crate::tray`]), the notifications
+//! ([`crate::notify`]), Do Not Disturb, the clipboard and the way the window and the files
+//! open. The background is headless: the core runs alone, and the shell only exists while the
+//! user works with its window.
 //!
 //! The state machine ([`Desktop::run`]) watches the transfers of the engine (already merged,
 //! see `forward_transfers`), the presses on the notifications, the tray clicks and a slow tick,
-//! and decides what the shell's `TransferWatcher` decided: prompts for consents, notices for
-//! how a transfer ended, and the tray state.
+//! and decides the prompts for consents, the notices for how a transfer ended, and the tray
+//! state.
 //!
-//! The texts come from the same catalogs as the shell's (`po/<lang>.po`), the same words and
-//! the same kinds of timing.
+//! The texts come from the catalogs of `po/<lang>.po`, which the shell shares.
 
 use std::{
     collections::HashMap,
@@ -32,6 +31,7 @@ use crate::{
     app::Core,
     consent::{Answer, By, ConsentError, Consents},
     dbus::TransferEvent,
+    history,
     notify::{
         self, ACCEPT, ACCEPT_AND_TRUST, COPY, DECLINE, Event, Notice, Notifier, OPEN_FILE,
         OPEN_FOLDER, OPEN_LINK, VIEW,
@@ -45,8 +45,15 @@ const WAITING: &str = "WaitingForUserConsent";
 /// How often the tray state and its tooltip are refreshed, and the missing prompts looked for.
 const PULSE: Duration = Duration::from_secs(2);
 
-/// The duration of the "Visible for 10 Minutes" menu entry, in seconds: what the shell passed
-/// to `MakeVisibleFor`.
+/// How long the state of an ended transfer is kept: a repeat of its end (`Disconnected` after
+/// `Finished`) arrives within seconds and must find it, and an id that comes back later is a
+/// new transfer.
+const FINISHED_KEEP: Duration = Duration::from_secs(60);
+
+/// The name the shell owns on the bus while its window lives.
+const SHELL_NAME: &str = "org.kde.kuickshare";
+
+/// The duration of the "Visible for 10 Minutes" menu entry, in seconds.
 const TEMP_VISIBLE_SECS: u32 = 600;
 
 /// Sees whether the process runs in a Flatpak sandbox: several pieces of the desktop must go
@@ -56,7 +63,7 @@ const FLATPAK_INFO: &str = "/.flatpak-info";
 /// The object path of the Flatpak portal, which starts the shell of this app in the sandbox.
 const PORTAL_PATH: &str = "/org/freedesktop/portal/Flatpak";
 
-/// A transfer that is moving data (the shell's `TransferModel` called it busy).
+/// A transfer that is moving data.
 fn is_transferring(state: &str) -> bool {
     state == "ReceivingFiles" || state == "SendingFiles"
 }
@@ -67,9 +74,8 @@ fn is_ble(id: &str) -> bool {
     id.starts_with("ble:")
 }
 
-/// Whether the event is a transfer waiting for its user's answer: what the shell's
-/// `awaitingConsent` measured, and what the tray's `NeedsAttention` and the prompt re-show do
-/// from.
+/// Whether the event is a transfer waiting for its user's answer: what the prompt and its
+/// re-show go by.
 fn waits_consent(event: &TransferEvent) -> bool {
     event.kind == "inbound"
         && event.state == WAITING
@@ -94,21 +100,13 @@ fn refusal_text(reason: &str) -> String {
     }
 }
 
-/// The minutes left of a temporary visibility, for the tooltip of the tray: what the shell
-/// showed with `(left + 59) / 60`.
+/// The minutes left of a temporary visibility, for the tooltip of the tray (rounded up).
 fn minutes_left(until: i64, now: i64) -> u64 {
     if until <= now {
         return 0;
     }
     let left = until - now;
     (left / 60 + i64::from(left % 60 > 0)) as u64
-}
-
-/// The Unix time in seconds, for the end of a temporary visibility.
-fn unix_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// `file://` of a local path: path characters that may not travel inside a URI are escaped, and
@@ -173,9 +171,8 @@ fn shell_program() -> Option<PathBuf> {
         .and_then(|exe| exe.parent().map(|bin| bin.join("kuickshare")))
 }
 
-/// The folder received files are in, for the "Open Folder" action of a notice, as the shell
-/// asked the core (`m_core->downloadDir`) and fell back: the setting, or the usual download
-/// folder of the user.
+/// The folder received files are in, for the "Open Folder" action of a notice: the setting, or
+/// the usual download folder of the user.
 fn download_dir(core: &Core) -> String {
     if let Some(dir) = &core.settings().download_dir {
         return dir.to_string_lossy().into_owned();
@@ -194,9 +191,8 @@ enum Button {
     Folder { dir: String },
 }
 
-/// The state the notifications need to keep per transfer id while it is not finished. What the
-/// shell's `TransferWatcher` kept in its `Tracked` (its job progress part left out: a send
-/// shows itself Active in the tray here, not as a UiServer job).
+/// The state the notifications keep per transfer id: from the first event until a short while
+/// after the end (see [`FINISHED_KEEP`]), so the repeats of an end are told from a new transfer.
 #[derive(Default)]
 struct Tracked {
     /// The latest event of the transfer, which still says (a) what waits to be answered and
@@ -215,8 +211,9 @@ struct Tracked {
     dismissed: bool,
     /// Data started to move: a failure notice is only "not accepted" while nothing moved.
     started: bool,
-    /// The transfer ended; the same id may come back for another one later.
-    finished: bool,
+    /// When the transfer ended, whatever its end said (a silent end counts too); the same id may
+    /// come back for another transfer later.
+    finished: Option<Instant>,
 }
 
 /// What the consent part of [`Desktop::on_transfer`] wants to do with the open prompt.
@@ -253,6 +250,9 @@ pub struct Desktop {
     notices: mpsc::UnboundedReceiver<Event>,
     /// The tray menu clicks and activation.
     actions: mpsc::UnboundedReceiver<tray::Action>,
+    /// A sender of `actions` kept here: a tray that cannot start (no watcher on the bus) drops
+    /// its own, and the channel must stay open, or `run` would end with it.
+    _actions_tx: mpsc::UnboundedSender<tray::Action>,
     /// On a quit without work to lose, the process ends through this.
     quit: mpsc::UnboundedSender<()>,
     /// What one open notification answers, per server id.
@@ -266,8 +266,9 @@ pub struct Desktop {
     last_minutes: u64,
 }
 
-/// Starts the desktop legs and answers with the receiver that ends on a quit of the user.
-/// Every leg runs as a task of its own, and the big `select` of [`Desktop::run`] watches them.
+/// Starts the desktop legs and answers with the receiver of the quits of the user (a value is a
+/// request; the end of the channel is not one, see `main`). Every leg runs as a task of its own,
+/// and the big `select` of [`Desktop::run`] watches them.
 pub fn spawn(
     core: Arc<Mutex<Core>>,
     connection: Connection,
@@ -283,6 +284,7 @@ pub fn spawn(
     let pump = notifier.clone();
     tokio::spawn(pump.pump(notices));
     tokio::spawn(dnd_watch(core.clone(), connection.clone()));
+    tokio::spawn(shell_watch(core.clone(), connection.clone()));
     tokio::spawn(run_tray(view.clone(), actions.clone(), refresh_rx));
     let desktop = Desktop {
         core,
@@ -294,6 +296,7 @@ pub fn spawn(
         transfers,
         notices: notices_rx,
         actions: actions_rx,
+        _actions_tx: actions,
         quit,
         prompts: HashMap::new(),
         tracked: HashMap::new(),
@@ -334,7 +337,8 @@ async fn run_tray(
 
 impl Desktop {
     /// The state machine: one big `select` over the legs. It ends only when one of the channels
-    /// does, which means the process is going out anyway.
+    /// does, which means the process is going out anyway (the tray's own sender is not one of
+    /// them: see `_actions_tx`).
     async fn run(mut self) {
         self.pulse().await;
         let mut tick = tokio::time::interval(PULSE);
@@ -367,6 +371,7 @@ impl Desktop {
                 _ = tick.tick() => {
                     self.pulse().await;
                     self.re_show_missing().await;
+                    self.forget_finished();
                 }
             }
         }
@@ -378,23 +383,8 @@ impl Desktop {
     /// end, and the tray state.
     async fn on_transfer(&mut self, event: TransferEvent) {
         let id = event.id.clone();
-        // Nothing new under a transfer the same id had already ended: the shell also ignored
-        // repeats of the end (a `Finished` may be followed by a `Disconnected`).
-        if event.is_final()
-            && self
-                .tracked
-                .get(&id)
-                .is_some_and(|tracked| tracked.finished)
-        {
+        if !file_event(&mut self.tracked, &event) {
             return;
-        }
-        {
-            let tracked = self.tracked.entry(id.clone()).or_default();
-            if tracked.finished {
-                // The same id came back: another transfer.
-                *tracked = Tracked::default();
-            }
-            tracked.event = event.clone();
         }
         self.step_consent(&event).await;
         if is_transferring(&event.state) {
@@ -486,6 +476,13 @@ impl Desktop {
         self.prompts.insert(server, Button::Consent { id, token });
     }
 
+    /// Drops the state of the transfers that ended a while ago (see [`FINISHED_KEEP`]): the core
+    /// outlives the window, so the map must not grow with every transfer of its life.
+    fn forget_finished(&mut self) {
+        self.tracked
+            .retain(|_, t| t.finished.is_none_or(|at| at.elapsed() < FINISHED_KEEP));
+    }
+
     /// Prompts again for every consent that waits for its user and shows none: after a restart
     /// of the daemon, or a daemon that came late. The tick does the same every 2 s, so a daemon
     /// starting late still gets its prompts.
@@ -501,15 +498,15 @@ impl Desktop {
         }
     }
 
-    /// The transfer is over: the shells' `notify*` calls, in the order of `appraise_final`.
+    /// The transfer is over: tells how it ended (see `appraise_final`) and marks it ended.
     async fn finish_transfer(&mut self, event: TransferEvent) {
         let id = event.id.clone();
         let (window_open, folder) = {
             let core = self.core.lock().await;
             (core.window_open(), download_dir(&core))
         };
-        let tracked = self.tracked.get(&id).expect("tracked above");
-        let Some(notice) = appraise_final(&event, tracked, window_open) else {
+        let tracked = self.tracked.get_mut(&id).expect("tracked above");
+        let Some(notice) = conclude(tracked, &event, window_open) else {
             return;
         };
         if let Some(server) = self.notifier.show(&notice, 0).await {
@@ -541,8 +538,6 @@ impl Desktop {
                 self.prompts.insert(server, button);
             }
         }
-        let tracked = self.tracked.get_mut(&id).expect("tracked above");
-        tracked.finished = true;
     }
 
     // Notifications --------------------------------------------------------------
@@ -586,7 +581,13 @@ impl Desktop {
                     true
                 }
                 OPEN_LINK => {
-                    self.open_anything(text.trim()).await;
+                    // Only a web link opens, whatever the text says.
+                    let link = text.trim();
+                    if notify::looks_like_link(link) {
+                        self.open_anything(link).await;
+                    } else {
+                        tracing::warn!("not opening a text that is no http(s) link");
+                    }
                     true
                 }
                 VIEW => {
@@ -616,10 +617,10 @@ impl Desktop {
         }
     }
 
-    /// One answer of a consent prompt, the way `AnswerTransfer` was answered from the shell.
-    /// A trust that cannot be applied shows the prompt again without the choice: the transfer
-    /// still waits. Nothing waits any more (a late click, an already answered consent, a
-    /// stopped service): the prompt is over with no answer, like the shell's stale prompt.
+    /// One answer of a consent prompt, as `AnswerTransfer` takes it on the bus. A trust that
+    /// cannot be applied shows the prompt again without the choice: the transfer still waits.
+    /// Nothing waits any more (a late click, an already answered consent, a stopped service):
+    /// the prompt is over with no answer.
     async fn answer_consent(&mut self, id: &str, token: Option<u64>, answer: Answer) -> bool {
         match self
             .consents
@@ -648,7 +649,7 @@ impl Desktop {
     }
 
     /// The core could not apply the trust of "Accept and Trust": the prompt shows again without
-    /// the choice that failed (see the shell's `onAnswerNotApplied`).
+    /// the choice that failed.
     async fn ask_again_without_trust(&mut self, id: &str) {
         let Some(tracked) = self.tracked.get_mut(id) else {
             return;
@@ -664,8 +665,7 @@ impl Desktop {
     }
 
     /// A notice went away without a press. A consent prompt that this was gets its pointer
-    /// cleared: when the transfer still waits, the repeat events make a new prompt (the shell
-    /// let the user answer in the window while its prompt showed).
+    /// cleared: the transfer still waits, so the user can answer it in the window.
     async fn dismiss(&mut self, server_id: u32) {
         let Some(Button::Consent { id, .. }) = self.prompts.remove(&server_id) else {
             return;
@@ -701,46 +701,36 @@ impl Desktop {
             tray::Action::OpenFiles => self.spawn_window(["--open-files"]).await,
             tray::Action::PasteClipboard => self.spawn_window(["--clipboard"]).await,
             tray::Action::SetVisible => {
-                let next = {
-                    let core = self.core.lock().await;
-                    !core.settings().visible
-                };
-                self.core.lock().await.set_visible(next);
+                {
+                    let mut core = self.core.lock().await;
+                    let next = !core.settings().visible;
+                    core.set_visible(next);
+                }
+                crate::dbus::emit_visibility_changed(&self.connection).await;
             }
             tray::Action::ToggleTemporaryVisible => {
-                // The label stays the same in both states, like the shell's menu: a click then
-                // extends the visibility, or takes it back.
-                let running = {
-                    let core = self.core.lock().await;
-                    core.visible_until() > unix_now()
-                };
-                self.core.lock().await.make_visible_for(if running {
-                    0
-                } else {
-                    TEMP_VISIBLE_SECS
-                });
+                // The label stays the same in both states: a click starts the visibility, or
+                // takes it back while it runs.
+                {
+                    let mut core = self.core.lock().await;
+                    let running = core.temp_visible_active();
+                    core.make_visible_for(if running { 0 } else { TEMP_VISIBLE_SECS });
+                }
+                crate::dbus::emit_visibility_changed(&self.connection).await;
             }
             tray::Action::Quit => {
-                let busy = {
+                let (in_flight, window_open) = {
                     let core = self.core.lock().await;
-                    core.transfer_busy()
+                    (core.transfer_in_flight(), core.window_open())
                 };
-                if busy {
-                    // A transfer is going on: the shell's window asks before it stops the
-                    // service (`--request-quit` shows its "Quit KuickShare?" prompt).
+                if in_flight || window_open {
+                    // A transfer would be lost, or the window shows and must close too: the
+                    // shell asks before it stops the service (`--request-quit` shows its
+                    // "Quit KuickShare?" prompt when a transfer is in flight).
                     self.spawn_window(["--request-quit"]).await;
                 } else {
-                    let open = {
-                        let core = self.core.lock().await;
-                        core.window_open()
-                    };
-                    if open {
-                        // The window shows: let it close too, like the shell's own Quit did.
-                        self.spawn_window(["--request-quit"]).await;
-                    } else {
-                        // Idle: the background service itself is the whole app, and it may stop.
-                        let _ = self.quit.send(());
-                    }
+                    // Idle: the background service itself is the whole app, and it may stop.
+                    let _ = self.quit.send(());
                 }
             }
         }
@@ -762,7 +752,7 @@ impl Desktop {
                 busy: core.transfer_busy(),
             }
         };
-        let now = unix_now();
+        let now = history::now();
         let changed = self.last.as_ref() != Some(&view);
         let minutes = minutes_left(view.visible_until, now);
         let countdown = view.visible_until > now && self.last_minutes != minutes;
@@ -846,8 +836,8 @@ impl Desktop {
         }
     }
 
-    /// How the shell's `CoreBridge::copyToClipboard` put text on the clipboard, with what this
-    /// task has: klipper on the bus first, then `wl-copy`, then `xclip`.
+    /// Puts text on the clipboard with what this task has: klipper on the bus first, then
+    /// `wl-copy`, then `xclip`.
     async fn set_clipboard(&self, text: &str) {
         let klipper = self
             .connection
@@ -923,11 +913,34 @@ impl Desktop {
     }
 }
 
-// The end of a transfer, in the shells' words -----------------------------------------
+// The end of a transfer ---------------------------------------------------------------
 
-/// The notice for one final event, as `TransferWatcher::onTransferChanged` notified it. An end
-/// in front of an open window stays silent (its toast says it there); the refusal of an offer
-/// and the refusal of an unaccepted send do not count: those want to be seen always.
+/// Files `event` under its transfer id. `false` when it only repeats an end already told (a
+/// `Disconnected` after a `Finished`): nothing new to do. A live event under an ended id means
+/// the id (`ble:XXXX`, `ip:port`) came back for another transfer, which starts clean.
+fn file_event(tracked: &mut HashMap<String, Tracked>, event: &TransferEvent) -> bool {
+    let entry = tracked.entry(event.id.clone()).or_default();
+    if entry.finished.is_some() {
+        if event.is_final() {
+            return false;
+        }
+        *entry = Tracked::default();
+    }
+    entry.event = event.clone();
+    true
+}
+
+/// Marks the transfer ended and says how, if it is worth a notice (see `appraise_final`). Marked
+/// whatever the verdict: a quiet end is an end too, and the `Disconnected` that follows it must
+/// not tell a story of its own.
+fn conclude(tracked: &mut Tracked, event: &TransferEvent, window_open: bool) -> Option<Notice> {
+    tracked.finished = Some(Instant::now());
+    appraise_final(event, tracked, window_open)
+}
+
+/// The notice for one final event, or `None` for a quiet end. An end in front of an open window
+/// stays silent (its toast says it there); the refusal of an offer and the refusal of an
+/// unaccepted send do not count: those want to be seen always.
 fn appraise_final(event: &TransferEvent, tracked: &Tracked, window_open: bool) -> Option<Notice> {
     let inbound = event.kind == "inbound";
     let refusal = refusal_text(&event.reason);
@@ -972,15 +985,15 @@ fn received_notice(event: &TransferEvent) -> Notice {
         } else {
             event.text.clone()
         };
-        // The sender told in the payload kind, or the text itself is one link.
-        let is_link = event.payload_kind == "Url" || notify::looks_like_link(text.trim());
+        // One http(s) link, whatever the payload kind says: the sender's "Url" may be any scheme.
+        let is_link = notify::looks_like_link(text.trim());
         Notice::Text {
             device: event.device.clone(),
             text,
             is_link,
         }
     } else {
-        // Several files: only the folder makes sense (the shell's rule).
+        // Several files: only the folder makes sense.
         let saved: Vec<String> = event
             .saved_paths
             .iter()
@@ -1001,12 +1014,11 @@ fn received_notice(event: &TransferEvent) -> Notice {
 
 // Do Not Disturb --------------------------------------------------------------------
 
-/// The daemon's Do Not Disturb mode: the shell (`DndWatcher`) hid this computer under it, and
-/// this task does the same thing. The state is read when the daemon (re)appears, and applied
-/// whenever `Inhibited` changes or `HideWhenDnd` applies differently.
+/// The notification daemon's Do Not Disturb mode: while it is on and `HideWhenDnd` is set, this
+/// computer hides (see `Core::set_dnd`). `Inhibited` is read when the daemon (re)appears and
+/// whenever it changes; the option is applied by the core itself when it changes.
 async fn dnd_watch(core: Arc<Mutex<Core>>, connection: Connection) {
     let service = "org.freedesktop.Notifications";
-    let mut applied: Option<bool> = None;
     loop {
         let properties = match fdo::PropertiesProxy::builder(&connection)
             .destination(service)
@@ -1023,27 +1035,60 @@ async fn dnd_watch(core: Arc<Mutex<Core>>, connection: Connection) {
             }
         };
         let mut inhibited = read_inhibited(&properties, service).await;
-        let Ok(mut changes) = properties.receive_properties_changed().await else {
+        let (Ok(mut changes), Ok(mut owners)) = (
+            properties.receive_properties_changed().await,
+            owner_changes(&connection).await,
+        ) else {
             tracing::debug!("no Do Not Disturb watch on the notification daemon");
             tokio::time::sleep(notify::RETRY_DELAY).await;
             continue;
         };
+        // What the core was last told: an event of the bus that changes nothing says nothing.
+        let mut applied: Option<bool> = None;
         loop {
-            apply_dnd(&core, inhibited, &mut applied).await;
-            let Some(change) = changes.next().await else {
-                break;
-            };
-            let Ok(args) = change.args() else {
-                break;
-            };
-            if args.interface_name.as_str() != service {
-                continue;
+            if let Some(on) = inhibited
+                && applied != inhibited
+            {
+                core.lock().await.set_dnd(on);
+                applied = inhibited;
+                // `Suspended` may have changed, and an open window shows it.
+                crate::dbus::emit_visibility_changed(&connection).await;
             }
-            if let Some(value) = args.changed_properties.get("Inhibited") {
-                inhibited = bool::try_from(value).ok();
-            } else if args.invalidated_properties.contains(&"Inhibited") {
-                // The daemon only said the value is not valid any more: read it again.
-                inhibited = read_inhibited(&properties, service).await;
+            tokio::select! {
+                change = changes.next() => {
+                    let Some(change) = change else {
+                        break;
+                    };
+                    let Ok(args) = change.args() else {
+                        break;
+                    };
+                    if args.interface_name.as_str() != service {
+                        continue;
+                    }
+                    if let Some(value) = args.changed_properties.get("Inhibited") {
+                        inhibited = bool::try_from(value).ok();
+                    } else if args.invalidated_properties.contains(&"Inhibited") {
+                        // The daemon only said the value is not valid any more: read it again.
+                        inhibited = read_inhibited(&properties, service).await;
+                    }
+                }
+                owner = owners.next() => {
+                    let Some(owner) = owner else {
+                        break;
+                    };
+                    if let Ok(args) = owner.args()
+                        && args.name.as_str() == service
+                    {
+                        // The daemon came, went or was replaced: it keeps no state of the old
+                        // one. One that is gone, or does not serve `Inhibited`, is no Do Not
+                        // Disturb.
+                        inhibited = Some(if args.new_owner.is_some() {
+                            read_inhibited(&properties, service).await.unwrap_or(false)
+                        } else {
+                            false
+                        });
+                    }
+                }
             }
         }
         // The daemon (or its properties) is gone for now: rebuilt in a pause.
@@ -1058,19 +1103,32 @@ async fn read_inhibited(properties: &fdo::PropertiesProxy<'static>, service: &st
     bool::try_from(&value).ok()
 }
 
-/// Says the daemon how the process is hidden: Do Not Disturb turned on, and the "hide while
-/// Do Not Disturb" setting both say so. A no-op does not reach the library.
-async fn apply_dnd(core: &Arc<Mutex<Core>>, inhibited: Option<bool>, applied: &mut Option<bool>) {
-    let Some(inhibited) = inhibited else {
-        return;
+/// The bus watch for `NameOwnerChanged`.
+async fn owner_changes(connection: &Connection) -> zbus::Result<fdo::NameOwnerChangedStream> {
+    fdo::DBusProxy::builder(connection)
+        .build()
+        .await?
+        .receive_name_owner_changed()
+        .await
+}
+
+/// Takes `WindowOpen` back when the shell leaves the bus with its window open (a crash, a kill):
+/// nothing else would ever clear it, and the end-of-transfer notifications would stay off.
+async fn shell_watch(core: Arc<Mutex<Core>>, connection: Connection) {
+    let mut owners = match owner_changes(&connection).await {
+        Ok(owners) => owners,
+        Err(e) => {
+            tracing::debug!("no watch on the shell's bus name: {e}");
+            return;
+        }
     };
-    let hide = inhibited && {
-        let core = core.lock().await;
-        core.settings().hide_when_dnd
-    };
-    if *applied != Some(hide) {
-        core.lock().await.set_suspended(hide);
-        *applied = Some(hide);
+    while let Some(owner) = owners.next().await {
+        if let Ok(args) = owner.args()
+            && args.name.as_str() == SHELL_NAME
+            && args.old_owner.is_some()
+        {
+            core.lock().await.set_window_open(false);
+        }
     }
 }
 
@@ -1179,7 +1237,7 @@ mod tests {
             }
             other => panic!("not a files notice: {other:?}"),
         }
-        // Two files: only the folder makes sense, as the shell decided.
+        // Two files: only the folder makes sense.
         event.saved_paths = vec![
             "/home/u/Downloads/photo.jpg".to_owned(),
             "/home/u/Downloads/photo2.jpg".to_owned(),
@@ -1211,6 +1269,83 @@ mod tests {
             ..Tracked::default()
         };
         assert_eq!(appraise_final(&rejected, &tracked, false), None);
+    }
+
+    /// Runs the events of one transfer through the bookkeeping `on_transfer` does, and collects
+    /// the notices of the ends.
+    fn notices(events: &[TransferEvent], window_open: bool) -> Vec<Option<Notice>> {
+        let mut tracked = HashMap::new();
+        let mut out = Vec::new();
+        for event in events {
+            if !file_event(&mut tracked, event) {
+                continue;
+            }
+            if is_transferring(&event.state) {
+                tracked.get_mut(&event.id).expect("filed above").started = true;
+            }
+            if event.is_final() {
+                let entry = tracked.get_mut(&event.id).expect("filed above");
+                out.push(conclude(entry, event, window_open));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_disconnect_after_the_quiet_end_of_a_send_says_nothing() {
+        for window_open in [false, true] {
+            let events = [
+                TransferEvent::for_test("ble:1234", "outbound", "SendingFiles", "Phone"),
+                TransferEvent::for_test("ble:1234", "outbound", "Finished", "Phone"),
+                TransferEvent::for_test("ble:1234", "outbound", "Disconnected", "Phone"),
+            ];
+            // One verdict only, the quiet one: no "connection lost" for a send that finished.
+            assert_eq!(notices(&events, window_open), [None]);
+        }
+        // Without any data moved, the same order must not become "not accepted" either.
+        let events = [
+            TransferEvent::for_test("ble:1234", "outbound", "Finished", "Phone"),
+            TransferEvent::for_test("ble:1234", "outbound", "Disconnected", "Phone"),
+        ];
+        assert_eq!(notices(&events, false), [None]);
+    }
+
+    #[test]
+    fn an_id_that_comes_back_starts_clean() {
+        let events = [
+            TransferEvent::for_test("ble:1234", "outbound", "SendingFiles", "Phone"),
+            TransferEvent::for_test("ble:1234", "outbound", "Finished", "Phone"),
+            // The second send to the same phone: nothing moved before it was refused.
+            TransferEvent::for_test("ble:1234", "outbound", "Initial", "Phone"),
+            TransferEvent::for_test("ble:1234", "outbound", "Disconnected", "Phone"),
+        ];
+        let out = notices(&events, false);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0], None);
+        assert!(matches!(
+            out[1],
+            Some(Notice::NotAccepted {
+                over_bluetooth: true,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn only_a_http_link_is_a_link() {
+        // The sender's "Url" says nothing about the scheme.
+        let mut file = received("10.0.0.5:1", "file:///etc/passwd");
+        file.payload_kind = "Url".to_owned();
+        assert!(matches!(
+            appraise_final(&file, &Tracked::default(), false),
+            Some(Notice::Text { is_link: false, .. })
+        ));
+        let mut web = received("10.0.0.5:1", "  https://example.org/a  ");
+        web.payload_kind = "Url".to_owned();
+        assert!(matches!(
+            appraise_final(&web, &Tracked::default(), false),
+            Some(Notice::Text { is_link: true, .. })
+        ));
     }
 
     #[test]
