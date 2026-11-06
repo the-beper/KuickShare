@@ -68,9 +68,10 @@ ok "core answers: $(owner | tail -1)"
 ! grep -E 'Type [A-Za-z.0-9]+ unavailable|is not installed|[Cc]annot load|[Cc]ould not load|failed to load' "$HOME/app.log" \
     || { cat "$HOME/app.log"; fail "QML or plugin errors"; }
 ok "no QML or plugin errors"
-kill "$pid" 2>/dev/null || true
+# The shell left once the core was up; the detached core stops by its own `Quit`, as the app's quit does.
 wait "$pid" 2>/dev/null || true
-for _ in $(seq 10); do owner >/dev/null 2>&1 || break; sleep 1; done
+dbus-send --session --print-reply --dest=$id /io/github/the_beper/KuickShare ${id}1.Quit >/dev/null 2>&1 || true
+for _ in $(seq 20); do owner >/dev/null 2>&1 || break; sleep 1; done
 
 dnf remove -y -q kuickshare || fail "dnf remove failed"
 [ ! -e /usr/bin/kuickshare ] && [ ! -e /usr/bin/kuickshared ] || fail "the binaries are still installed"
