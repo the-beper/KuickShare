@@ -54,6 +54,8 @@ struct Service {
     /// The Wi-Fi requirements engine. The report and the gate on the Wi-Fi upgrade go through
     /// this, never through the `Core` lock.
     requirements: Arc<SystemEngine>,
+    /// `Quit` ends the process through this: main's select watches it like a SIGTERM.
+    quit: mpsc::UnboundedSender<()>,
 }
 
 fn failed(e: anyhow::Error) -> fdo::Error {
@@ -630,6 +632,25 @@ impl Service {
         self.core.lock().await.set_suspended(suspended);
     }
 
+    /// Whether the shell's window is open: it reports how a transfer ended (its own toast), so
+    /// the notifications of an ending transfer stay off while it is. The shell sets it while the
+    /// window is visible.
+    #[zbus(property)]
+    async fn window_open(&self) -> bool {
+        self.core.lock().await.window_open()
+    }
+
+    #[zbus(property)]
+    async fn set_window_open(&self, open: bool) {
+        self.core.lock().await.set_window_open(open);
+    }
+
+    /// Stops the service the way a SIGTERM reaches it (the engine first, then the Wi-Fi
+    /// cleanup): the shell asks before it quits itself, so the tray goes with the whole app.
+    async fn quit(&self) {
+        let _ = self.quit.send(());
+    }
+
     /// `info` keys: kind, state, device, pin, preview, payload_kind, files, saved_paths, text, trusted, always_accepted (strings), history_uid, total_bytes, ack_bytes, consent (u64), reason (s). `reason` is a stable code when the library refused an incoming offer (bad_name, too_many_files, bad_size, duplicate_id, not_enough_space, destination; more may come), empty otherwise. `consent` is the token `AnswerTransfer` needs while the state is WaitingForUserConsent; 0 otherwise, or when the transfer was accepted automatically.
     #[zbus(signal)]
     async fn transfer_updated(
@@ -681,32 +702,33 @@ impl Service {
     async fn device_lost(emitter: &SignalEmitter<'_>, id: &str) -> zbus::Result<()>;
 }
 
-/// Flat, D-Bus friendly view of a transfer event.
+/// Flat, D-Bus friendly view of a transfer event. The fields are the keys of the `info` map on
+/// the bus (see `Service::transfer_updated`); the desktop reads them without the bus.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TransferEvent {
-    id: String,
-    kind: &'static str,
-    state: String,
-    device: String,
-    pin: String,
-    preview: String,
-    total_bytes: u64,
-    ack_bytes: u64,
-    payload_kind: String,
-    files: Vec<String>,
+    pub(crate) id: String,
+    pub(crate) kind: &'static str,
+    pub(crate) state: String,
+    pub(crate) device: String,
+    pub(crate) pin: String,
+    pub(crate) preview: String,
+    pub(crate) total_bytes: u64,
+    pub(crate) ack_bytes: u64,
+    pub(crate) payload_kind: String,
+    pub(crate) files: Vec<String>,
     /// Where the received files were saved (not kept in the history).
-    saved_paths: Vec<String>,
-    text: String,
+    pub(crate) saved_paths: Vec<String>,
+    pub(crate) text: String,
     /// Name of the paired computer whose transfer was accepted automatically (empty otherwise).
-    trusted: String,
+    pub(crate) trusted: String,
     /// Set (to the device name) when the sender is on the always-accepted list.
-    always_accepted: String,
+    pub(crate) always_accepted: String,
     /// `uid` of the history entry written when the transfer ended (0: none, or no history).
-    history_uid: u64,
+    pub(crate) history_uid: u64,
     /// Token of the consent that waits for an answer (see `consent`); 0 when none does.
-    consent: u64,
+    pub(crate) consent: u64,
     /// Why the library refused an incoming offer (`Refusal::key`), empty otherwise.
-    reason: String,
+    pub(crate) reason: String,
     /// Unix time in seconds of the latest event seen for this transfer.
     pub(crate) last_event: i64,
 }
@@ -790,6 +812,22 @@ impl TransferEvent {
     #[cfg(test)]
     pub(crate) fn summary(&self) -> (&str, &str, &str, u64) {
         (&self.id, self.kind, &self.state, self.consent)
+    }
+
+    /// The transfer is over (`final_state`): prompts close, notifications say how it ended.
+    pub(crate) fn is_final(&self) -> bool {
+        final_state(&self.state)
+    }
+
+    /// The payload is text (or a Wi-Fi password whose name is shown like text): no file wait and
+    /// no file notice. Files decide when the payload carries some.
+    pub(crate) fn is_textual(&self) -> bool {
+        self.payload_kind == "Text"
+            || self.payload_kind == "Url"
+            || self.payload_kind == "Wifi"
+            || (self.payload_kind.is_empty()
+                && self.files.is_empty()
+                && (!self.preview.is_empty() || !self.text.is_empty()))
     }
 
     /// Overlays a newer event: later events often carry less, so empty fields keep their old value.
@@ -879,10 +917,20 @@ fn is_final(state: &TransferState) -> bool {
     )
 }
 
+/// The state name of a transfer that has ended, as `TransferModel::isFinal` saw it in the shell
+/// (states arrive as `Debug` spellings of [`TransferState`]).
+pub(crate) fn final_state(state: &str) -> bool {
+    matches!(
+        state,
+        "Finished" | "Disconnected" | "Rejected" | "Cancelled"
+    )
+}
+
 pub async fn serve(
     core: SharedCore,
     consents: Consents,
     requirements: Arc<SystemEngine>,
+    quit: mpsc::UnboundedSender<()>,
 ) -> Result<Connection> {
     let reports = requirements.subscribe();
     let lib_actions = core.lock().await.lib_actions();
@@ -895,6 +943,7 @@ pub async fn serve(
                 consents,
                 lib_actions,
                 requirements,
+                quit,
             },
         )
         .build()
@@ -926,6 +975,9 @@ pub struct Forwarding {
     pub consents: Consents,
     /// `Consents::generation` of the engine these forwarders belong to.
     pub generation: u64,
+    /// Where the desktop (tray, notifications) reads the merged transfer events; `None` while no
+    /// desktop runs (tests), or the channel is on the `Core` (see `Core::set_desktop`).
+    pub desktop: Option<mpsc::UnboundedSender<TransferEvent>>,
     pub core: Weak<Mutex<Core>>,
 }
 
@@ -1121,6 +1173,7 @@ async fn forward_transfers(
         trusted_enabled,
         consents,
         generation,
+        desktop,
         ..
     } = shared;
     let mut draining = false;
@@ -1186,22 +1239,35 @@ async fn forward_transfers(
 
         // Track what is in flight, and record a transfer in the history when it ends.
         if let Some(state) = &client.state {
-            let mut active = active.lock().unwrap();
-            if is_final(state) {
-                redirects.lock().unwrap().remove(&message.id);
-                // Only the first final state counts (Finished may be followed by Disconnected).
-                if let Some(mut snapshot) = active.remove(&message.id) {
-                    snapshot.merge(&event);
-                    event.history_uid = history
-                        .lock()
-                        .unwrap()
-                        .add(snapshot.into_history_entry(history::now()));
+            let merged = {
+                let mut active = active.lock().unwrap();
+                if is_final(state) {
+                    redirects.lock().unwrap().remove(&message.id);
+                    // Only the first final state counts (Finished may be followed by Disconnected).
+                    if let Some(mut snapshot) = active.remove(&message.id) {
+                        snapshot.merge(&event);
+                        let final_snapshot = snapshot.clone();
+                        event.history_uid = history
+                            .lock()
+                            .unwrap()
+                            .add(snapshot.into_history_entry(history::now()));
+                        final_snapshot
+                    } else {
+                        // A final event of a transfer the forwarder never saw before: still reported.
+                        event.clone()
+                    }
+                } else {
+                    let snapshot = active
+                        .entry(message.id.clone())
+                        .and_modify(|snapshot| snapshot.merge(&event))
+                        .or_insert_with(|| event.clone());
+                    snapshot.clone()
                 }
-            } else {
-                active
-                    .entry(message.id.clone())
-                    .and_modify(|snapshot| snapshot.merge(&event))
-                    .or_insert_with(|| event.clone());
+            };
+            // The desktop sees what the shell saw after `TransferUpdated`: the events merged
+            // (an overlay of a state change carries no details of its own).
+            if let Some(desktop) = desktop.clone() {
+                let _ = desktop.send(merged);
             }
         }
         // No device name, PIN, text or token here.
@@ -1844,6 +1910,7 @@ mod tests {
                 consents,
                 lib_actions,
                 requirements,
+                quit: mpsc::unbounded_channel().0,
             },
             lib_rx,
         )

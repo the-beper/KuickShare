@@ -1,3 +1,6 @@
+src/core/desktop.rs
+src/core/notify.rs
+src/core/tray.rs
 src/shell/corebridge.cpp
 src/shell/main.cpp
 src/shell/qml/AboutDialog.qml
@@ -10,5 +13,3 @@ src/shell/qml/ShortcutsDialog.qml
 src/shell/qml/ToastStack.qml
 src/shell/qml/TransfersPage.qml
 src/shell/qml/WifiRequirementsDialog.qml
-src/shell/transferjob.cpp
-src/shell/transferwatcher.cpp

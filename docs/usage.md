@@ -2,7 +2,7 @@
 
 KuickShare sends and receives files, text and links with Android phones through Google's Quick Share, from a KDE Plasma 6 desktop. This guide covers installation, daily use, every preference and troubleshooting. For how it works inside, see [architecture.md](architecture.md); for the D-Bus interface of the background service, see [dbus-api.md](dbus-api.md).
 
-KuickShare has two programs. `kuickshare` is the window, tray icon and notifications. `kuickshared` is the background service that speaks the Quick Share protocol; the window starts it and stops it.
+KuickShare has two programs. `kuickshared` is the background service: it speaks the Quick Share protocol and owns the tray icon and the notifications, so receiving works while no window is open. `kuickshare` is the window; it only runs while the window is on screen.
 
 ## In this guide
 
@@ -43,7 +43,7 @@ The sandbox is deliberately open where the integration needs it:
 | `org.freedesktop.NetworkManager`, `org.fedoraproject.FirewallD1` (system bus) | The [Wi-Fi upgrade](wifi-direct.md) (off unless enabled) |
 | `org.freedesktop.PolicyKit1` (system bus) | The [requirements check](#checking-the-requirements) asks, without a prompt, whether firewalld will let you open the hotspot port. The grant reaches all of polkit's interface, not only that call *(inferred: authorization checks for any action, also with a prompt, and registering an authentication agent)*, so it is a deliberate widening |
 | `org.kde.kuickshare` (own name) | Single-instance service of the window |
-| `org.kde.JobViewServer`, `org.freedesktop.Notifications`, `org.kde.StatusNotifierWatcher` | Job progress, Do Not Disturb, tray icon |
+| `org.freedesktop.Notifications`, `org.kde.StatusNotifierWatcher`, `org.kde.klipper` | Notifications, tray icon, and the clipboard the "Copy" action of a text or link notice sets |
 | Downloads folder | Received files. Another download folder is refused with a message until you grant it: `flatpak override --user --filesystem=/path io.github.the_beper.KuickShare` |
 | `~/.local/share/kio/servicemenus` and `~/.config/autostart` (create) | The app writes the Dolphin entry and the autostart entry there, since Flatpak cannot export them |
 
@@ -166,7 +166,7 @@ Uninstalling leaves `~/.config/kuickshare/` (settings, history, paired devices);
 
 The window opens on the Send page and a tray icon appears. The computer is visible to nearby devices under the hostname, until you change the name in Preferences.
 
-The window has a fixed size. Closing it hides it in the tray and frees its memory (queued files and the current page are forgotten); the service keeps running, so the computer can still receive. The tray icon opens the window on a left click. Its menu has these entries:
+The window has a fixed size. Closing it ends the window program and frees its memory (queued files and the current page are forgotten); the background service keeps running with its tray icon, so the computer can still receive. The tray icon opens the window on a left click (it starts the window program for that). Its menu has these entries:
 
 | Entry | Effect |
 |---|---|
@@ -176,11 +176,11 @@ The window has a fixed size. Closing it hides it in the tray and frees its memor
 | Visible to Nearby Devices | Same switch as in Preferences |
 | Visible for 10 Minutes | Checkable. Visible even when the switch above is off, then back to it. The minutes left are in the tray tooltip; click again to stop |
 | Preferences | Open Preferences |
-| Quit | Quit at once; if a transfer is running, opens the window to ask first |
+| Quit | Stop the service; when a transfer is running, the window opens to ask first |
 
-The tray item is created when "Keep running in the background" is on (once the service reports the setting) and then stays until the app exits; turning the switch off makes it Passive. Its status is Passive at rest, Active during a transfer or a temporary visibility, and NeedsAttention while an incoming request waits for an answer. Plasma should keep a Passive item among the hidden tray icons and highlight the others; this was not tested on a real Plasma desktop (unverified).
+The tray item exists while the background service runs. It is created when "Keep running in the background" is on (once the service reports the setting) and stays until the service stops; turning the switch off makes it Passive. Its status is Passive at rest, Active during a transfer or a temporary visibility, and NeedsAttention while an incoming request waits for an answer. Plasma should keep a Passive item among the hidden tray icons and highlight the others; this was not tested on a real Plasma desktop (unverified).
 
-With "Keep running in the background" off, closing the window quits the app. See [Preferences](#preferences).
+With "Keep running in the background" off, closing the window stops the whole app (the service with it). See [Preferences](#preferences).
 
 The tabs are Send and Transfers. The "More" button at their right opens a menu with Preferences, Shortcuts, Help and About. Quit is `Ctrl+Q` or the tray menu.
 
@@ -222,15 +222,18 @@ Right-click files in Dolphin and choose **Send With KuickShare**. It is a top-le
 
 ```sh
 kuickshare [--background] [--page send|transfers|settings|help] [--device <name>] [files...]
+kuickshare --open-files | --clipboard | --transfer <id> | --request-quit
 ```
 
-`kuickshare --help` lists the options. If KuickShare is already running, a second launch hands its files to the running window and shows it. `--page` accepts `send`, `transfers`, `settings` or `help`; the window on the Send page is the default. `--background` starts hidden in the tray, which is what the login entry uses.
+`kuickshare --help` lists the options. If KuickShare is already running, a second launch hands its arguments to the running window and shows it. `--page` accepts `send`, `transfers`, `settings` or `help`; the window on the Send page is the default. `--background` starts the background service and exits: the login entry and an automatic restart use it.
 
-`--device <name>` sends the files to the nearby device with that name, without a click: the name is compared whole, ignoring case and surrounding spaces. Discovery runs for up to 30 seconds, and a match must stay the only one for about 3 seconds before the send. On a match the Transfers page opens (with `--background` the app stays in the tray). If no device or several devices have that name, or there are no files (none given and none queued on the Send page), nothing is sent, the files stay queued on the Send page and the window opens to show the error, also with `--background`. If a folder is refused, nothing is sent: the error stays and the other files stay queued. A new `--device` request cancels a pending one, and files added meanwhile by a plain launch are not part of its send.
+The options `--open-files`, `--clipboard`, `--transfer <id>` and `--page settings` are what the tray and the notifications ask for: they open the window at the Send page (with the file dialog, with the clipboard ready to paste, or on a transfer) or at Preferences. The tray itself starts the window when one of its entries is used. `--request-quit` closes the whole app, asking in the window first when a transfer is running; the tray's Quit uses it while a transfer runs.
+
+`--device <name>` sends the files to the nearby device with that name, without a click: the name is compared whole, ignoring case and surrounding spaces. Discovery runs for up to 30 seconds, and a match must stay the only one for about 3 seconds before the send. On a match the Transfers page opens. If no device or several devices have that name, or there are no files (none given and none queued on the Send page), nothing is sent, the files stay queued on the Send page and the window opens to show the error, also with `--background`. If a folder is refused, nothing is sent: the error stays and the other files stay queued. A new `--device` request cancels a pending one, and files added meanwhile by a plain launch are not part of its send.
 
 ## Receiving
 
-When a nearby device wants to send, a persistent notification titled "Incoming Transfer" names the sender, shows a PIN if the protocol supplied one, and offers these actions. Requests always notify. The end-of-transfer notifications below are skipped while the window is shown and active, because the in-app toast covers them; error toasts stay until closed and have a Copy action.
+The notifications come from the background service: they appear while no window is open at all. When a nearby device wants to send, a persistent notification titled "Incoming Transfer" names the sender, shows a PIN if the protocol supplied one, and offers these actions. Requests always notify. The end-of-transfer notifications below are skipped while the window is shown, because the in-app toast covers them; error toasts stay until closed and have a Copy action.
 
 | Action | Effect |
 |---|---|
@@ -242,7 +245,7 @@ The same request is also listed on the Transfers page with Accept and Decline bu
 
 A request nobody answers is declined after 5 minutes. A request is answered once: a notification left over from an earlier transfer closes by itself and cannot answer a newer one. If many requests wait at once (32, or 4 from one address) the new ones are declined.
 
-Files go to the download folder, `~/Downloads` unless you chose another one in Preferences. Progress and a cancel button appear in Plasma's job tracker. When it finishes you get a "Files received" notification with **Open folder**. Text arrives as a "Text received" notification with **Copy**, and **Open link** when the text is a single `http://` or `https://` address.
+Files go to the download folder, `~/Downloads` unless you chose another one in Preferences. When it finishes you get a "Files received" notification with **Open folder** (and **Open file** when exactly one file arrived). Text arrives as a "Text received" notification with **Copy**, and **Open link** when the text is a single `http://` or `https://` address. The "View" action of a text or link notice opens the transfer on the Transfers page.
 
 A sender can propose file names that would write outside the download folder. KuickShare declines such a transfer before asking you. A name is refused if it is empty, is `.` or `..`, is longer than 255 bytes, or contains a `/`, a `\`, a control character, or an invisible character such as a zero-width space or a right-to-left override. The decision is logged and no notification is shown; how the Transfers page then shows the row was not checked (unverified).
 
@@ -390,15 +393,15 @@ Open it with `Ctrl+,`, from the menu, or from the tray. Changes apply at once an
 | Trusted devices | Trust devices | On | Accept [trusted devices](#trusted-devices) without asking; lists them |
 | History | Save transfer history | On | Record finished transfers |
 | History | Delete entries after | Never | Never, 1, 7, 30 or 90 days. Applied at startup, when the history is read and when a transfer is added |
-| Startup | Start at login | Off | Writes the autostart entry; the app starts hidden. The entry points at the running binary, so switch it off and on again after moving the installation |
-| Integration | Keep running in the background | On | Shows the tray icon. Off, closing the window quits the app and nothing can be received until you open it again. At login it still starts hidden, so start KuickShare again to see the window |
+| Startup | Start at login | Off | Writes the autostart entry; the service starts and the shell exits, so only the tray shows it. The entry points at the running binary, so switch it off and on again after moving the installation |
+| Integration | Keep running in the background | On | Shows the tray icon while the service runs. Off, nothing appears while no window is open, and closing the window stops the service with it |
 | Integration | Show in Dolphin’s context menu | On | Adds or removes **Send With KuickShare**. Kept in line with the setting: written in your home if on and no copy exists there or in a system folder, removed if off (not in the AppImage, which adds it only when you say so). A package that does not ship the entry still gets the menu. Uninstalling the package leaves the copy in your home: remove `~/.local/share/kio/servicemenus/kuickshare-send.desktop` |
 | Wi-Fi Direct | Receive and send without a shared network | Off | Experimental; see [Without a shared network](#without-a-shared-network-experimental) |
 | Reset | Reset Preferences… | | Restores every setting to its default, including autostart off and the Dolphin entry on. History, paired and trusted devices are kept |
 
 ## Do Not Disturb
 
-When "Hide during Do Not Disturb" is on and Plasma's Do Not Disturb is active, KuickShare hides this computer from nearby devices. The Send page shows "Do Not Disturb" and "Hidden until Do Not Disturb ends". The visibility preference itself is not changed, so the computer reappears when Do Not Disturb ends. The state is read from the notification service and re-read if the Plasma shell restarts.
+When "Hide during Do Not Disturb" is on and Plasma's Do Not Disturb is active, KuickShare hides this computer from nearby devices. The Send page shows "Do Not Disturb" and "Hidden until Do Not Disturb ends". The visibility preference itself is not changed, so the computer reappears when Do Not Disturb ends. The background service watches the notification service for the state and re-reads it if the Plasma shell restarts.
 
 KuickShare only changes the advertised visibility and cancels nothing; whether the library drops a transfer already running was not checked (unverified).
 
@@ -417,7 +420,7 @@ Also listed in the app under More, Shortcuts.
 | `Ctrl+O` | Choose files to send |
 | `Ctrl+V` | On the Send page: paste files, an image or text from the clipboard |
 | `Ctrl+L` | Clear files and text |
-| `Ctrl+W` | Close the window (hides it, or quits when "Keep running in the background" is off) |
+| `Ctrl+W` | Close the window (the background keeps running, or stops too when "Keep running in the background" is off) |
 | `Ctrl+Q` | Quit KuickShare |
 
 ## Troubleshooting
@@ -448,6 +451,6 @@ Also listed in the app under More, Shortcuts.
 | Identity key (mode 600) | `~/.local/share/kuickshare/identity.json` |
 | Paired computers | `~/.local/share/kuickshare/peers.json` |
 | The same, in the Flatpak | `~/.var/app/io.github.the_beper.KuickShare/config/kuickshare/` and `.../data/kuickshare/` |
-| Logs | No log file. The service writes to the standard output of the window process, so they show in a terminal when you run `kuickshare` there. Where the desktop session keeps them otherwise is unverified |
+| Logs | No log file. The service runs detached now: when you start `kuickshare` from a terminal, the core inherits its standard output and writes there (also after the window closes). Where a session log otherwise keeps it is unverified |
 
 A settings, peers or history file that cannot be read or parsed is moved to a `.bak` copy next to it (`.bak.1`, `.bak.2`… if one exists) and defaults are used; if it cannot be moved, that file is not saved to during the run. An unparsable identity file stops the service from starting; it is never replaced. Details: [architecture.md](architecture.md#files-on-disk). The log level can be raised for one run: `RUST_LOG=debug kuickshare`, since the service inherits the environment.

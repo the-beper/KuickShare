@@ -3,7 +3,6 @@
 #include <QDBusMessage>
 #include <QObject>
 #include <QHash>
-#include <QProcess>
 #include <QQmlEngine>
 #include <QString>
 #include <QTimer>
@@ -137,7 +136,13 @@ public:
     void setHistoryKeepDays(int days);
     /// `row` is a row of the unfiltered transfer model.
     Q_INVOKABLE void removeTransfer(int row);
-    void setSuspended(bool suspended);
+    /// Tells the core whether the window shows now: end-of-transfer notifications stay off
+    /// while it does (its own toast reports the end). The core does not read this back. The
+    /// call at the end of `main` must land before the process is gone.
+    void setWindowOpen(bool open, bool sync = false);
+    /// Asks the core to stop the way a SIGTERM reaches it, and waits until it is gone.
+    /// Nothing happens when it is not running: the whole app is quitting anyway.
+    bool stopService();
 
     /// Answer an incoming transfer with the token of the consent the core last reported for it (see `answerWithToken`).
     Q_INVOKABLE void accept(const QString &id) { answerTransfer(id, QStringLiteral("accept")); }
@@ -226,6 +231,9 @@ public:
 
 Q_SIGNALS:
     void connectedChanged();
+    /// The first property refresh finished after the core connected (the shell's side effects
+    /// of a fresh connection, like the Dolphin entry, ran within it).
+    void firstPropertiesReady();
     void transferBusyChanged();
     /// A live transfer finished, failed or was cancelled (not emitted for the saved history).
     void transferEnded(const QString &id, const QString &state);
@@ -309,6 +317,8 @@ private:
     void setRequirementsBusy(bool busy);
     void loadHistory();
     void startCore();
+    /// The core is started detached now: the pid file of one that is stuck shows {{@code kill}} which.
+    void killStaleCore();
     void loadHistorySize();
     void updateClipboard();
     void stopDiscoveryNow();
@@ -316,8 +326,11 @@ private:
     TransferModel m_transfers;
     TransferFilterModel m_filteredTransfers{&m_transfers};
     DeviceModel m_devices;
-    QProcess m_core;
     QTimer m_discoveryStopTimer;
+    /// Clearing of `serviceStarting` when the core never shows up on the bus.
+    QTimer m_serviceStartTimer;
+    /// What `WindowOpen` last said, pushed to the core when it connects.
+    bool m_windowOpen = false;
     QHash<QString, int> m_outgoingFileCounts;
     bool m_discoveryRunning = false;
     bool m_discoveryResume = false; // discovery was on when the core went away

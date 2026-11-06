@@ -4,11 +4,32 @@
 #   build/build-env.sh po/extract.sh
 set -eu
 cd "$(dirname "$0")/.."
+
+# The Rust sources say `i18n!("…")` (macros, not calls), which xgettext does not look at. They
+# go through copies with the `!` taken out first: same bytes, same line numbers.
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+while IFS= read -r file
+do
+    [ -z "$file" ] && continue
+    [ -f "$file" ] || { echo "po/POTFILES.in names a missing file: $file" >&2; exit 1; }
+    mkdir -p "$tmp/$(dirname "$file")"
+    case "$file" in
+    *.rs)
+        sed -E 's/\bi18n([a-z]+)!\(/\bi18n\1(/g' "$file" > "$tmp/$file"
+        ;;
+    *)
+        cp "$file" "$tmp/$file"
+        ;;
+    esac
+done < po/POTFILES.in
+
 xgettext --from-code=UTF-8 --language=C++ --add-comments=TRANSLATORS \
     --keyword=i18n:1 --keyword=i18nc:1c,2 --keyword=i18np:1,2 --keyword=i18ncp:1c,2,3 \
+    --directory="$tmp" --files-from=po/POTFILES.in \
     --package-name=kuickshare --package-version=1.0.0 --copyright-holder="the-beper" \
     --msgid-bugs-address= \
-    --files-from=po/POTFILES.in -o po/kuickshare.pot
+    -o po/kuickshare.pot
 # xgettext leaves placeholders in the first lines of the template: fill in the ones that are ours.
 sed -i \
     -e 's/^# SOME DESCRIPTIVE TITLE\./# Translation template for KuickShare./' \

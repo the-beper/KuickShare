@@ -18,59 +18,65 @@ Two processes talk over the session D-Bus (`io.github.the_beper.KuickShare`, int
 
 | Process | Source | Language | Job |
 | --- | --- | --- | --- |
-| `kuickshared` (core) | `src/core/` | Rust, tokio, zbus | Quick Share protocol through `rqs_lib` (vendored path dependency, see [THIRD_PARTY.md](../THIRD_PARTY.md)), discovery, trust channel, settings, history |
-| `kuickshare` (shell) | `src/shell/` | C++20, Qt 6, KF 6, Kirigami | Window, tray, notifications, progress jobs, Dolphin entry, Do Not Disturb |
+| `kuickshared` (core) | `src/core/` | Rust, tokio, zbus | Quick Share protocol through `rqs_lib` (vendored path dependency, see [THIRD_PARTY.md](../THIRD_PARTY.md)), discovery, trust channel, settings, history, tray icon, notifications, Do Not Disturb |
+| `kuickshare` (shell) | `src/shell/` | C++20, Qt 6, KF 6, Kirigami | The window: pages, dialogs, toasts, Dolphin entry |
 
-The shell creates its window and QML engine only while the window is shown and destroys them on hide, so a hidden shell holds just the tray and the core connection. The split keeps the protocol code in Rust, where the library lives, and the desktop integration in Qt/KF6, where the bindings are mature. It also lets the core run and be tested without any UI (see [Testing](#testing)). The shell holds no protocol state: after a reconnect it reloads everything from the core.
+The background is headless: the core runs alone, with the tray item ([StatusNotifierItem through `ksni`]), the notifications and the Do Not Disturb watch in its own tasks, so receiving works (and shows) while no Qt process is alive. The shell creates its window and QML engine only while the window is shown and destroys both, and exits, on hide: a Qt process exists only while the user works with the window, which keeps the background at the size of one Rust process. The core answers its actions (opening the window at a page, asking to quit) by starting the shell again with an argument. The shell holds no protocol state: after a reconnect it reloads everything from the core.
 
 ```mermaid
 flowchart LR
-    subgraph shell["kuickshare (shell)"]
-        QML["QML UI + tray"]
-        CB["CoreBridge"]
-        TW["TransferWatcher"]
-        DW["DndWatcher"]
-        QML --- CB
-        TW --- CB
-        DW --- CB
-    end
     subgraph core["kuickshared (core)"]
         SVC["D-Bus service"]
         CORE["Core: settings, history"]
+        DESK["Desktop: tray, notifications, DND"]
         RQS["rqs_lib: Quick Share + mDNS"]
         TR["Trust: Noise XX listener"]
         SVC --- CORE
         CORE --- RQS
         CORE --- TR
+        DESK --- CORE
+    end
+    subgraph shell["kuickshare (shell)"]
+        QML["QML window"]
+        CB["CoreBridge"]
+        QML --- CB
     end
     CB <-->|"session D-Bus: methods, properties, signals"| SVC
-    TW -->|"KNotification, KUiServerV2"| NS["Plasma notifications"]
-    DW -->|"Inhibited property"| NS
+    DESK -->|"StatusNotifierItem"| TRAY["Plasma tray"]
+    DESK -->|"freedesktop notifications"| NS["Plasma notifications"]
     DOL["Dolphin service menu"] -->|"kuickshare FILES"| shell
     RQS <-->|"mDNS + TCP (random or static port)"| PHONE["Phone / other Quick Share device"]
     TR <-->|"TCP 47891, Noise XX"| PEER["Other KuickShare computer"]
 ```
 
+[StatusNotifierItem through `ksni`]: https://docs.rs/ksni/
+
 ### Who starts whom
 
-- The shell starts the core. At startup `CoreBridge` checks whether the bus name is owned. If it is, the shell attaches to that core. If not, it runs `kuickshared` from its own directory with `QProcess`.
-- The shell is single-instance (`KDBusService::Unique`). A second launch of the same version, for example from Dolphin, only queues its files in the running window.
-- A launch of a different version, or with `--replace`, first asks the running shell to `quit()` over D-Bus (`src/shell/instance.cpp`), waits up to 8 s for it and 3 s for its core to leave the bus, then starts normally. An update therefore takes over a shell left in the tray. A transfer running in the old shell is lost.
-- `UpdateWatcher` (`src/shell/updatewatcher.cpp`) notices an update installed under a running Flatpak (portal update monitor) or AppImage (the `$APPIMAGE` file replaced, after 5 s without changes). Once no transfer is active and the window is closed, `main.cpp` starts `kuickshare --replace` (Flatpak: portal `Spawn` with the latest version; AppImage: the file). It does so when the update arrives, when the window closes, every 30 s while waiting, and when the user opens the window from the tray icon or its "Open KuickShare" entry (then without `--background`, so the new version opens it). With the window open, a banner offers "Restart" (`CoreBridge::restartForUpdate`, disabled during a transfer), which starts the replacement the same way without `--background`. While a replacement is starting, further triggers are ignored for 15 s. The tarball installer restarts the app itself. Both watchers are unverified on a real desktop *(inferred from the portal specification)*.
-- On exit the shell sends SIGTERM to a core it started and waits up to 3 s. A core it only attached to is left running. The core stops its engine on SIGTERM or Ctrl+C.
-- Autostart is a `.desktop` file in `~/.config/autostart` that runs `kuickshare --background`.
+- The shell starts the core, detached: at startup `CoreBridge` checks whether the bus name is owned. If it is, the shell attaches to that core. If not, it starts `kuickshared` from its own directory (in a Flatpak through the portal's `Spawn`, otherwise `startDetached`) and leaves the child alone: the owner of the background is now detached.
+- The core starts the shell for actions that need the window (a menu entry, a notification action): it spawns `kuickshare` next to itself with an argument (`--open-files`, `--clipboard`, `--transfer <id>`, `--page settings`, or `--request-quit`), through the portal in a Flatpak or detached elsewhere, and a single-instance shell (`KDBusService::Unique`) hands those arguments to the running window when one exists.
+- A launch of a different version, or with `--replace`, first asks the running shell to `quit()` over D-Bus, asks the core to `Quit` too (its tray goes with it), waits for both to leave the bus (`src/shell/instance.cpp`), then starts normally. An update takes over both sides; a transfer running in the old shell is lost.
+- `UpdateWatcher` (`src/shell/updatewatcher.cpp`) notices an update installed under a running Flatpak (portal update monitor) or AppImage (the `$APPIMAGE` file replaced, after 5 s without changes). Once no transfer is active and the window is closed, `main.cpp` returns from `app.exec()` as any window close does, and the replacement it started (`kuickshare --replace --background`, portal `Spawn` in a Flatpak) replaces both the old shell and its core. With the window open, a banner offers "Restart", which starts the replacement the same way without `--background`, so the new version's window comes up. While a replacement is starting, further triggers are ignored for 15 s. The tarball installer restarts the app itself. Both watchers are unverified on a real desktop *(inferred from the portal specification)*.
+- On exit, the shell leaves the core running (that is the point of the split). A user quit (Ctrl+Q or the quit dialog of the window, which `--request-quit` opens), or the closing of the last window with "Keep running in the background" off, ends with a `Quit` call; the core stops the engine, releases the Wi-Fi within 2 s and takes its bus name and pid file away. The core stops itself on SIGTERM or Ctrl+C, and the same way on a tray `Quit` while idle.
+- Autostart is a `.desktop` file in `~/.config/autostart` that runs `kuickshare --background`: a shell that starts the core if missing, then exits. What is left running is the headless core with its tray.
+
+Measured on the author's Fedora 46 + Plasma 6 (SMAPS PSS): the background of 1.7.2 was a hidden shell plus its child core, about 30 MB of PSS in two processes. The headless core of this change is one Flatpak sandbox process, about 15-18 MB of RSS and 13-15 MB of PSS (measured both on a bare run and through the Flatpak); the window process adds its usual amount only while it is open (the release Flatpak shell, about 97 MB PSS in an offscreen run).
 
 ### When the core is down
 
-`CoreBridge` watches the bus name. When the owner disappears it marks itself disconnected and clears the device list, and the window shows an error banner with a "Start service" button. Nothing is restarted automatically. The button kills a core that is running but not on the bus, then starts a new one. When the name reappears the shell reloads properties, history, paired devices and the allowed list, and drops its transfer rows. A transfer in progress when the core died is lost.
+`CoreBridge` watches the bus name. When the owner disappears it marks itself disconnected and clears the device list, and the window shows an error banner with a "Start service" button. Nothing is restarted automatically. The button kills a core that is running but not on the bus — the pid file at `${XDG_CACHE_HOME}/kuickshare/kuickshared.pid` names it, and the kill happens only for a process of the same pid namespace whose name really is `kuickshared` (inside a Flatpak the core runs in its own sandbox, so `Start service` there just starts a fresh one). When the name reappears the shell reloads properties, history, paired devices and the allowed list, and drops its transfer rows. A transfer in progress when the core died is lost; the core's own notifications say so in more detail than the shell shows.
 
 ### Inside the core
 
 | Module | Role |
 | --- | --- |
-| `main.rs` | Loads settings, history and trust, serves D-Bus, starts the engine, waits for a signal |
-| `app.rs` | `Core`: owns the `rqs_lib` engine and the settings. Settings that change the device name or port rebuild the engine, and the old values are restored if that fails |
-| `dbus.rs` | The D-Bus interface, plus forwarder tasks that turn library events into signals and take each incoming transfer through the consent book (name guard, open, auto-accept) |
+| `main.rs` | Loads settings, history and trust, serves D-Bus, starts the engine and the desktop, writes the pid file, waits for a signal, a `Quit` or a tray quit |
+| `app.rs` | `Core`: owns the `rqs_lib` engine and the settings. Settings that change the device name or port rebuild the engine, and the old values are restored if that fails. Also `window_open`, which keeps the end-of-transfer notifications off while the shell shows its toast |
+| `dbus.rs` | The D-Bus interface (`WindowOpen`, `Quit` included), plus forwarder tasks that turn library events into signals and take each incoming transfer through the consent book (name guard, open, auto-accept). The transfer forwarder also feeds the desktop the merged snapshot of each event |
+| `desktop.rs` | The state machine behind the tray and the notifications: prompts for consents (re-shown after a daemon change or a refused trust), notices for how a transfer ended, clipboard and file-open calls through portals, window spawns, and the pid file stays out of its way |
+| `notify.rs` | The freedesktop notifications client: texts and actions of every notice, the presses and dismissals of one pump task, and the owner watch that re-listens when the daemon changes |
+| `tray.rs` | The StatusNotifierItem and its menu, a snapshot of the core state (visible until, waiting, busy) that the desktop task swaps in |
+| `i18n.rs` | gettext at runtime for the strings the core shows: reads the same `po/<lang>.po` catalogs as the shell (`kuickshare.mo`), `%1`-style placeholders |
 | `consent.rs` | `Consents`: the one book of incoming transfers that wait for an answer, see [Consent and the guard](#consent-and-the-guard). It has its own lock and never takes the `Core` lock |
 | `link.rs` | `NmLink`: the Wi-Fi link of the upgrade over NetworkManager's D-Bus (access point or join) and the saved join of "Join network"; it opens the hotspot's firewall port first and refuses the hotspot without it unless the session consent (`HotspotPolicy`) allows an open zone; see [Wi-Fi upgrade](wifi-direct.md) |
 | `trust.rs` | Noise XX channel on TCP 47891: probe, announce, pairing |
@@ -94,13 +100,11 @@ The core is behind one lock, but a send holds it only briefly: to take a snapsho
 
 | Part | Role |
 | --- | --- |
-| `main.cpp` | Window, tray, single instance, starts the core |
-| `corebridge.*` | `CoreBridge`: D-Bus client and the QML-facing state; `transferBusy` is true while a transfer is live and not just awaiting approval |
+| `main.cpp` | Window, single instance, starts the core detached, window-open flag, whole-app quits |
+| `corebridge.*` | `CoreBridge`: D-Bus client and the QML-facing state; `transferBusy` is true while a transfer is live and not just awaiting approval; also the detached starts of the core and the pid-file kill of a stuck one |
 | `transfermodel.*` | `TransferModel`: live and history rows; `beginPending`/`failPending` show a send before the core reports it; `busy` and `transferEnded` feed the Send page and the toasts |
-| `transferwatcher.*`, `transferjob.*` | Notifications and the Plasma progress job of each transfer |
 | `transferfiltermodel.*` | `TransferFilterModel`: `TransferModel` narrowed by direction, status group and search text for the Transfers page |
 | `devicemodel.*` | Nearby devices |
-| `dndwatcher.*` | Do Not Disturb state |
 | `autostart.*`, `integration.*`, `dolphinmenu.*`, `launcher.h`, `execquote.h` | Autostart and Dolphin entries, first-launch question, `Exec` quoting, AppImage and Flatpak path detection |
 | `requirementsreport.h` | Parses and validates the requirements report (schema, size and row limits, text cleaned) and formats the diagnostic report |
 | `qml/` | Pages (Send, Transfers, Settings, Help), dialogs (`WifiRequirementsDialog.qml` among them), and `ToastStack.qml`: transient messages shown on whatever page is open |
@@ -116,8 +120,9 @@ sequenceDiagram
     participant P as Remote device
     participant L as rqs_lib
     participant C as Core (dbus.rs)
-    participant S as Shell
+    participant D as Core (desktop.rs)
     participant U as User
+    participant SH["Window (kuickshare)"]
 
     Note over P,U: Incoming
     P->>L: connection request, file names, size
@@ -126,19 +131,20 @@ sequenceDiagram
     C->>C: unsafe file name? then decline
     C->>C: open the consent (token, 300 s, MAC read now)
     C->>C: intent from paired peer, or allowed name+MAC? then accept
-    C->>S: signal TransferUpdated (with the consent token)
-    S->>U: notification: Accept / Accept and Trust / Decline
-    U->>S: Accept
-    S->>C: AnswerTransfer(id, consent, "accept")
+    C->>D: merged snapshot of the event (the shell used to get this over the bus)
+    D->>U: notification: Accept / Accept and Trust / Decline
+    U->>D: Accept
+    D->>C: consent book: resolve(id, token, accept)
     C->>L: ConsentAccept
     L->>P: reserve the files, receive them into the download folder
     L->>C: events ReceivingFiles ... Finished
     C->>C: write history entry
-    C->>S: TransferUpdated (final, history_uid)
+    C->>D: merged snapshot (final, history_uid)
+    D->>U: notification: Files received, open file or folder
 
     Note over P,U: Outgoing
-    U->>S: pick files and a device
-    S->>C: SendFiles(device, paths)
+    U->>+SH: pick files and a device on the window
+    SH->>C: SendFiles(device, paths)
     C->>C: check paths exist, look up device
     opt device is a paired KuickShare computer
         C->>P: announce over Noise (2 s limit)
@@ -147,7 +153,8 @@ sequenceDiagram
     L->>P: connection request
     P->>L: accepted or rejected
     L->>C: events SendingFiles ... Finished
-    C->>S: TransferUpdated
+    C->>D: merged snapshot
+    D->>-SH: tray Active on the way there; the window toast says how it ended
 ```
 
 An announce that fails only logs a message. The transfer still goes out and the receiver asks its user.
@@ -191,16 +198,16 @@ The state names come from `rqs_lib` and are passed through unchanged as strings.
 | State | Meaning for KuickShare |
 | --- | --- |
 | `WaitingForUserConsent` (inbound) | Opens the consent (token, deadline, MAC read); the only state where auto-accept is evaluated. Any later state closes it |
-| `SendingFiles`, `ReceivingFiles` | Counts as active for the shell (progress job, Do Not Disturb, blocking settings) |
+| `SendingFiles`, `ReceivingFiles` | Counts as busy: Active in the tray, the "Quit?" dialog of the shell, and the settings that restart the service are refused |
 | `Finished`, `Cancelled`, `Rejected`, `Disconnected` | Final. The transfer leaves the active set and is written to the history, except the final events the core itself emits without a history entry (see below) |
 
 - The first final state wins. `Finished` may be followed by `Disconnected`; the second is ignored in the core and in the shell's `TransferModel`.
 - Later events often carry less data than earlier ones, so the core merges events and keeps known fields.
-- The library reports a refusal by the remote side as `Disconnected`. The shell shows "not accepted" when an outgoing transfer ends that way before any data moved.
+- The library reports a refusal by the remote side as `Disconnected`. The core's desktop shows "not accepted" when an outgoing transfer ends that way before any data moved.
 - The core's guard may decline an inbound transfer at any non-final event that lists file names, not only at the consent request.
 - When the engine stops for a restart (settings that rebuild it, `ResetSettings`) or at exit, each transfer that had no final event gets a final `Disconnected` from the core. It has no history entry.
 - A `Cancel` of a send that is still choosing its route ends it with a `Cancelled` emitted before `Cancel` returns, also without a history entry.
-- At exit the library stop is bounded (its own wind-down is 400 ms) and the engine stop takes 0.8 s in all; then the Wi-Fi cleanup runs (2 s), within the shell's 3 s wait ([timings](wifi-direct.md#timings-and-timeouts)). At a stop an inbound session sends Cancel and Disconnection, then a FIN, within 300 ms + 50 ms, so the phone is told before the socket closes.
+- The whole-service stop is now asked by `Quit` or a tray `Quit` of its own; the bound (engine 0.8 s, then the Wi-Fi cleanup 2 s) covers a caller that waited up to 8 s for the name to go ([timings](wifi-direct.md#timings-and-timeouts)). At a stop an inbound session sends Cancel and Disconnection, then a FIN, within 300 ms + 50 ms, so the phone is told before the socket closes.
 
 ## Files on disk
 

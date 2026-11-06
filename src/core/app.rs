@@ -397,6 +397,12 @@ pub struct Core {
     /// Whether the allowed list is used; shared with the task that accepts transfers.
     trusted_enabled: Arc<AtomicBool>,
     conn: Option<Connection>,
+    /// Whether the window is open (`WindowOpen`): its toast reports how a transfer ended, so the
+    /// same notifications stay off. The shell sets it; the desktop reads it.
+    window_open: Arc<AtomicBool>,
+    /// The merged transfer events of the engine, for the desktop (tray, notifications), which the
+    /// shell used to consume as D-Bus signals of `TransferUpdated` (see `desktop::spawn`).
+    desktop_events: Option<mpsc::UnboundedSender<TransferEvent>>,
     /// Temporary hiding (not persisted), e.g. while Do Not Disturb is on.
     suspended: bool,
     /// Temporary visibility (not persisted), set by `make_visible_for`.
@@ -446,6 +452,8 @@ impl Core {
             trust_events: Some(trust_events),
             trusted_ips: TrustedIps::default(),
             conn: None,
+            window_open: Arc::new(AtomicBool::new(false)),
+            desktop_events: None,
             suspended: false,
             temp_visible: None,
             temp_visible_gen: 0,
@@ -511,6 +519,12 @@ impl Core {
         if let Some(conn) = &self.conn {
             for event in &unfinished {
                 dbus::emit_transfer(conn, event).await;
+            }
+        }
+        // The desktop closes its prompts on a final state, the same as the shell did.
+        if let Some(desktop) = &self.desktop_events {
+            for event in &unfinished {
+                let _ = desktop.send(event.clone());
             }
         }
     }
@@ -848,6 +862,49 @@ impl Core {
         self.apply_visibility();
     }
 
+    /// Whether the app window is open (`WindowOpen`). Its toast reports how a transfer ended, so
+    /// the desktop keeps the end-of-transfer notifications off then.
+    pub fn window_open(&self) -> bool {
+        self.window_open.load(Ordering::Relaxed)
+    }
+
+    pub fn set_window_open(&mut self, open: bool) {
+        self.window_open.store(open, Ordering::Relaxed);
+    }
+
+    /// Whether an incoming transfer waits for the user's consent: the tray wakes for it.
+    pub fn transfer_waiting(&self) -> bool {
+        let active = self.active.lock().unwrap();
+        active
+            .values()
+            .any(|t| t.kind == "inbound" && t.state == "WaitingForUserConsent")
+    }
+
+    /// Whether a transfer runs or is on its way (anything but a waiting consent that a final
+    /// state would end): the tray says so, and `Quit` asks in the window first.
+    pub fn transfer_busy(&self) -> bool {
+        let active = self.active.lock().unwrap();
+        active.values().any(|t| {
+            !dbus::final_state(&t.state)
+                && (t.kind != "inbound" || t.state != "WaitingForUserConsent")
+        })
+    }
+
+    /// Takes the sending end the desktop reads merged transfer events on (see `set_desktop`).
+    pub fn set_desktop(&mut self, events: mpsc::UnboundedSender<TransferEvent>) {
+        self.desktop_events = Some(events);
+    }
+
+    /// The visibility the nearby devices see, temporary visibility included, Do Not Disturb
+    /// excluded; also what the tray menu's checkmark shows.
+    pub fn effective_visible(&self) -> bool {
+        effective_visible(
+            self.settings.visible,
+            self.visible_until() > unix_now(),
+            self.suspended,
+        )
+    }
+
     pub fn set_hide_when_dnd(&mut self, hide: bool) {
         self.settings.hide_when_dnd = hide;
         self.save();
@@ -858,14 +915,6 @@ impl Core {
         if let Some(engine) = &mut self.engine {
             engine.rqs.change_visibility(visibility(visible));
         }
-    }
-
-    fn effective_visible(&self) -> bool {
-        effective_visible(
-            self.settings.visible,
-            self.temp_visible.is_some(),
-            self.suspended,
-        )
     }
 
     /// The handle the D-Bus service uses for Accept and Decline (see `LibActions`).
@@ -1202,6 +1251,7 @@ impl Core {
                 trusted_enabled: self.trusted_enabled.clone(),
                 consents: self.consents.clone(),
                 generation: self.consents.generation(),
+                desktop: self.desktop_events.clone(),
                 core: self.handle.clone(),
             },
             rqs.message_sender.subscribe(),
@@ -2344,9 +2394,10 @@ mod tests {
     }
 
     fn transfer(last_event: i64) -> TransferEvent {
-        let mut transfer = TransferEvent::default();
-        transfer.last_event = last_event;
-        transfer
+        TransferEvent {
+            last_event,
+            ..TransferEvent::default()
+        }
     }
 
     #[test]

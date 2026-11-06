@@ -86,7 +86,16 @@ out=$(flatpak run --file-forwarding --command=sh "$id" -c 'cat "$1"' _ @@ "$HOME
 [ "$out" = hello ] || fail "file forwarding did not deliver the file: $out"
 echo "ok: file forwarding"
 
-# A second launch (what Dolphin does) must hand the file to the running instance and exit.
+# A second launch (what Dolphin does) hands its file to the running window and exits. With the
+# headless background there is no window until one is opened below: start one offscreen first
+# (it stays open, like a window would on a desktop), then the file launch hands over and ends.
+flatpak run --env=QT_QPA_PLATFORM=offscreen "$id" >"$HOME/window.log" 2>&1 &
+window() {
+    gdbus call --session --dest org.kde.kuickshare --object-path /MainApplication \
+        --method org.freedesktop.DBus.Properties.Get org.qtproject.Qt.QCoreApplication applicationVersion 2>/dev/null
+}
+for _ in $(seq 15); do window >/dev/null && break; sleep 1; done
+window >/dev/null || { cat "$HOME/window.log"; fail "the window instance did not start"; }
 timeout 30 flatpak run --env=QT_QPA_PLATFORM=offscreen --file-forwarding "$id" @@ "$HOME/hello.txt" @@ >/dev/null 2>&1 \
     || fail "the second launch did not hand over to the running instance"
 echo "ok: second launch hands over"

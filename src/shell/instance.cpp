@@ -59,10 +59,15 @@ void Instance::replaceRunning(bool force)
     {
         return;
     }
-    // The old shell stops a core it started with SIGTERM and waits up to 3 s, so give it more than that.
+    // The old shell waits for nothing but its own exit now: the background service is only
+    // stopped by the core's `Quit` (the tray belongs to it too). Both old pieces go.
     bus.call(QDBusMessage::createMethodCall(shellService, QStringLiteral("/MainApplication"), QStringLiteral("org.qtproject.Qt.QCoreApplication"), QStringLiteral("quit")), QDBus::Block, 2000);
     if (waitGone(shellService, 8000))
     {
-        waitGone(coreService, 3000);
+        // The shell no longer stops its own core on the way out, so the updater's replacement
+        // does it: the new instance starts a fresh one of its own version afterwards.
+        auto quit = QDBusMessage::createMethodCall(coreService, QStringLiteral("/io/github/the_beper/KuickShare"), QStringLiteral("io.github.the_beper.KuickShare1"), QStringLiteral("Quit"));
+        bus.call(quit, QDBus::Block, 5000);
+        waitGone(coreService, 8000);
     }
 }
