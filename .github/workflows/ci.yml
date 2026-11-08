@@ -50,13 +50,24 @@ jobs:
     permissions:
       contents: read
     env:
+      SHELLCHECK_VERSION: "0.11.0"
+      SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
       ACTIONLINT_VERSION: "1.7.12"
-      # From the release's own checksums file (actionlint_1.7.12_checksums.txt), linux amd64 tarball.
       ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Install shellcheck
+        run: |
+          dir="$RUNNER_TEMP/shellcheck"
+          mkdir -p "$dir"
+          tarball="shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.gz"
+          curl -fsSL --retry 3 -o "$dir/$tarball" "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/$tarball"
+          echo "${SHELLCHECK_SHA256}  $dir/$tarball" | sha256sum -c -
+          tar -xzf "$dir/$tarball" -C "$dir" "shellcheck-v${SHELLCHECK_VERSION}/shellcheck" --strip-components=1
+          echo "$dir" >> "$GITHUB_PATH"
 
       - name: shellcheck
         run: |
@@ -345,12 +356,27 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    env:
+      # Release 0.20.2's own checksums file (cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz.sha256).
+      DENY_VERSION: "0.20.2"
+      DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - name: Install cargo-deny
+        run: |
+          dir="$RUNNER_TEMP/cargo-deny"
+          mkdir -p "$dir"
+          tarball="cargo-deny-${DENY_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          curl -fsSL --retry 3 -o "$dir/$tarball" "https://github.com/EmbarkStudios/cargo-deny/releases/download/${DENY_VERSION}/$tarball"
+          echo "${DENY_SHA256}  $dir/$tarball" | sha256sum -c -
+          tar -xzf "$dir/$tarball" -C "$dir" "cargo-deny-${DENY_VERSION}-x86_64-unknown-linux-musl/cargo-deny" --strip-components=1
+          echo "$dir" >> "$GITHUB_PATH"
+
+      - name: deny
+        run: cargo deny check
 
   # The one check to require (branch protection and the release gate): green only when every job that had to run
   # succeeded. A job that was skipped because the change did not need it counts as done; any other skip, failure or
