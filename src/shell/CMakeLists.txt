@@ -26,6 +26,8 @@ find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 DBus 
 find_package(KF6 REQUIRED COMPONENTS Kirigami I18n CoreAddons Crash DBusAddons)
 include(ECMFindQmlModule)
 ecm_find_qmlmodule(org.kde.kirigami REQUIRED)
+ecm_find_qmlmodule(org.kde.ki18n REQUIRED)
+ecm_find_qmlmodule(org.kde.kirigamiaddons.formcard REQUIRED)
 
 qt_add_executable(kuickshare
     main.cpp
@@ -205,4 +207,41 @@ if(BUILD_TESTING)
     target_include_directories(requirementsreport_test PRIVATE .)
     target_link_libraries(requirementsreport_test PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME requirementsreport COMMAND requirementsreport_test)
+
+    # The reusable QML components, driven like a third-party app drives them: through the
+    # module URI, in a built module of their own, and with engine warnings failed as test
+    # results (see the test file). QML files all live at the root of the module, so use the
+    # new behavior (silences QTP0004).
+    qt_policy(SET QTP0004 NEW)
+    qt_add_executable(qmlconsumer_test ../../tests/shell/qmlconsumer_test.cpp)
+    target_include_directories(qmlconsumer_test PRIVATE .)
+    target_link_libraries(qmlconsumer_test
+        PRIVATE Qt6::Core Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Test KF6::I18n KF6::I18nQml)
+    # The files live outside the test target's tree: without an alias of their own, the module
+    # would keep the `src/shell/qml/` prefix in the resource and the qmldir would not find them
+    # (the alias KWi gave its declarative files for the same reason).
+    set_source_files_properties(../../src/shell/qml/SectionTitle.qml
+        PROPERTIES QT_RESOURCE_ALIAS SectionTitle.qml)
+    set_source_files_properties(../../src/shell/qml/MessageBox.qml
+        PROPERTIES QT_RESOURCE_ALIAS MessageBox.qml)
+    set_source_files_properties(../../src/shell/qml/ToastStack.qml
+        PROPERTIES QT_RESOURCE_ALIAS ToastStack.qml)
+    qt_add_qml_module(qmlconsumer_test
+        URI io.github.the_beper.KuickShare
+        RESOURCE_PREFIX /qt/qml
+        # A test module with the URI of the app's own: the two targets live next to each
+        # other, so each gets its output directory named.
+        OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/qml-consumer-test/io/github/the_beper/KuickShare"
+        NO_CACHEGEN
+        NO_IMPORT_SCAN
+        QML_FILES
+            ../../src/shell/qml/SectionTitle.qml
+            ../../src/shell/qml/MessageBox.qml
+            ../../src/shell/qml/ToastStack.qml
+    )
+    add_test(NAME qmlconsumer COMMAND qmlconsumer_test)
 endif()
+
+# A dependency that is missing announces itself here, before anything is built (the summary
+# KWi ends its CMakeLists with).
+feature_summary(WHAT ALL FATAL_ON_MISSING_REQUIRED_PACKAGES)

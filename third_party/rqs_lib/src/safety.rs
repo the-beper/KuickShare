@@ -156,6 +156,31 @@ fn is_invisible(c: char) -> bool {
     )
 }
 
+/// The soft hyphen shows nothing of itself, and the Arabic letter mark works like the
+/// direction overrides. Both stay allowed in a file name, and hidden no longer in text.
+fn invisible_in_text(c: char) -> bool {
+    is_invisible(c) || matches!(c, '\u{00AD}' | '\u{061C}')
+}
+
+/// `text` of what makes a display lie: every control character except line breaks (tab,
+/// newline and carriage return stay), the direction overrides and zero-width characters a
+/// file name is refused for, and the soft hyphen and the Arabic letter mark, which hide
+/// the same way.
+///
+/// The text of a payload, its preview and the network name are an unknown sender's choice,
+/// and a consent, a notification and the history show them: with an `U+202E` in the
+/// middle, `no\u{202E}CPU` shows as `noUPC` and a line of digits reads backwards, and the
+/// invisible ones can carry content nobody sees. What this returns is what gets shown and
+/// copied; the payload itself is not display.
+pub fn clean_text(text: &str) -> String {
+    let drop =
+        |c: char| (c.is_control() && !matches!(c, '\t' | '\n' | '\r')) || invisible_in_text(c);
+    if !text.chars().any(drop) {
+        return text.to_owned();
+    }
+    text.chars().filter(|c| !drop(*c)).collect()
+}
+
 /// One file of an accepted-for-review offer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Offered {
@@ -706,6 +731,40 @@ mod tests {
         ] {
             assert!(!unsafe_file_name(name), "{name}");
         }
+    }
+
+    #[test]
+    fn clean_text_passes_ordinary_text_unchanged() {
+        for text in [
+            "",
+            "hello",
+            "https://example.org/a?b=c",
+            "one\ttwo\nthree\r\nfour",
+            "na našem: jedna slika i jedna ponuda",
+            "می\u{200C}خواهم",
+            "family \u{1F468}\u{200D}\u{1F469}.png",
+            "€ 5 or 5 €",
+        ] {
+            assert_eq!(clean_text(text), text);
+        }
+    }
+
+    #[test]
+    fn clean_text_drops_what_a_display_lies_with() {
+        // A direction override shows `no\u{202E}CPU` as `noUPC`: gone from what is shown.
+        assert_eq!(clean_text("no\u{202E}CPU"), "noCPU");
+        assert_eq!(clean_text("order\u{200E}\u{200F}66"), "order66");
+        assert_eq!(clean_text("a\u{2066}b\u{2069}c"), "abc");
+        assert_eq!(clean_text("a\u{200B}b"), "ab");
+        assert_eq!(clean_text("a\u{2060}b\u{FEFF}"), "ab");
+        // The soft hyphen and the Arabic letter mark.
+        assert_eq!(clean_text("e\u{00AD}-mail"), "e-mail");
+        assert_eq!(clean_text("x\u{061C}y"), "xy");
+        // Every control character goes but the line breaks: BEL, NUL and DEL included.
+        assert_eq!(clean_text("a\u{0007}b\n"), "ab\n");
+        assert_eq!(clean_text("a\u{0000}b\u{007F}"), "ab");
+        assert_eq!(clean_text("a\u{009F}b"), "ab");
+        assert_eq!(clean_text("\u{001B}[31m"), "[31m");
     }
 
     #[test]
