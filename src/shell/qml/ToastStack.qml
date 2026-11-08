@@ -107,9 +107,7 @@ Item {
                 easing.type: Easing.OutCubic
             }
         }
-        // The mirror of `add`: slides down and fades out. `ViewTransition.item` is null in a
-        // remove (the item is gone by the time the transition runs): where it was is what
-        // `destination` still says.
+        // The mirror of `add`: slides down and fades out. `ViewTransition.item` is null in a remove (the item is gone by the time the transition runs): where it was is what `destination` still says.
         remove: Transition {
             ParallelAnimation {
                 NumberAnimation {

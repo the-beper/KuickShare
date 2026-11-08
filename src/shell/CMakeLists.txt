@@ -7,9 +7,7 @@ add_compile_definitions(KUICKSHARE_VERSION="${PROJECT_VERSION}")
 find_package(ECM REQUIRED NO_MODULE)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
 
-# Qt 6 must be decided before KDEInstallDirs: with it unset until the find_package(Qt6) below, the
-# module includes its KF5 variant and installs the notifyrc into knotifications5, a name no KF6
-# runtime reads (Fedora 45 and Ubuntu 26.04 ship knotifications6, both libraries carry the name).
+# Qt 6 must be decided before KDEInstallDirs: with it unset until the find_package(Qt6) below, the module includes its KF5 variant and installs the notifyrc into knotifications5, a name no KF6 runtime reads (Fedora 45 and Ubuntu 26.04 ship knotifications6, both libraries carry the name).
 set(QT_MAJOR_VERSION 6)
 include(KDEInstallDirs)
 include(KDECMakeSettings)
@@ -18,8 +16,7 @@ include(KDECompilerSettings NO_POLICY_SCOPE)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Path to the kuickshared cargo produced; packages and build-host-payload.sh pass it (absolute or relative
-# to the source root), dev builds leave it empty and keep the target/debug link below.
+# Path to the kuickshared cargo produced; packages and build-host-payload.sh pass it (absolute or relative to the source root), dev builds leave it empty and keep the target/debug link below.
 set(KUICKSHARED_PATH "" CACHE FILEPATH "Built kuickshared, installed next to the shell (system packages)")
 
 find_package(Qt6 6.9 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 DBus Widgets)
@@ -90,9 +87,7 @@ target_link_libraries(kuickshare PRIVATE
 # Qt 6.12+ (Arch) refuses executables that copy-relocate its data symbols.
 target_compile_options(kuickshare PRIVATE -mno-direct-extern-access)
 
-# The following install rules are what a system package gets with one `cmake --install --prefix /usr`:
-# build/build-host-payload.sh stages its tarball payload from the same set (every file the payload
-# needs must be listed here), a relative KUICKSHARED_PATH is resolved against the source root.
+# The following install rules are what a system package gets with one `cmake --install --prefix /usr`: build/build-host-payload.sh stages its tarball payload from the same set (every file the payload needs must be listed here), a relative KUICKSHARED_PATH is resolved against the source root.
 install(TARGETS kuickshare ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
 if(KUICKSHARED_PATH)
     # The daemon cargo builds, installed next to the shell: corebridge.cpp starts it from applicationDirPath().
@@ -208,18 +203,13 @@ if(BUILD_TESTING)
     target_link_libraries(requirementsreport_test PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME requirementsreport COMMAND requirementsreport_test)
 
-    # The reusable QML components, driven like a third-party app drives them: through the
-    # module URI, in a built module of their own, and with engine warnings failed as test
-    # results (see the test file). QML files all live at the root of the module, so use the
-    # new behavior (silences QTP0004).
+    # The reusable QML components, driven like a third-party app drives them: through the module URI, in a built module of their own, and with engine warnings failed as test results (see the test file). QML files all live at the root of the module, so use the new behavior (silences QTP0004).
     qt_policy(SET QTP0004 NEW)
     qt_add_executable(qmlconsumer_test ../../tests/shell/qmlconsumer_test.cpp)
     target_include_directories(qmlconsumer_test PRIVATE .)
     target_link_libraries(qmlconsumer_test
         PRIVATE Qt6::Core Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Test KF6::I18n KF6::I18nQml)
-    # The files live outside the test target's tree: without an alias of their own, the module
-    # would keep the `src/shell/qml/` prefix in the resource and the qmldir would not find them
-    # (the alias KWi gave its declarative files for the same reason).
+    # The files live outside the test target's tree: without an alias of their own, the module keeps the `src/shell/qml/` prefix in the resource, and the qmldir does not find the files there.
     set_source_files_properties(../../src/shell/qml/SectionTitle.qml
         PROPERTIES QT_RESOURCE_ALIAS SectionTitle.qml)
     set_source_files_properties(../../src/shell/qml/MessageBox.qml
@@ -229,8 +219,7 @@ if(BUILD_TESTING)
     qt_add_qml_module(qmlconsumer_test
         URI io.github.the_beper.KuickShare
         RESOURCE_PREFIX /qt/qml
-        # A test module with the URI of the app's own: the two targets live next to each
-        # other, so each gets its output directory named.
+        # A test module with the URI of the app's own: the two targets live next to each other, so each gets its output directory named.
         OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/qml-consumer-test/io/github/the_beper/KuickShare"
         NO_CACHEGEN
         NO_IMPORT_SCAN
@@ -242,6 +231,5 @@ if(BUILD_TESTING)
     add_test(NAME qmlconsumer COMMAND qmlconsumer_test)
 endif()
 
-# A dependency that is missing announces itself here, before anything is built (the summary
-# KWi ends its CMakeLists with).
+# A dependency that is missing announces itself here, before anything is built.
 feature_summary(WHAT ALL FATAL_ON_MISSING_REQUIRED_PACKAGES)

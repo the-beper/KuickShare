@@ -760,8 +760,7 @@ pub struct TransferEvent {
 impl TransferEvent {
     fn from_client(id: &str, client: &MessageClient) -> Self {
         let meta = client.metadata.as_ref();
-        // The text, the preview and the Wi-Fi name are the sender's choice: what is shown and
-        // copied is the clean words (see `clean_text`), not the payload as it travels.
+        // The text, the preview and the Wi-Fi name are the sender's choice: what is shown and copied is the clean words (see `clean_text`), not the payload as it travels.
         let (files, text) = match meta.and_then(|m| m.payload.as_ref()) {
             Some(TransferPayload::Files(files)) => (files.clone(), String::new()),
             Some(TransferPayload::Text(text) | TransferPayload::Url(text)) => {
@@ -2509,8 +2508,7 @@ mod tests {
             }),
         };
         let event = TransferEvent::from_client("t3", &client);
-        // `no\u{202E}1337` shows as `7331on`: the override has no place in a prompt, and a
-        // vertical tab or DEL is not a line break either.
+        // `no\u{202E}1337` shows as `7331on`: the override has no place in a prompt, and a vertical tab or DEL is not a line break either.
         assert_eq!(event.preview, "Coupon no1337");
         assert_eq!(event.text, "accept8:00now");
     }
@@ -2537,8 +2535,7 @@ mod tests {
             TransferEvent::from_client("t4", &client).text,
             "one\n\ttwo\r\nthree"
         );
-        // The Wi-Fi name goes through the same rule (the join reads the store, not the event,
-        // so a name is cleaned twice with the same result).
+        // The Wi-Fi name goes through the same rule; the join reads the store, not the event.
         let wifi = MessageClient {
             kind: TransferKind::Inbound,
             state: Some(TransferState::Finished),

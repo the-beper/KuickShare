@@ -12,18 +12,11 @@
 #include <memory>
 #include <utility>
 
-// The reusable parts of the shell's QML module, driven like a third-party app drives them:
-// through the module URI, not through the shell's files. Every test holds the module to the
-// contract its documentation and comments describe, and the engine must run all of it without
-// a single warning. The warnings are collected in `init` and failed in `cleanup`, so a stray
-// binding error never sneaks past a test that only looks at what it can see.
+// The shell's reusable QML components, driven the way a third-party app drives them: through the module URI, in an ApplicationWindow like Main.qml hosts them, and every test fails when the engine gives off a warning (collected in init, failed in cleanup).
 
 namespace {
 
-constexpr auto module = "io.github.the_beper.KuickShare";
-
-// What `core` is to `ToastStack`: the thing an error toast copies its text with. A stub, so
-// the test cannot touch the real clipboard.
+// What `core` is to `ToastStack`: the thing an error toast copies its text with. A stub, so the test cannot touch the real clipboard.
 class FakeCore : public QObject
 {
     Q_OBJECT
@@ -32,9 +25,7 @@ public:
     Q_INVOKABLE void copyToClipboard(const QString &text) { Q_UNUSED(text) }
 };
 
-// The stack as Main.qml hosts it: through the module URI, in an ApplicationWindow, `core` in
-// place. The window comes from the same document as the stack, so its declarative parent (an
-// overlay of the window it finds) and its anchors meet what they look for.
+// The stack hosted the way Main.qml hosts it: through the module URI, in an ApplicationWindow of the same document, where its declarative parent (an overlay) and its anchors meet a real window from the start.
 constexpr auto toastsQml = R"QML(
 import QtQuick.Controls
 import io.github.the_beper.KuickShare
@@ -72,15 +63,10 @@ private Q_SLOTS:
     void theStackOffersItsDocumentedDetailsSignal();
 
 private:
-    // A window out of `qml`, made the way Main.qml makes its own: the window is the root, so
-    // every declarative parent (an overlay, an anchor) and every binding finds what it looks
-    // for. The window stays shown until the test is over; nullptr is reported before it
-    // returns.
+    // A window out of `qml`, made the way Main.qml makes its own: the window is the root, so every declarative parent (an overlay, an anchor) and every binding finds what it looks for. The window stays shown until the test is over; nullptr is reported before it returns.
     std::unique_ptr<QQuickWindow> windowWith(const QByteArray &qml, const QVariantMap &properties);
-    // A QML method call on `object`, the QML values of `arguments` as arguments.
     static bool invoke(QObject *object, const char *method, const QVariantList &arguments);
-    // The number `name` ("Information", "Positive", "Warning", "Error") names in
-    // Kirigami.MessageType at this run, read from Kirigami itself.
+    // The number `name` ("Information", "Positive", "Warning", "Error") names in Kirigami.MessageType at this run, read from Kirigami itself.
     int messageType(const QString &name);
 
     FakeCore m_core;
@@ -91,8 +77,7 @@ private:
 void QmlConsumerTest::init()
 {
     m_engine = std::make_unique<QQmlEngine>();
-    // The same setup main.cpp does: without it the KI18n singleton of the components is
-    // nothing, and the engine says so.
+    // The same setup main.cpp does: without it the KI18n singleton of the components is nothing, and the engine says so.
     KLocalization::setupLocalizedContext(m_engine.get());
     connect(m_engine.get(), &QQmlEngine::warnings, this, [this](const QList<QQmlError> &warnings) {
         m_warnings.append(warnings);
@@ -172,8 +157,7 @@ int QmlConsumerTest::messageType(const QString &name)
 
 void QmlConsumerTest::sectionTitleStartsFlushWithTheTop()
 {
-    // The margins read the way the pages read them: as values of the window's own properties,
-    // not through an attached property looked up from the other side.
+    // The margins read through the window's own properties, not through an attached property looked up from the other side.
     auto window = windowWith(R"QML(
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -204,7 +188,6 @@ ApplicationWindow {
     QCOMPARE(QQmlProperty::read(window.get(), QStringLiteral("topMargin")).toDouble(), 0.0);
     QVERIFY2(QQmlProperty::read(window.get(), QStringLiteral("bottomMargin")).toDouble() > 0,
              "every title keeps its space below");
-    // A title that follows the first keeps its space above, in both directions.
     window->setProperty("firstTitle", false);
     QVERIFY2(QQmlProperty::read(window.get(), QStringLiteral("topMargin")).toDouble() > 0,
              "a title that follows the first keeps its space above");
@@ -343,14 +326,11 @@ void QmlConsumerTest::theStackOffersItsDocumentedDetailsSignal()
     QVERIFY(window);
     auto *toasts = QQmlProperty::read(window.get(), QStringLiteral("toasts")).value<QObject *>();
     QVERIFY(toasts);
-    // "`id` is the one given to `show`" — the signal carries the id of the toast, as its
-    // comment says; a consumer keeps watching for it with `detailsRequested`.
     QSignalSpy spy(toasts, SIGNAL(detailsRequested(QString)));
     QVERIFY(spy.isValid());
 }
 
-// The catalogs are not here, but the domain has to be: without it, every ``KI18n.i18n``
-// string warns the engine (and `cleanup` fails the test for it).
+// The catalogs are not here, but the domain has to be: without it, every `KI18n.i18n` string warns the engine (and `cleanup` fails the test for it).
 int main(int argc, char **argv)
 {
     KLocalizedString::setApplicationDomain("kuickshare");

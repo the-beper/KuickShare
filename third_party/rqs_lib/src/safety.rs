@@ -156,22 +156,14 @@ fn is_invisible(c: char) -> bool {
     )
 }
 
-/// The soft hyphen shows nothing of itself, and the Arabic letter mark works like the
-/// direction overrides. Both stay allowed in a file name, and hidden no longer in text.
+/// The soft hyphen shows nothing of itself, and the Arabic letter mark works like the direction overrides. Both are allowed in a file name, and not in text.
 fn invisible_in_text(c: char) -> bool {
     is_invisible(c) || matches!(c, '\u{00AD}' | '\u{061C}')
 }
 
-/// `text` of what makes a display lie: every control character except line breaks (tab,
-/// newline and carriage return stay), the direction overrides and zero-width characters a
-/// file name is refused for, and the soft hyphen and the Arabic letter mark, which hide
-/// the same way.
+/// `text` without what a reader should not be shown: every control character except line breaks (tab, newline and carriage return stay), the direction overrides and zero-width characters a file name is refused for, and the soft hyphen and the Arabic letter mark, which hide the same way.
 ///
-/// The text of a payload, its preview and the network name are an unknown sender's choice,
-/// and a consent, a notification and the history show them: with an `U+202E` in the
-/// middle, `no\u{202E}CPU` shows as `noUPC` and a line of digits reads backwards, and the
-/// invisible ones can carry content nobody sees. What this returns is what gets shown and
-/// copied; the payload itself is not display.
+/// The text of a payload, its preview and the network name are an unknown sender's choice, and a consent, a notification and the history show them: with an `U+202E` in the middle, `no\u{202E}CPU` shows as `noUPC`, a line of digits reads backwards, and the invisible ones can carry content nobody sees. What this returns is what gets shown and copied; the payload itself is not display.
 pub fn clean_text(text: &str) -> String {
     let drop =
         |c: char| (c.is_control() && !matches!(c, '\t' | '\n' | '\r')) || invisible_in_text(c);
@@ -740,7 +732,7 @@ mod tests {
             "hello",
             "https://example.org/a?b=c",
             "one\ttwo\nthree\r\nfour",
-            "na našem: jedna slika i jedna ponuda",
+            "come prima: una sì e una no",
             "می\u{200C}خواهم",
             "family \u{1F468}\u{200D}\u{1F469}.png",
             "€ 5 or 5 €",
