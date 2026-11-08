@@ -71,6 +71,16 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.8.1" date="2026-11-08">
+      <description>
+        <p>Text from other applications is shown clean of invisible characters</p>
+        <ul>
+          <li>File names, transfer text, previews and Wi-Fi network names from other apps are stripped of characters that are never meant to be shown</li>
+          <li>A toast that is removed or replaced almost immediately by another one now behaves correctly</li>
+          <li>If the window does not open, the app logs why, and Quit in the tray still works</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.8.0" date="2026-11-06">
       <description>
         <p>Much lighter in the background: the tray and notifications now live in the service</p>
