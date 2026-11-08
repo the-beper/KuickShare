@@ -44,7 +44,7 @@ stage usr/bin/kuickshared "$host/kuickshared" 755
 stage usr/share/knotifications6/kuickshare.notifyrc "$share/kuickshare.notifyrc" 644
 stage usr/share/applications/io.github.the_beper.KuickShare.desktop "$share/io.github.the_beper.KuickShare.desktop" 644
 stage usr/share/metainfo/io.github.the_beper.KuickShare.metainfo.xml "$share/io.github.the_beper.KuickShare.metainfo.xml" 644
-stage usr/share/kio/servicemenus/kuickshare-send.desktop "$share/kuickshare-send.desktop" 755
+stage usr/share/kio/servicemenus/kuickshare-send.desktop "$share/kuickshare-send.desktop" 644
 stage usr/share/icons/hicolor/scalable/apps/io.github.the_beper.KuickShare.svg "$share/icons/io.github.the_beper.KuickShare.svg" 644
 stage usr/share/icons/hicolor/symbolic/apps/io.github.the_beper.KuickShare-symbolic.svg "$share/icons/io.github.the_beper.KuickShare-symbolic.svg" 644
 

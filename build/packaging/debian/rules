@@ -19,4 +19,7 @@ override_dh_auto_install:
 
 override_dh_auto_test:
 
+override_dh_dwz:
+	: # same as with dh_strip: the package handles its binaries itself
+
 override_dh_strip:

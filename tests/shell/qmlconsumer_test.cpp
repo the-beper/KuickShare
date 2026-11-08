@@ -28,7 +28,7 @@ public:
 // The stack hosted the way Main.qml hosts it: through the module URI, in an ApplicationWindow of the same document, where its declarative parent (an overlay) and its anchors meet a real window from the start.
 constexpr auto toastsQml = R"QML(
 import QtQuick.Controls
-import io.github.the_beper.KuickShare
+import io.github.the_beper.KuickShareTest
 ApplicationWindow {
     id: win
 
@@ -161,7 +161,7 @@ void QmlConsumerTest::sectionTitleStartsFlushWithTheTop()
     auto window = windowWith(R"QML(
 import QtQuick.Controls
 import QtQuick.Layouts
-import io.github.the_beper.KuickShare
+import io.github.the_beper.KuickShareTest
 ApplicationWindow {
     id: win
 
@@ -203,7 +203,7 @@ void QmlConsumerTest::messageBoxShowsByDefault()
 {
     auto window = windowWith(R"QML(
 import QtQuick.Controls
-import io.github.the_beper.KuickShare
+import io.github.the_beper.KuickShareTest
 ApplicationWindow {
     id: win
 

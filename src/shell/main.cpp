@@ -169,6 +169,9 @@ int main(int argc, char *argv[])
         engine->loadFromModule(QStringLiteral("io.github.the_beper.KuickShare"), QStringLiteral("Main"));
         if (engine->rootObjects().isEmpty())
         {
+            // Qt already says what failed; this says what it means here: the shell stays on the
+            // bus without a window, and every later launch answers through it.
+            qWarning() << "the window could not be created: this launch shows nothing";
             engine.reset();
             return nullptr;
         }
@@ -374,12 +377,18 @@ int main(int argc, char *argv[])
             {
                 QMetaObject::invokeMethod(ensureWindow(), "requestQuit");
             }
+            else
+            {
+                if (!core.transferBusy())
+                {
+                    quitting = true;
+                    app.quit();
+                }
+            }
             return;
         }
         if (other.isSet(device) && queueRefused)
         {
-            // The error is already shown and the expanded files stay queued; nothing is sent,
-            // not even older queue contents.
             showWindow();
             return;
         }
@@ -440,10 +449,7 @@ int main(int argc, char *argv[])
         setupParser(other);
         other.parse(arguments);
         handleArguments(other, workingDirectory); });
-    // `--background` (autostart entry, a restart over an update): the core started in the
-    // CoreBridge constructor owns the background from here on. The shell leaves only after
-    // the core is on the bus: a fresh connection runs the side effects of it (the Dolphin
-    // entry, the autostart). Nothing else here keeps the process going.
+    // `--background` (autostart entry, a restart over an update): the core started in the CoreBridge constructor owns the background from here on. The shell leaves only after the core is on the bus: a fresh connection runs the side effects of it (the Dolphin entry, the autostart). Nothing else here keeps the process going.
     if (parser.isSet(background) && parser.positionalArguments().isEmpty() && !parser.isSet(device)
         && !parser.isSet(openFiles) && !parser.isSet(clipboard) && !parser.isSet(transfer)
         && !parser.isSet(requestQuit))
@@ -455,9 +461,6 @@ int main(int argc, char *argv[])
         }
         else
         {
-            // The Dolphin entry and friends are written inside the first property refresh
-            // after the core connects; then the job here is done. A refresh that never gets
-            // its answer, or an odd core, is covered by the timeout.
             QObject::connect(&core, &CoreBridge::firstPropertiesReady, &app, [&app]
             { app.quit(); }, Qt::SingleShotConnection);
             QTimer::singleShot(10000, &app, [&app]
@@ -473,8 +476,7 @@ int main(int argc, char *argv[])
     // The window outlives the objects its handlers refer to otherwise.
     engine.reset();
     core.setWindowOpen(false, true);
-    // A user quit (`--request-quit`), or a window hidden while "Keep running in the background"
-    // is off, stops the service through its `Quit`.
+    // A user quit (`--request-quit`), or a window hidden while "Keep running in the background" is off, stops the service through its `Quit`.
     if (quitting || stopBackground)
     {
         core.stopService();

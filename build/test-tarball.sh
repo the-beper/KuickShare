@@ -25,7 +25,7 @@ installer=$(ls -d "$work"/src/*/install.sh)
 "$installer" --no-launch >/dev/null
 app=$XDG_DATA_HOME/kuickshare
 [ -x "$app/bin/kuickshare" ] && [ -x "$app/bin/kuickshared" ] || fail "binaries not installed"
-[ -x "$XDG_DATA_HOME/kio/servicemenus/kuickshare-send.desktop" ] || fail "service menu missing or not executable"
+[ -f "$XDG_DATA_HOME/kio/servicemenus/kuickshare-send.desktop" ] || fail "service menu missing"
 # In an Exec line the dollar sign is escaped.
 want=$(printf '%s' "$app/bin/kuickshare" | sed 's/[$]/\\&/g')
 grep -qF "Exec=\"$want\" %F" "$XDG_DATA_HOME/kio/servicemenus/kuickshare-send.desktop" \

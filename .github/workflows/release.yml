@@ -42,7 +42,7 @@ env:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -67,7 +67,7 @@ jobs:
   # changes job may have skipped the packaging jobs.
   ci-gate:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -95,7 +95,7 @@ jobs:
 
   build-appimage:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -145,7 +145,7 @@ jobs:
 
   build-tarball:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -188,7 +188,7 @@ jobs:
 
   build-rpm:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -231,7 +231,7 @@ jobs:
 
   build-deb:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     permissions:
       contents: read
@@ -272,7 +272,7 @@ jobs:
 
   build-arch:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -402,7 +402,7 @@ jobs:
 
   verify:
     needs: [validate, build-appimage, build-tarball, build-rpm, build-deb, build-arch, build-flatpak]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -689,7 +689,7 @@ jobs:
   # ("Re-run failed jobs") after any failure: it does only what is missing.
   publish:
     needs: [validate, ci-gate, verify, finish-flatpak]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: write

@@ -136,7 +136,6 @@ if [ -f "$config/kuickshare/settings.json" ] && grep -Eq '"dolphin_integration"[
     rm -f "$data/kio/servicemenus/kuickshare-send.desktop"
 else
     write_desktop "$src/kuickshare-send.desktop" "$data/kio/servicemenus/kuickshare-send.desktop" "$(exec_quote "$bin/kuickshare") %F"
-    chmod 755 "$data/kio/servicemenus/kuickshare-send.desktop"
 fi
 cp "$src/$appid.metainfo.xml" "$data/metainfo/$appid.metainfo.xml"
 cp "$src/kuickshare.notifyrc" "$data/knotifications6/kuickshare.notifyrc"

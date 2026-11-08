@@ -23,7 +23,7 @@ jobs:
   # Which jobs the change needs (build/ci/changes.sh). Main and manual runs always run everything; a scheduled run runs
   # only `deny`.
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -45,7 +45,7 @@ jobs:
 
   lint:
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -86,7 +86,7 @@ jobs:
   check:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -113,7 +113,7 @@ jobs:
   appimage:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -155,7 +155,7 @@ jobs:
   tarball:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -186,7 +186,7 @@ jobs:
   rpm:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
       contents: read
@@ -216,7 +216,7 @@ jobs:
   deb:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     permissions:
       contents: read
@@ -225,12 +225,13 @@ jobs:
         with:
           persist-credentials: false
 
-      # The ubuntu26 image of images.yml (rustc/cargo of the Ubuntu archive). If it cannot be pulled,
-      # build it from this branch's Containerfile.
       - name: Pull the build image
         run: |
-          if podman pull ghcr.io/the-beper/kuickshare-build:ubuntu26; then
-              podman tag ghcr.io/the-beper/kuickshare-build:ubuntu26 localhost/kuickshare-build:ubuntu26
+          if podman pull ghcr.io/the-beper/kuickshare-build:ubuntu26 \
+              && podman tag ghcr.io/the-beper/kuickshare-build:ubuntu26 localhost/kuickshare-build:ubuntu26 \
+              && podman run --rm localhost/kuickshare-build:ubuntu26 sh -c \
+                  'dpkg -s qml6-module-org-kde-kirigami qml6-module-org-kde-ki18n qml6-module-org-kde-kirigamiaddons-formcard >/dev/null'; then
+              :
           else
               podman build -t localhost/kuickshare-build:ubuntu26 -f build/deb/Containerfile.ubuntu build/deb
           fi
@@ -244,7 +245,7 @@ jobs:
   arch:
     needs: changes
     if: needs.changes.outputs.packaging == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -340,7 +341,7 @@ jobs:
   deny:
     needs: changes
     if: github.event_name == 'schedule' || needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -357,7 +358,7 @@ jobs:
   required:
     if: always()
     needs: [changes, lint, check, appimage, tarball, rpm, deb, arch, flatpak, repo-update, deny]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     env:
