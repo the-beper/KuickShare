@@ -13,7 +13,8 @@ RUN export DEBIAN_FRONTEND=noninteractive \
         libkf6coreaddons-dev libkf6crash-dev libkf6dbusaddons-dev libkf6i18n-dev \
         libkf6jobwidgets-dev libkf6notifications-dev libkf6statusnotifieritem-dev \
         libkirigami-dev \
-        qml6-module-org-kde-kirigami \
+        qml6-module-org-kde-kirigami qml6-module-org-kde-kirigamiaddons-formcard \
+        qml6-module-org-kde-ki18n \
         rustc cargo \
     && rm -rf /var/lib/apt/lists/*
 

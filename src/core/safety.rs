@@ -2,7 +2,7 @@
 //! accepts a transfer. The file-name rule lives in `rqs_lib::safety`, which also applies it when
 //! the files are created, so the core and the library cannot disagree.
 
-pub use rqs_lib::safety::unsafe_file_name;
+pub use rqs_lib::safety::{clean_text, unsafe_file_name};
 
 #[cfg(test)]
 mod tests {

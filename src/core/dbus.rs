@@ -760,13 +760,14 @@ pub struct TransferEvent {
 impl TransferEvent {
     fn from_client(id: &str, client: &MessageClient) -> Self {
         let meta = client.metadata.as_ref();
+        // The text, the preview and the Wi-Fi name are the sender's choice: what is shown and copied is the clean words (see `clean_text`), not the payload as it travels.
         let (files, text) = match meta.and_then(|m| m.payload.as_ref()) {
             Some(TransferPayload::Files(files)) => (files.clone(), String::new()),
             Some(TransferPayload::Text(text) | TransferPayload::Url(text)) => {
-                (Vec::new(), text.clone())
+                (Vec::new(), safety::clean_text(text))
             }
             // Only the network name: the password does not belong in a history file.
-            Some(TransferPayload::Wifi { ssid, .. }) => (Vec::new(), ssid.clone()),
+            Some(TransferPayload::Wifi { ssid, .. }) => (Vec::new(), safety::clean_text(ssid)),
             None => (Vec::new(), String::new()),
         };
         Self {
@@ -786,7 +787,8 @@ impl TransferEvent {
                 .unwrap_or_default(),
             pin: meta.and_then(|m| m.pin_code.clone()).unwrap_or_default(),
             preview: meta
-                .and_then(|m| m.payload_preview.clone())
+                .and_then(|m| m.payload_preview.as_ref())
+                .map(|preview| safety::clean_text(preview))
                 .unwrap_or_default(),
             total_bytes: meta.map_or(0, |m| m.total_bytes),
             ack_bytes: meta.map_or(0, |m| m.ack_bytes),
@@ -1923,6 +1925,7 @@ mod tests {
         TransferState,
         channel::TransferAction,
         hdl::info::{TransferMetadata, TransferPayloadKind},
+        sharing_nearby::wifi_credentials_metadata::SecurityType,
     };
 
     use super::*;
@@ -2482,6 +2485,78 @@ mod tests {
         let info = event.info();
         assert_eq!(info.len(), 16);
         assert_eq!(info["ack_bytes"], Variant::from(40u64));
+    }
+
+    #[test]
+    fn sender_text_and_preview_show_only_what_they_say() {
+        let client = MessageClient {
+            kind: TransferKind::Inbound,
+            state: Some(TransferState::WaitingForUserConsent),
+            metadata: Some(TransferMetadata {
+                id: "t3".into(),
+                source: None,
+                pin_code: None,
+                payload_kind: TransferPayloadKind::Text,
+                payload_preview: Some("Coupon no\u{202E}1337".into()),
+                payload: Some(TransferPayload::Text(
+                    "accept\u{000B}8:00\u{007F}now".into(),
+                )),
+                total_bytes: 0,
+                ack_bytes: 0,
+                saved_paths: Vec::new(),
+                refusal: None,
+            }),
+        };
+        let event = TransferEvent::from_client("t3", &client);
+        // `no\u{202E}1337` shows as `7331on`: the override has no place in a prompt, and a vertical tab or DEL is not a line break either.
+        assert_eq!(event.preview, "Coupon no1337");
+        assert_eq!(event.text, "accept8:00now");
+    }
+
+    #[test]
+    fn the_text_of_a_payload_keeps_its_line_breaks() {
+        let client = MessageClient {
+            kind: TransferKind::Inbound,
+            state: Some(TransferState::WaitingForUserConsent),
+            metadata: Some(TransferMetadata {
+                id: "t4".into(),
+                source: None,
+                pin_code: None,
+                payload_kind: TransferPayloadKind::Text,
+                payload_preview: None,
+                payload: Some(TransferPayload::Text("one\n\ttwo\r\nthree".into())),
+                total_bytes: 0,
+                ack_bytes: 0,
+                saved_paths: Vec::new(),
+                refusal: None,
+            }),
+        };
+        assert_eq!(
+            TransferEvent::from_client("t4", &client).text,
+            "one\n\ttwo\r\nthree"
+        );
+        // The Wi-Fi name goes through the same rule; the join reads the store, not the event.
+        let wifi = MessageClient {
+            kind: TransferKind::Inbound,
+            state: Some(TransferState::Finished),
+            metadata: Some(TransferMetadata {
+                id: "t5".into(),
+                source: None,
+                pin_code: None,
+                payload_kind: TransferPayloadKind::WiFi,
+                payload_preview: None,
+                payload: Some(TransferPayload::Wifi {
+                    ssid: "h\u{202A}ome".into(),
+                    password: "never shown".into(),
+                    security_type: SecurityType::WpaPsk,
+                }),
+                total_bytes: 0,
+                ack_bytes: 0,
+                saved_paths: Vec::new(),
+                refusal: None,
+            }),
+        };
+        assert_eq!(TransferEvent::from_client("t5", &wifi).text, "home");
     }
 
     #[test]
