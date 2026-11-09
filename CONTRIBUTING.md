@@ -140,20 +140,11 @@ build/build-env.sh po/extract.sh
 
 This rebuilds `po/kuickshare.pot` from the files in `po/POTFILES.in` and merges it into `po/<language>.po` for each code in `po/LINGUAS`. A new language is a new `po/<language>.po` plus its code in `po/LINGUAS`.
 
-The maintainer's `.claude/` setup has a `translator` agent that fills the new entries (see [Claude Code helpers](#claude-code-helpers)).
+The maintainer's Claude Code setup has a `translator` agent and an `/update-translations` skill that fill the new entries with `scripts/po.py` (see [Claude Code helpers](#claude-code-helpers)).
 
 ## Claude Code helpers
 
-`.claude/` holds the maintainer's [Claude Code](https://claude.com/claude-code) setup; contributors can ignore it. Details in [`.claude/CLAUDE.md`](.claude/CLAUDE.md).
-
-| Kind | Name | Purpose |
-|---|---|---|
-| Agent | `translator` | Fills the pending entries of `po/*.po` |
-| Agent | `phone-log-analyzer` | Reads a hand-test session in `dist/logs` |
-| Agent | `rqs-reviewer` | Reviews changes to the Bluetooth and Wi-Fi transfer code |
-| Skill | `check` | Runs every check of [Checks](#checks) |
-| Skill | `update-translations` | Regenerates the catalogs and runs `translator` |
-| Skill | `phone-test` | Guides and analyses a hand test with the phones |
+The maintainer's [Claude Code](https://claude.com/claude-code) setup is in `.claude/` (git-ignored) and in their global `~/.claude`, so none of it is in a clone and contributors can ignore it. Its translation tooling, `scripts/po.py`, is in the repository.
 
 ## Releases
 
