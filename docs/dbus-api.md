@@ -145,6 +145,7 @@ All properties are read-write except `VisibleUntil`, `InsecureHotspotAllowed`, `
 | `Version` | `s` | the package version | no | Read-only. A shell of another version quits an idle core that reports a different one (see [who starts whom](architecture.md#who-starts-whom)) |
 | `HistoryEnabled` | `b` | `true` | yes | Off: new transfers are not recorded (`history_uid` stays 0); entries already saved stay |
 | `HistoryKeepDays` | `u` | `0` (keep for ever) | yes | Entries older than this are deleted, immediately and each time the history is read or written |
+| `HideHistoryFilters` | `b` | `false` | yes | Stored only; the shell hides the search filters of the history list |
 | `TrayIcon` | `b` | `true` | yes | Whether the service shows the tray item at all (the shell's "Keep running in the background" switch); off keeps the item Passive |
 | `DolphinIntegration` | `b` | `true` | yes | Stored only; the shell adds or removes the Dolphin entry |
 | `TrustedDevicesEnabled` | `b` | `true` | yes | Whether the [always-accepted list](#always-accepted-devices) is honoured |
@@ -370,7 +371,7 @@ The core now owns the desktop legs (tray, notifications, Do Not Disturb), so the
 
 `tests/core/dbus_api.rs` runs the daemon on a private bus and checks:
 
-- default values of `Visible`, `HistoryEnabled`, `TrayIcon`, `DolphinIntegration`, `TrustedDevicesEnabled`, `WifiUpgrade`, `HistoryKeepDays`, and that `History` and `AllowedDevices` start as `[]`
+- default values of `Visible`, `HistoryEnabled`, `TrayIcon`, `DolphinIntegration`, `TrustedDevicesEnabled`, `WifiUpgrade`, `HistoryKeepDays`, `HideHistoryFilters`, and that `History` and `AllowedDevices` start as `[]`
 - history and integration properties take effect and are written to `settings.json`
 - `ResetSettings` restores defaults, including a renamed device and `Visible`
 - history retention removes old entries from the answer and from the file; `HistorySize`, `RemoveHistory` and `ClearHistory` work; entries without `uid` get one

@@ -45,6 +45,7 @@ class CoreBridge : public QObject
     Q_PROPERTY(bool trustedDevicesEnabled READ trustedDevicesEnabled WRITE setTrustedDevicesEnabled NOTIFY trustedDevicesEnabledChanged)
     /// The trusted devices of an older version were removed and the user has not been told yet (the core keeps this until `acknowledgeTrustedDevicesReset`).
     Q_PROPERTY(bool trustedDevicesReset READ trustedDevicesReset NOTIFY trustedDevicesResetChanged)
+    Q_PROPERTY(bool hideHistoryFilters READ hideHistoryFilters WRITE setHideHistoryFilters NOTIFY hideHistoryFiltersChanged)
     Q_PROPERTY(bool trayIcon READ trayIcon WRITE setTrayIcon NOTIFY trayIconChanged)
     Q_PROPERTY(bool wifiUpgrade READ wifiUpgrade WRITE setWifiUpgrade NOTIFY wifiUpgradeChanged)
     /// The user allowed the computer's hotspot to use an open firewall zone for this session (the core forgets it at restart).
@@ -84,6 +85,7 @@ public:
     bool autostart() const { return m_autostart; }
     bool hideWhenDnd() const { return m_hideWhenDnd; }
     bool historyEnabled() const { return m_historyEnabled; }
+    bool hideHistoryFilters() const { return m_hideHistoryFilters; }
     bool trayIcon() const { return m_trayIcon; }
     QString version() const { return QStringLiteral(KUICKSHARE_VERSION); }
     /// The versions of the libraries this app is running with (the system's, not the build container's).
@@ -118,6 +120,7 @@ public:
     void setAutostart(bool enabled);
     void setHideWhenDnd(bool hide);
     void setHistoryEnabled(bool enabled);
+    void setHideHistoryFilters(bool hide);
     void setTrayIcon(bool show);
     void setTrustedDevicesEnabled(bool enabled);
     /// The same as `requestWifiUpgrade(enabled, false)`: nothing is shown as changed until the core confirms it.
@@ -251,6 +254,7 @@ Q_SIGNALS:
     void autostartChanged();
     void hideWhenDndChanged();
     void historyEnabledChanged();
+    void hideHistoryFiltersChanged();
     void trayIconChanged();
     void trustedDevicesEnabledChanged();
     void trustedDevicesResetChanged();
@@ -344,6 +348,7 @@ private:
     bool m_autostart = false;
     bool m_hideWhenDnd = true;
     bool m_historyEnabled = true;
+    bool m_hideHistoryFilters = false;
     // Off until the core says otherwise: the tray icon stays hidden meanwhile.
     bool m_trayIcon = false;
     bool m_wifiUpgrade = false;

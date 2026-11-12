@@ -127,6 +127,14 @@ CoreBridge::CoreBridge(QObject *parent)
     bus.connect(service, path, QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("PropertiesChanged"), this, SLOT(onPropertiesChanged(QString, QVariantMap, QStringList)));
     bus.connect(service, path, iface, QStringLiteral("TrustedChanged"), this, SLOT(loadTrustedDevices()));
 
+    // Hidden filters must not keep narrowing the list, and the page that shows them may not exist when this changes. The search text stays: its field is still shown.
+    connect(this, &CoreBridge::hideHistoryFiltersChanged, this, [this] {
+        if (m_hideHistoryFilters) {
+            m_filteredTransfers.setDirection(QStringLiteral("all"));
+            m_filteredTransfers.setStatus(QStringLiteral("all"));
+        }
+    });
+
     auto *watcher = new QDBusServiceWatcher(service, bus, QDBusServiceWatcher::WatchForOwnerChange, this);
     connect(watcher, &QDBusServiceWatcher::serviceRegistered, this, &CoreBridge::onServiceRegistered);
     connect(watcher, &QDBusServiceWatcher::serviceUnregistered, this, &CoreBridge::onServiceUnregistered);
@@ -526,6 +534,9 @@ void CoreBridge::refreshProperties()
         const bool keepChanged = keepDays != m_historyKeepDays;
         m_historyEnabled = historyEnabled;
         m_historyKeepDays = keepDays;
+        const bool hideFilters = props.value(QStringLiteral("HideHistoryFilters"), m_hideHistoryFilters).toBool();
+        const bool hideFiltersChanged = hideFilters != m_hideHistoryFilters;
+        m_hideHistoryFilters = hideFilters;
         const bool tray = props.value(QStringLiteral("TrayIcon"), m_trayIcon).toBool();
         const bool dolphin = props.value(QStringLiteral("DolphinIntegration"), m_dolphinIntegration).toBool();
         const bool trusted = props.value(QStringLiteral("TrustedDevicesEnabled"), m_trustedDevicesEnabled).toBool();
@@ -571,6 +582,9 @@ void CoreBridge::refreshProperties()
         }
         if (historyChanged) {
             emit historyEnabledChanged();
+        }
+        if (hideFiltersChanged) {
+            emit hideHistoryFiltersChanged();
         }
         if (trayChanged) {
             emit trayIconChanged();
@@ -1281,6 +1295,16 @@ void CoreBridge::setHistoryEnabled(bool enabled)
     m_historyEnabled = enabled;
     emit historyEnabledChanged();
     setRemoteProperty(QStringLiteral("HistoryEnabled"), enabled);
+}
+
+void CoreBridge::setHideHistoryFilters(bool hide)
+{
+    if (hide == m_hideHistoryFilters) {
+        return;
+    }
+    m_hideHistoryFilters = hide;
+    emit hideHistoryFiltersChanged();
+    setRemoteProperty(QStringLiteral("HideHistoryFilters"), hide);
 }
 
 void CoreBridge::setTrayIcon(bool show)

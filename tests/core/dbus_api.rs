@@ -225,6 +225,7 @@ async fn starts_with_the_default_settings() {
     assert!(daemon.get::<bool>("DolphinIntegration").await);
     assert!(daemon.get::<bool>("TrustedDevicesEnabled").await);
     assert!(!daemon.get::<bool>("WifiUpgrade").await);
+    assert!(!daemon.get::<bool>("HideHistoryFilters").await);
     assert_eq!(daemon.get::<u32>("HistoryKeepDays").await, 0);
     assert_eq!(daemon.json("History").await, serde_json::json!([]));
     assert_eq!(daemon.json("AllowedDevices").await, serde_json::json!([]));
@@ -303,6 +304,7 @@ async fn integration_settings_are_applied_and_saved() {
     let daemon = Daemon::start("integration", None).await;
 
     daemon.set("TrayIcon", Variant::from(false)).await;
+    daemon.set("HideHistoryFilters", Variant::from(true)).await;
     daemon.set("DolphinIntegration", Variant::from(false)).await;
     daemon
         .set("TrustedDevicesEnabled", Variant::from(false))
@@ -316,6 +318,7 @@ async fn integration_settings_are_applied_and_saved() {
     let saved: serde_json::Value =
         serde_json::from_str(&daemon.file("config/kuickshare/settings.json")).unwrap();
     assert_eq!(saved["tray_icon"], false);
+    assert_eq!(saved["hide_history_filters"], true);
     assert_eq!(saved["dolphin_integration"], false);
     assert_eq!(saved["trusted_devices"], false);
     assert_eq!(saved["wifi_upgrade"], true);
@@ -327,6 +330,7 @@ async fn resetting_the_settings_restores_the_defaults() {
     daemon.set("HistoryEnabled", Variant::from(false)).await;
     daemon.set("HistoryKeepDays", Variant::from(90u32)).await;
     daemon.set("TrayIcon", Variant::from(false)).await;
+    daemon.set("HideHistoryFilters", Variant::from(true)).await;
     daemon.set("Visible", Variant::from(false)).await;
     daemon.set("DeviceName", Variant::from("Renamed")).await;
 
@@ -335,6 +339,7 @@ async fn resetting_the_settings_restores_the_defaults() {
     assert!(daemon.get::<bool>("HistoryEnabled").await);
     assert_eq!(daemon.get::<u32>("HistoryKeepDays").await, 0);
     assert!(daemon.get::<bool>("TrayIcon").await);
+    assert!(!daemon.get::<bool>("HideHistoryFilters").await);
     assert!(daemon.get::<bool>("Visible").await);
     assert_ne!(daemon.get::<String>("DeviceName").await, "Renamed");
     let saved: serde_json::Value =

@@ -390,6 +390,14 @@ FormCard.FormCardPage {
                 }
             }
         }
+        FormCard.FormSwitchDelegate {
+            icon.name: "view-filter"
+            text: KI18n.i18n("Hide history filters")
+            description: KI18n.i18n("Show only the search field above the list of transfers")
+            checked: page.core.hideHistoryFilters
+            enabled: page.core.connected
+            onToggled: page.core.hideHistoryFilters = checked
+        }
     }
     FormCard.FormSectionText {
         Layout.bottomMargin: 0

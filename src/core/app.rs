@@ -737,6 +737,11 @@ impl Core {
         self.nm.hotspot_policy() == HotspotPolicy::AllowOpenZone
     }
 
+    pub fn set_hide_history_filters(&mut self, hide: bool) {
+        self.settings.hide_history_filters = hide;
+        self.save();
+    }
+
     pub fn set_tray_icon(&mut self, show: bool) {
         self.settings.tray_icon = show;
         self.save();

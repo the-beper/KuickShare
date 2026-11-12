@@ -35,6 +35,7 @@ XML = """<node><interface name="@IFACE@">
 <property name="HistoryEnabled" type="b" access="readwrite"/>
 <property name="HistoryKeepDays" type="u" access="readwrite"/>
 <property name="TrustedDevicesEnabled" type="b" access="readwrite"/>
+<property name="HideHistoryFilters" type="b" access="readwrite"/>
 <property name="TrayIcon" type="b" access="readwrite"/>
 <property name="DolphinIntegration" type="b" access="readwrite"/>
 <property name="HideWhenDnd" type="b" access="readwrite"/>
@@ -53,6 +54,7 @@ props = {
     "StaticPort": V("u", 0), "Visible": V("b", True), "HistoryEnabled": V("b", True),
     "HistoryKeepDays": V("u", 30), "TrustedDevicesEnabled": V("b", True), "TrayIcon": V("b", True),
     "DolphinIntegration": V("b", True), "HideWhenDnd": V("b", True), "Suspended": V("b", False),
+    "HideHistoryFilters": V("b", False),
 }
 
 DEVICES = [
