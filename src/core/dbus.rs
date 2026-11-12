@@ -408,6 +408,17 @@ impl Service {
         self.core.lock().await.set_history_keep_days(days);
     }
 
+    /// Whether the shell hides the filters of the history list.
+    #[zbus(property)]
+    async fn hide_history_filters(&self) -> bool {
+        self.core.lock().await.settings().hide_history_filters
+    }
+
+    #[zbus(property)]
+    async fn set_hide_history_filters(&self, hide: bool) {
+        self.core.lock().await.set_hide_history_filters(hide);
+    }
+
     /// While open, other KuickShare computers can start a pairing with this one.
     async fn set_pairing(&self, open: bool) {
         self.core.lock().await.trust().set_pairing(open);
@@ -579,6 +590,7 @@ impl Service {
         }
         let _ = self.history_enabled_changed(&emitter).await;
         let _ = self.history_keep_days_changed(&emitter).await;
+        let _ = self.hide_history_filters_changed(&emitter).await;
         let _ = self.trusted_devices_enabled_changed(&emitter).await;
         let _ = self.wifi_upgrade_changed(&emitter).await;
         let _ = self.insecure_hotspot_allowed_changed(&emitter).await;

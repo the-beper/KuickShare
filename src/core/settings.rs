@@ -29,6 +29,8 @@ pub struct Settings {
     pub history_enabled: bool,
     /// History entries older than this many days are deleted (0 keeps them).
     pub history_keep_days: u32,
+    /// The shell hides the search filters of the history list.
+    pub hide_history_filters: bool,
     /// Without the tray icon, closing the window quits the app.
     pub tray_icon: bool,
     pub dolphin_integration: bool,
@@ -56,6 +58,7 @@ impl Default for Settings {
             allowed_devices: Vec::new(),
             history_enabled: true,
             history_keep_days: 0,
+            hide_history_filters: false,
             tray_icon: true,
             dolphin_integration: true,
             trusted_devices: true,
@@ -163,6 +166,7 @@ mod tests {
             }],
             history_enabled: false,
             history_keep_days: 30,
+            hide_history_filters: true,
             tray_icon: false,
             dolphin_integration: false,
             trusted_devices: false,

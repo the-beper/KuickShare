@@ -52,6 +52,7 @@ Kirigami.ScrollablePage {
             }
 
             RowLayout {
+                visible: !page.core.hideHistoryFilters
                 spacing: Kirigami.Units.smallSpacing
                 Layout.fillWidth: true
                 Layout.preferredHeight: bar.controlHeight
@@ -109,6 +110,7 @@ Kirigami.ScrollablePage {
             QQC2.Button {
                 id: resetButton
 
+                visible: !page.core.hideHistoryFilters
                 Layout.preferredWidth: bar.buttonWidth
                 Layout.preferredHeight: bar.controlHeight
                 text: KI18n.i18n("Reset Filters")

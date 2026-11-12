@@ -263,7 +263,7 @@ Kirigami.ScrollablePage {
                     text: page.dragging ? KI18n.i18n("Drop to share") : KI18n.i18n("Drop files here")
                     explanation: KI18n.i18n("Or click to choose them")
                     helpfulAction: Kirigami.Action {
-                        icon.name: "edit-paste"
+                        icon.name: "edit-paste-in-place"
                         text: KI18n.i18n("Paste from Clipboard")
                         enabled: page.core.clipboardHasFiles
                         onTriggered: page.pasteFiles()
@@ -291,7 +291,7 @@ Kirigami.ScrollablePage {
                         onClicked: fileDialog.open()
                     }
                     QQC2.Button {
-                        icon.name: "edit-clear-all"
+                        icon.name: "edit-clear-symbolic"
                         text: KI18n.i18nc("@action:button remove all files from the list to send", "Clear")
                         onClicked: page.filesCleared()
                     }
@@ -338,24 +338,25 @@ Kirigami.ScrollablePage {
                         text: KI18n.i18n("Text or Link")
                         Layout.fillWidth: true
                     }
-                    // Always laid out (just hidden), so the card does not change height while typing.
                     QQC2.Button {
-                        opacity: textField.text.length > 0 ? 1 : 0
-                        Behavior on opacity {
-                            NumberAnimation {
-                                duration: Kirigami.Units.shortDuration
-                            }
-                        }
+                        display: QQC2.AbstractButton.IconOnly
                         enabled: textField.text.length > 0
-                        icon.name: "edit-clear-all"
+                        icon.name: "edit-clear-symbolic"
                         text: KI18n.i18nc("@action:button empty the text box", "Clear")
+                        QQC2.ToolTip.visible: hovered || visualFocus
+                        QQC2.ToolTip.text: text
+                        QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                         onClicked: textField.clear()
                     }
                     // Text only: a copied image or file is pasted with the button of the card above
                     QQC2.Button {
-                        icon.name: "edit-paste"
+                        display: QQC2.AbstractButton.IconOnly
+                        icon.name: "edit-paste-symbolic"
                         text: KI18n.i18nc("@action:button paste text from the clipboard", "Paste")
                         enabled: page.core.clipboardHasText
+                        QQC2.ToolTip.visible: hovered || visualFocus
+                        QQC2.ToolTip.text: text
+                        QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                         onClicked: page.pasteText()
                     }
                 }
@@ -409,25 +410,28 @@ Kirigami.ScrollablePage {
 
                     // Always shown. A single link can go either way (off = as a link). Without a valid
                     // link, or with more content around it, it can only go as text: on and locked, and the
-                    // reason is written on the same row, against the right edge (not only in a tooltip).
+                    // reason is behind a help button next to the checkbox, which is always there and only enabled while there is a reason, so the row does not change size.
                     QQC2.CheckBox {
                         id: asTextBox
+
+                        readonly property string lockReason: textField.length === 0 || page.singleLink ? "" : page.startsWithLink ? KI18n.i18n("A string can only be sent as a link when it is the only content") : KI18n.i18n("No valid link")
 
                         text: KI18n.i18n("Send as text")
                         checked: !page.singleLink || page.sendAsText
                         enabled: page.singleLink
-                        Accessible.description: lockReason.text
+                        Accessible.description: lockReason
                         onToggled: page.sendAsText = checked
                     }
-                    QQC2.Label {
-                        id: lockReason
-
-                        text: page.singleLink ? "" : page.startsWithLink ? KI18n.i18n("A string can only be sent as a link when it is the only content") : KI18n.i18n("No valid link")
-                        opacity: 0.7
-                        wrapMode: Text.Wrap
-                        horizontalAlignment: Text.AlignRight
+                    Kirigami.ContextualHelpButton {
+                        enabled: asTextBox.lockReason.length > 0
+                        // Its tooltip also opens on hover, which a disabled button would show empty.
+                        hoverEnabled: enabled
+                        // A popup left open would stay with nothing to say.
+                        onEnabledChanged: if (!enabled) toolTipVisible = false
+                        toolTipText: asTextBox.lockReason
+                    }
+                    Item {
                         Layout.fillWidth: true
-                        Layout.rightMargin: Kirigami.Units.smallSpacing
                     }
                     // How many characters out of the limit, in yellow, only when it is getting close
                     QQC2.Label {
