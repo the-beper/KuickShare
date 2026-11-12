@@ -71,6 +71,22 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.8.2" date="2026-11-12">
+      <description>
+        <p>Better Bluetooth and Wi-Fi transfers with phones, and a history option</p>
+        <ul>
+          <li>Sending to a phone over Bluetooth tries GATT when the L2CAP connection fails before any data is sent, if there is still time left</li>
+          <li>Receiving from a phone over Bluetooth can use the Wi-Fi network you are already on, when the phone supports it; the hotspot remains the fallback</li>
+          <li>Joining the phone's Wi-Fi network uses the band and channel the phone advertises</li>
+          <li>Phones with a limited Bluetooth advertising capacity can be found when sending</li>
+          <li>A transfer sent to a device shows at once as Starting in the list</li>
+          <li>Repeated transfers to the same device are listed as separate rows</li>
+          <li>New setting to hide the history filters, leaving only the search field</li>
+          <li>Send as text: the reason why the option is locked is behind a help button next to the checkbox</li>
+          <li>Clear and Paste buttons of the text card show only an icon, with a tooltip</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.8.1" date="2026-11-08">
       <description>
         <p>Text from other applications is shown clean of invisible characters</p>
