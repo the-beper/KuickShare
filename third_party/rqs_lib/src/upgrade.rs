@@ -18,7 +18,7 @@ use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::{Instant, timeout};
 
 use crate::location_nearby_connections::bandwidth_upgrade_negotiation_frame::upgrade_path_info::{
-    Medium, WifiHotspotCredentials,
+    Medium, WifiHotspotCredentials, WifiLanSocket,
 };
 use crate::location_nearby_connections::bandwidth_upgrade_negotiation_frame::{
     ClientIntroduction, ClientIntroductionAck, EventType, UpgradePathInfo,
@@ -60,7 +60,36 @@ impl std::fmt::Debug for WifiCredentials {
 pub trait WifiLink: Send + Sync {
     /// Receiving: bring up an access point with DHCP and return its credentials.
     /// `port` is the TCP port the caller will listen on; it is copied into the result.
-    fn host(&self, port: u16) -> BoxFuture<'_, io::Result<WifiCredentials>>;
+    fn host(
+        &self,
+        port: u16,
+        peer_5ghz: Option<bool>,
+    ) -> BoxFuture<'_, io::Result<WifiCredentials>>;
+
+    /// `None` if NM cannot identify the adapter's bands (legacy default is true).
+    fn supports_5ghz(&self) -> BoxFuture<'_, Option<bool>> {
+        Box::pin(async { None })
+    }
+
+    /// Receiving: the address of the existing LAN to offer, `None` if there is no suitable one.
+    /// The caller binds its listener to this address.
+    fn lan_address(&self) -> BoxFuture<'_, Option<Ipv4Addr>> {
+        Box::pin(async { None })
+    }
+
+    /// Receiving: let the peer reach `port` (the caller's listener, bound to `ip` from
+    /// `lan_address`) without changing the active Wi-Fi connection. `Ok(false)`: not allowed
+    /// here, nothing was changed; offer the hotspot instead. `Ok(true)` holds a lease which
+    /// `release` closes; `close_lan` ends it early. After an error the caller calls `release`.
+    fn host_lan(&self, _ip: Ipv4Addr, _port: u16) -> BoxFuture<'_, io::Result<bool>> {
+        Box::pin(async { Ok(false) })
+    }
+
+    /// Closes the port `host_lan` opened, once the peer is connected or the offer is over. The
+    /// lease itself stays until `release`. Safe to call twice.
+    fn close_lan(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
 
     /// Sending: join the network the phone hosts. Returns our IPv4 address on it,
     /// so the TCP connection can be bound to that interface.
@@ -76,6 +105,12 @@ pub trait WifiLink: Send + Sync {
 
 /// How long the host waits for the peer to join and connect (the peer has to join a Wi-Fi first).
 pub const ACCEPT_TIMEOUT: Duration = Duration::from_secs(30);
+/// As `ACCEPT_TIMEOUT` for a LAN offer: a peer on the same network connects at once, so a
+/// longer wait only delays the hotspot fallback.
+/// The firewall is reached over D-Bus and may need polkit: it must not hold the session up.
+const CLOSE_LAN_TIMEOUT: Duration = Duration::from_secs(2);
+
+pub const LAN_ACCEPT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Host side: bound for `WifiLink::host`.
 pub const HOST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Client side: bound for `WifiLink::join`.
@@ -195,6 +230,26 @@ pub fn path_available_frame(creds: &WifiCredentials, disable_encryption: bool) -
     })
 }
 
+/// Offer an existing LAN address. The peer can use the same introduction, ACK and drain
+/// protocol as for a hotspot; the listener must accept at this address, not at a VPN endpoint.
+pub fn lan_path_available_frame(ip: Ipv4Addr, port: u16, disable_encryption: bool) -> OfflineFrame {
+    let info = UpgradePathInfo {
+        medium: Some(Medium::WifiLan.into()),
+        wifi_lan_socket: Some(WifiLanSocket {
+            ip_address: Some(ip.octets().to_vec()),
+            wifi_port: Some(i32::from(port)),
+        }),
+        supports_client_introduction_ack: Some(true),
+        supports_disabling_encryption: disable_encryption.then_some(true),
+        ..Default::default()
+    };
+    bwu_offline_frame(BandwidthUpgradeNegotiationFrame {
+        event_type: Some(EventType::UpgradePathAvailable.into()),
+        upgrade_path_info: Some(info),
+        ..Default::default()
+    })
+}
+
 pub fn upgrade_failure_frame(info: Option<UpgradePathInfo>) -> OfflineFrame {
     bwu_offline_frame(BandwidthUpgradeNegotiationFrame {
         event_type: Some(EventType::UpgradeFailure.into()),
@@ -246,8 +301,15 @@ pub fn parse_bwu(frame: &OfflineFrame) -> Option<&BandwidthUpgradeNegotiationFra
         .and_then(|v| v.bandwidth_upgrade_negotiation.as_ref())
 }
 
-/// Whether the peer's ConnectionRequest allows a hotspot upgrade. An empty list is
-/// treated as "unknown" and does not forbid it.
+/// Only an explicit WIFI_LAN capability can select a LAN offer over BLE. Empty mediums are
+/// ambiguous: keep the already-established hotspot fallback for them.
+pub fn peer_allows_lan(mediums: &[i32]) -> bool {
+    mediums.contains(
+        &(crate::location_nearby_connections::connection_request_frame::Medium::WifiLan as i32),
+    )
+}
+
+/// An empty list is unknown and must not disable the previous hotspot behavior.
 pub fn peer_allows_hotspot(mediums: &[i32]) -> bool {
     mediums.is_empty()
         || mediums.contains(
@@ -286,6 +348,18 @@ fn has_event(frame: &OfflineFrame, event: EventType) -> bool {
 
 /// Connections read concurrently while waiting for the peer; more are dropped.
 const MAX_PENDING_INTRO: usize = 16;
+/// Wrong introductions after which the offer is given up. The endpoint id has 4 characters and
+/// travels in clear in the BLE ConnectionRequest, so a host on the network can guess or sniff it.
+const MAX_WRONG_INTRO: usize = 3;
+
+/// What `introduce` made of a connection.
+enum Introduction {
+    Peer(TcpStream),
+    /// A well-formed frame, but not the introduction we wait for.
+    Wrong,
+    /// Wrong address, silence or junk: not counted.
+    Dropped,
+}
 
 /// A new connection is the peer only if it reached the advertised address and sends a
 /// plaintext CLIENT_INTRODUCTION carrying the endpoint id from its ConnectionRequest.
@@ -296,24 +370,24 @@ async fn introduce(
     endpoint_id: &str,
     gateway: Ipv4Addr,
     offered_disabling: bool,
-) -> Option<TcpStream> {
+) -> Introduction {
     let reached = stream.local_addr().ok().map(|a| a.ip());
     if !gateway.is_unspecified() && reached != Some(gateway.into()) {
         warn!("upgrade: dropping connection from {peer} (wrong local address)");
-        return None;
+        return Introduction::Dropped;
     }
     let frame = match timeout(INTRO_TIMEOUT, read_plain_frame(&mut stream)).await {
         Ok(Ok(f)) => f,
         _ => {
             warn!("upgrade: dropping connection from {peer} (no valid frame)");
-            return None;
+            return Introduction::Dropped;
         }
     };
     let intro = parse_bwu(&frame).filter(|b| b.event_type() == EventType::ClientIntroduction);
     let intro = intro.and_then(|b| b.client_introduction.as_ref());
     if intro.and_then(|i| i.endpoint_id.as_deref()) != Some(endpoint_id) {
         warn!("upgrade: dropping connection from {peer} (not the expected peer)");
-        return None;
+        return Introduction::Wrong;
     }
     let stated = intro.is_some_and(|i| i.supports_disabling_encryption());
     if stated != offered_disabling {
@@ -322,15 +396,17 @@ async fn introduce(
              we offered {offered_disabling}; using ours"
         );
     }
-    stream.set_nodelay(true).ok()?;
+    if stream.set_nodelay(true).is_err() {
+        return Introduction::Dropped;
+    }
     info!("upgrade: peer {peer} introduced itself");
-    Some(stream)
+    Introduction::Peer(stream)
 }
 
 /// Host side: accepts connections until one is the expected peer (see `introduce`).
 /// Connections are read concurrently, so a silent one does not delay the real peer; the
-/// first valid one wins and the others are dropped. The caller bounds the total wait and
-/// sends the ACK.
+/// first valid one wins and the others are dropped. After `MAX_WRONG_INTRO` wrong introductions
+/// it fails. The caller bounds the total wait and sends the ACK.
 pub async fn accept_introduced(
     listener: TcpListener,
     endpoint_id: String,
@@ -338,6 +414,7 @@ pub async fn accept_introduced(
     offered_disabling: bool,
 ) -> io::Result<TcpStream> {
     let mut pending = JoinSet::new();
+    let mut wrong = 0;
     loop {
         tokio::select! {
             accepted = listener.accept() => {
@@ -350,8 +427,15 @@ pub async fn accept_introduced(
                 pending.spawn(async move { introduce(stream, peer, &endpoint_id, gateway, offered_disabling).await });
             }
             Some(done) = pending.join_next() => {
-                if let Ok(Some(stream)) = done {
-                    return Ok(stream);
+                match done {
+                    Ok(Introduction::Peer(stream)) => return Ok(stream),
+                    Ok(Introduction::Wrong) => {
+                        wrong += 1;
+                        if wrong >= MAX_WRONG_INTRO {
+                            return Err(io::Error::other("too many wrong introductions"));
+                        }
+                    }
+                    Ok(Introduction::Dropped) | Err(_) => {}
                 }
             }
         }
@@ -465,6 +549,8 @@ enum Phase {
 pub enum Prepared {
     /// Receiver: hotspot is up, listener is bound.
     Hosted(WifiCredentials, TcpListener),
+    /// Receiver: existing LAN is unchanged, and an ephemeral listener is accepting on it.
+    HostedLan(Ipv4Addr, TcpListener),
     /// Sender: joined, connected and introduced.
     Joined(TcpStream),
 }
@@ -480,12 +566,76 @@ fn is_link_busy(e: &anyhow::Error) -> bool {
 pub async fn prepare_host(
     link: Arc<dyn WifiLink>,
     listener: TcpListener,
+    peer_5ghz: Option<bool>,
 ) -> anyhow::Result<Prepared> {
     let port = listener.local_addr()?.port();
-    let creds = timeout(HOST_TIMEOUT, link.host(port))
+    let creds = timeout(HOST_TIMEOUT, link.host(port, peer_5ghz))
         .await
         .context("hosting the hotspot timed out")??;
     Ok(Prepared::Hosted(creds, listener))
+}
+
+/// Receiver: binds a listener on every address and brings the hotspot up for it.
+async fn host_hotspot(
+    link: Arc<dyn WifiLink>,
+    peer_5ghz: Option<bool>,
+) -> anyhow::Result<Prepared> {
+    let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
+        .await
+        .context("binding the upgrade listener")?;
+    prepare_host(link, listener, peer_5ghz).await
+}
+
+/// Receiver: a listener bound to the LAN address, with its port open. `None` if the LAN cannot
+/// be offered (no address, or `host_lan` refused).
+async fn prepare_lan(link: &Arc<dyn WifiLink>) -> anyhow::Result<Option<Prepared>> {
+    let Some(ip) = timeout(HOST_TIMEOUT, link.lan_address())
+        .await
+        .ok()
+        .flatten()
+    else {
+        return Ok(None);
+    };
+    let listener = TcpListener::bind((ip, 0))
+        .await
+        .with_context(|| format!("binding the upgrade listener to {ip}"))?;
+    let port = listener.local_addr()?.port();
+    let opened = match timeout(HOST_TIMEOUT, link.host_lan(ip, port)).await {
+        Ok(Ok(opened)) => opened,
+        Ok(Err(e)) => {
+            // The link serving another session is not ours to release.
+            if e.kind() != io::ErrorKind::WouldBlock {
+                link.release().await;
+            }
+            return Err(e.into());
+        }
+        Err(_) => {
+            link.release().await;
+            bail!("preparing the LAN port timed out");
+        }
+    };
+    Ok(opened.then_some(Prepared::HostedLan(ip, listener)))
+}
+
+/// Receiver: prefer the existing LAN only when the peer explicitly supports WIFI_LAN; when no
+/// suitable LAN is available, or the LAN cannot be prepared, use the established hotspot path.
+pub async fn prepare_inbound(
+    link: Arc<dyn WifiLink>,
+    lan_allowed: bool,
+    hotspot_allowed: bool,
+    peer_5ghz: Option<bool>,
+) -> anyhow::Result<Prepared> {
+    if lan_allowed {
+        match prepare_lan(&link).await {
+            Ok(Some(prepared)) => return Ok(prepared),
+            Ok(None) => info!("upgrade: no LAN can be offered"),
+            Err(e) => warn!("upgrade: the LAN offer is not possible ({e:#})"),
+        }
+    }
+    if !hotspot_allowed {
+        bail!("no suitable LAN address, and the peer did not allow WIFI_HOTSPOT");
+    }
+    host_hotspot(link, peer_5ghz).await
 }
 
 /// Sender: joins the offered network and introduces itself to the host.
@@ -529,11 +679,16 @@ pub struct UpgradeState {
     peer_endpoint_id: Option<String>,
     /// An upgrade was started or given up on; no second try in the same session.
     attempted: bool,
+    /// The offer in `Waiting` (or the last one made) is a LAN one: if it fails, the hotspot is
+    /// offered once, if the peer allows it.
+    lan_offered: bool,
     /// Sender: payload is held back until the upgrade is settled.
     holding: bool,
     /// `host` or `join` was called and `release` is still due.
     link_used: bool,
     hotspot_allowed: bool,
+    lan_allowed: bool,
+    peer_5ghz: Option<bool>,
     /// Peer hand-over events that arrived before our own new stream was ready (the peer
     /// can be faster than the background `join`, most of all on a fast first channel).
     early: Handover,
@@ -559,9 +714,12 @@ impl UpgradeState {
             phase: Phase::Idle,
             deadline: None,
             attempted: false,
+            lan_offered: false,
             holding: false,
             link_used: false,
             hotspot_allowed: true,
+            lan_allowed: false,
+            peer_5ghz: None,
             early: Handover::default(),
             disable_encryption: false,
         }
@@ -585,6 +743,15 @@ impl UpgradeState {
 
     pub fn set_peer_mediums(&mut self, mediums: &[i32]) {
         self.hotspot_allowed = peer_allows_hotspot(mediums);
+        self.lan_allowed = peer_allows_lan(mediums);
+    }
+
+    pub fn set_peer_5ghz(&mut self, supports: Option<bool>) {
+        self.peer_5ghz = supports;
+    }
+
+    pub fn peer_upgrade_options(&self) -> (bool, bool, Option<bool>) {
+        (self.lan_allowed, self.hotspot_allowed, self.peer_5ghz)
     }
 
     pub fn set_peer_endpoint_id(&mut self, id: &str) {
@@ -598,7 +765,7 @@ impl UpgradeState {
     /// Whether a new upgrade may start now.
     pub fn can_start(&self) -> bool {
         self.link.is_some()
-            && self.hotspot_allowed
+            && (self.hotspot_allowed || self.lan_allowed)
             && !self.attempted
             && matches!(self.phase, Phase::Idle)
     }
@@ -627,8 +794,33 @@ impl UpgradeState {
     }
 
     pub fn begin_waiting(&mut self, task: JoinHandle<io::Result<TcpStream>>) {
+        self.lan_offered = false;
         self.phase = Phase::Waiting(task);
         self.deadline = Some(Instant::now() + ACCEPT_TIMEOUT);
+    }
+
+    /// As `begin_waiting`, for a LAN offer: a shorter wait, and `fail` falls back to the hotspot.
+    pub fn begin_waiting_lan(&mut self, task: JoinHandle<io::Result<TcpStream>>) {
+        self.begin_waiting(task);
+        self.lan_offered = true;
+        self.deadline = Some(Instant::now() + LAN_ACCEPT_TIMEOUT);
+    }
+
+    /// The peer is connected over the LAN (or the offer is over): the port is no longer needed.
+    pub async fn close_lan_port(&mut self) {
+        if self.lan_offered
+            && let Some(link) = &self.link
+            && tokio::time::timeout(CLOSE_LAN_TIMEOUT, link.close_lan())
+                .await
+                .is_err()
+        {
+            warn!("upgrade: closing the LAN port timed out; the firewall expiry will close it");
+        }
+    }
+
+    /// Whether a LAN offer is the one the peer is answering.
+    pub fn lan_offer_pending(&self) -> bool {
+        self.lan_offered
     }
 
     pub fn begin_draining(&mut self, stream: TcpStream) {
@@ -685,8 +877,11 @@ impl UpgradeState {
         }
     }
 
-    /// Gives up (or ends a failed attempt): the session stays on the prior channel.
+    /// Gives up (or ends a failed attempt) and releases the link. A failed LAN offer is followed,
+    /// once and if the peer allows it, by a hotspot offer; anything else leaves the session on
+    /// the prior channel.
     pub async fn fail(&mut self) {
+        let lan_failed = std::mem::take(&mut self.lan_offered);
         match std::mem::replace(&mut self.phase, Phase::Idle) {
             Phase::Waiting(task) => task.abort(),
             Phase::Preparing(task) => task.abort(),
@@ -701,6 +896,16 @@ impl UpgradeState {
             link.release().await;
         }
         self.link_used = false;
+        if lan_failed
+            && self.hotspot_allowed
+            && let Some(link) = self.link.clone()
+        {
+            info!("upgrade: the LAN offer failed; offering the hotspot");
+            self.lan_allowed = false;
+            self.begin_preparing(tokio::spawn(host_hotspot(link, self.peer_5ghz)));
+        } else {
+            info!("upgrade: staying on the current channel");
+        }
     }
 
     /// Next timer or connection event of the current phase; pending if there is none.

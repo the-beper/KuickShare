@@ -8,15 +8,19 @@
 //! target (its address and PSM rotate at every scan), dials it (L2CAP, or GATT when the phone
 //! advertises no PSM) and runs the send session.
 //!
+//! A phone that advertises only a legacy header (its full record is in GATT slot 0) is read
+//! over GATT by a send alone, never by a list scan: see [`LegacyReads`].
+//!
 //! The scan must NEVER run continuously: a permanent BlueZ discovery blocks the reconnection
 //! of bonded LE devices (rquickshare #429). Hence a bounded window, a minimum interval, and
 //! one lock shared with the send: no scan while a dial or a transfer is going on.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
+use bluer::gatt::remote::CharacteristicReadRequest;
 use bluer::{Adapter, AdapterEvent, Address, AddressType, DiscoveryFilter, DiscoveryTransport};
 use bluer::{Uuid, UuidExt};
 use futures::StreamExt;
@@ -24,9 +28,13 @@ use once_cell::sync::Lazy;
 use tokio::sync::{MutexGuard, broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
-use super::ble_receiver::service_data::{ReceiverAdvertisement, SERVICE_UUID};
-use super::ble_send::dial::dial_l2cap;
-use super::ble_send::gatt_dial::dial_gatt;
+use super::ble_disconnect::{DisconnectOnDrop, disconnect};
+use super::ble_receiver::gatt::SLOT0_UUID;
+use super::ble_receiver::service_data::{
+    ReceiverAdvertisement, SERVICE_UUID, parse_legacy_header, regular_length,
+};
+use super::ble_send::dial::{DIAL_TIMEOUT, dial_l2cap};
+use super::ble_send::gatt_dial::{GATT_DIAL_TIMEOUT, dial_gatt};
 use super::ble_send::{send_over_gatt, send_over_l2cap};
 use super::{BleTarget, EndpointInfo, OutboundPayload};
 use crate::DeviceType;
@@ -41,6 +49,79 @@ pub const MIN_SCAN_INTERVAL: Duration = Duration::from_secs(4);
 
 /// How long a send looks for its target again before giving up.
 pub const RESCAN_WINDOW: Duration = Duration::from_secs(12);
+
+/// The whole start of a BLE send (scan, dials) has to end within this, below the daemon's own
+/// watchdog, which uses this value (`BLE_START_TIMEOUT` in the app).
+pub const BLE_START_BUDGET: Duration = Duration::from_secs(40);
+/// Left for the phone's first frame after the dial.
+const FIRST_FRAME_RESERVE: Duration = Duration::from_secs(2);
+
+/// What the L2CAP dial may take: all of `DIAL_TIMEOUT` when there is time, as before the GATT
+/// fallback existed.
+fn l2cap_budget(remaining: Duration) -> Duration {
+    DIAL_TIMEOUT.min(remaining.saturating_sub(FIRST_FRAME_RESERVE))
+}
+
+/// A GATT dial after a failed L2CAP one runs only when it fits whole.
+fn gatt_fits(remaining: Duration) -> bool {
+    remaining >= GATT_DIAL_TIMEOUT + FIRST_FRAME_RESERVE
+}
+
+/// A successful L2CAP dial is committed. Only failure *before* any bytes are sent may retry
+/// over GATT, never a failure from `send_over_l2cap` (that could duplicate a partial transfer).
+enum Dialed<L, G> {
+    L2cap(L),
+    Gatt(G),
+}
+
+/// L2CAP when the phone advertises a PSM, else GATT; `remaining` is what is left of
+/// [`BLE_START_BUDGET`]. A failed L2CAP dial falls back to GATT only if [`gatt_fits`]; otherwise
+/// its error is returned.
+async fn dial_with_fallback<L, G>(
+    psm: bool,
+    l2cap: impl std::future::Future<Output = anyhow::Result<L>>,
+    gatt: impl std::future::Future<Output = anyhow::Result<G>>,
+    remaining: Duration,
+    ctk: &CancellationToken,
+) -> anyhow::Result<Dialed<L, G>> {
+    let started = tokio::time::Instant::now();
+    if psm {
+        let budget = l2cap_budget(remaining);
+        if budget.is_zero() {
+            warn!(
+                "the phone advertises a PSM but only {remaining:?} of the BLE start budget is left: no L2CAP dial"
+            );
+        } else {
+            let attempt = tokio::select! {
+                outcome = tokio::time::timeout(budget, l2cap) => outcome,
+                () = ctk.cancelled() => bail!("cancelled while dialing L2CAP"),
+            };
+            let failure = match attempt {
+                Ok(Ok(link)) => return Ok(Dialed::L2cap(link)),
+                Ok(Err(e)) => e,
+                Err(_) => anyhow::anyhow!("no L2CAP channel within {budget:?}"),
+            };
+            let left = remaining.saturating_sub(started.elapsed());
+            if !gatt_fits(left) {
+                warn!(
+                    "L2CAP dial failed ({failure:#}); GATT fallback skipped: {left:?} of the BLE start budget left, it needs {:?}",
+                    GATT_DIAL_TIMEOUT + FIRST_FRAME_RESERVE
+                );
+                return Err(failure);
+            }
+            warn!("L2CAP dial failed ({failure:#}); falling back to GATT");
+        }
+    }
+    let gatt_bound = remaining.saturating_sub(started.elapsed() + FIRST_FRAME_RESERVE);
+    if gatt_bound.is_zero() {
+        bail!("no time remains for a GATT dial under the BLE start watchdog");
+    }
+    let link = tokio::select! {
+        link = tokio::time::timeout(gatt_bound, gatt) => link.context("GATT dial exceeded the BLE start budget")??,
+        () = ctk.cancelled() => bail!("cancelled while connecting over GATT"),
+    };
+    Ok(Dialed::Gatt(link))
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScanResult {
@@ -98,6 +179,60 @@ pub fn scan_result(
 /// A Pixel sends its full advertisement, with the PSM, only about every 10 s (observed). A
 /// phone first heard less than this ago may simply not have sent it yet.
 const FULL_ADVERT_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Longest GATT slot-0 read for a legacy-only BLE receiver; the time left in the window cuts it
+/// shorter.
+const LEGACY_GATT_TIMEOUT: Duration = Duration::from_secs(7);
+const MAX_SLOT0: usize = 512;
+
+/// Whether a window may connect over GATT to read slot 0 of a phone that advertises only a
+/// legacy header. Any neighbour can make us do it, and a connection disturbs BlueZ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyReads {
+    /// A list scan only fills the device list: a legacy-only phone is not listed.
+    Off,
+    /// A send looks for one phone: at most `max` reads per window.
+    Send { max: usize },
+}
+
+pub const SEND_LEGACY_READS: LegacyReads = LegacyReads::Send { max: 2 };
+
+/// What one window decides about slot-0 reads.
+#[derive(Debug)]
+struct LegacyGate {
+    policy: LegacyReads,
+    /// Gave a full 0x48 advertisement in this window: nothing to read from it.
+    full: HashSet<Address>,
+    /// Read, or being read, in this window. A legacy header identifies only a record in GATT,
+    /// not an endpoint, so a changing device would be read again and again.
+    tried: HashSet<Address>,
+}
+
+impl LegacyGate {
+    fn new(policy: LegacyReads) -> Self {
+        Self {
+            policy,
+            full: HashSet::new(),
+            tried: HashSet::new(),
+        }
+    }
+
+    fn saw_full(&mut self, address: Address) {
+        self.full.insert(address);
+    }
+
+    /// True, and counted, when `address` may be read now.
+    fn admit(&mut self, address: Address) -> bool {
+        let LegacyReads::Send { max } = self.policy else {
+            return false;
+        };
+        if self.full.contains(&address) || self.tried.contains(&address) || self.tried.len() >= max
+        {
+            return false;
+        }
+        self.tried.insert(address)
+    }
+}
 
 /// How long a "this phone has no PSM" verdict is trusted by a send.
 const NO_PSM_TTL: Duration = Duration::from_secs(300);
@@ -245,6 +380,7 @@ impl Dedup {
 pub async fn scan_window(
     adapter: &Adapter,
     duration: Duration,
+    legacy: LegacyReads,
     dedup: &mut Dedup,
     mut sink: impl FnMut(ScanEvent),
 ) -> anyhow::Result<()> {
@@ -258,7 +394,7 @@ pub async fn scan_window(
         })
         .await
         .context("set the discovery filter")?;
-    let collected = collect(adapter, duration, dedup, &mut sink).await;
+    let collected = collect(adapter, duration, legacy, dedup, &mut sink).await;
     // Also after a failure: the next window must not start under a late stop of this one.
     wait_discovery_stopped(adapter).await;
     collected?;
@@ -300,9 +436,11 @@ impl std::error::Error for DiscoveryEnded {}
 async fn collect(
     adapter: &Adapter,
     duration: Duration,
+    legacy: LegacyReads,
     dedup: &mut Dedup,
     sink: &mut impl FnMut(ScanEvent),
 ) -> anyhow::Result<()> {
+    let mut gate = LegacyGate::new(legacy);
     let stream = adapter
         .discover_devices_with_changes()
         .await
@@ -315,7 +453,15 @@ async fn collect(
             () = &mut deadline => return Ok(()),
             event = stream.next() => match event {
                 Some(AdapterEvent::DeviceAdded(address)) => {
-                    if let Some(found) = read_device(adapter, address).await
+                    let left = deadline
+                        .deadline()
+                        .saturating_duration_since(tokio::time::Instant::now());
+                    let found = tokio::select! {
+                        // A stalled GATT connect cannot extend the scan beyond its deadline.
+                        () = &mut deadline => return Ok(()),
+                        found = read_device(adapter, address, &mut gate, LEGACY_GATT_TIMEOUT.min(left)) => found,
+                    };
+                    if let Some(found) = found
                         && let Some(new) = dedup.observe(found)
                     {
                         debug!(
@@ -335,7 +481,12 @@ async fn collect(
 }
 
 /// BlueZ keeps devices it saw long ago: only one with an RSSI is on the air now.
-async fn read_device(adapter: &Adapter, address: Address) -> Option<ScanResult> {
+async fn read_device(
+    adapter: &Adapter,
+    address: Address,
+    gate: &mut LegacyGate,
+    legacy_bound: Duration,
+) -> Option<ScanResult> {
     let device = adapter.device(address).ok()?;
     let data = device.service_data().await.ok()??;
     let bytes = data.get(&Uuid::from_u16(SERVICE_UUID))?;
@@ -344,11 +495,100 @@ async fn read_device(adapter: &Adapter, address: Address) -> Option<ScanResult> 
         return None;
     };
     let address_type = device.address_type().await.ok()?;
-    let result = scan_result(address, address_type, Some(rssi), bytes);
+    let result = if let Some(header) = parse_legacy_header(bytes) {
+        if !gate.admit(address) {
+            trace!("{address}: legacy Nearby BLE header, slot-0 read not allowed now");
+            return None;
+        }
+        debug!(
+            "{address}: legacy Nearby BLE header ({:?}), reading GATT slot 0",
+            header.advert_hash
+        );
+        match read_legacy_slot0(adapter, address, legacy_bound).await {
+            Ok(full) => scan_result(address, address_type, Some(rssi), &full),
+            Err(e) => {
+                debug!("{address}: legacy BLE slot-0 read failed ({e:#})");
+                None
+            }
+        }
+    } else {
+        // Fast 0x4a remains deliberately invisible (no name); other junk is ignored.
+        let full = scan_result(address, address_type, Some(rssi), bytes);
+        if full.is_some() {
+            gate.saw_full(address);
+        }
+        full
+    };
     if result.is_none() {
         trace!("{address}: unusable 0xFEF3 data ({} bytes)", bytes.len());
     }
     result
+}
+
+/// Fetch the complete regular advertisement from the Nearby service's slot-0
+/// characteristic. BlueZ may return only the first ATT MTU, so offset reads
+/// continue while the encoded record's length requires more data.
+async fn read_legacy_slot0(
+    adapter: &Adapter,
+    address: Address,
+    bound: Duration,
+) -> anyhow::Result<Vec<u8>> {
+    let device = adapter.device(address)?;
+    let was_connected = device.is_connected().await.unwrap_or(false);
+    // We must not disconnect an existing connection belonging to another user. The guard also
+    // acts when the window deadline drops this future mid-connect.
+    let mut guard = DisconnectOnDrop((!was_connected).then(|| device.clone()));
+    let result = tokio::time::timeout(bound, async {
+        if !was_connected {
+            device.connect().await?;
+        }
+        while !device.is_services_resolved().await? {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        for service in device.services().await? {
+            if service.uuid().await? != Uuid::from_u16(SERVICE_UUID) {
+                continue;
+            }
+            for characteristic in service.characteristics().await? {
+                if characteristic.uuid().await? != SLOT0_UUID {
+                    continue;
+                }
+                let mut full = characteristic.read().await?;
+                while let Some(len) = regular_length(&full)
+                    && full.len() < len
+                    && full.len() < MAX_SLOT0
+                {
+                    let more = characteristic
+                        .read_ext(&CharacteristicReadRequest {
+                            offset: u16::try_from(full.len())?,
+                            ..Default::default()
+                        })
+                        .await?;
+                    if more.is_empty() {
+                        break;
+                    }
+                    full.extend_from_slice(&more);
+                }
+                // The GATT record, not the bloom header, is the authority for
+                // endpoint ID, cleartext name and L2CAP PSM.
+                anyhow::ensure!(full.len() <= MAX_SLOT0, "oversized GATT advertisement");
+                anyhow::ensure!(
+                    ReceiverAdvertisement::parse(&full).is_some(),
+                    "invalid GATT advertisement"
+                );
+                return Ok::<Vec<u8>, anyhow::Error>(full);
+            }
+        }
+        anyhow::bail!("missing Nearby GATT slot-0 characteristic");
+    })
+    .await;
+    // Awaited, so the dial that follows does not race the disconnect. If this future is dropped
+    // meanwhile, the guard is still armed and disconnects again.
+    if let Some(device) = &guard.0 {
+        disconnect(device).await;
+    }
+    guard.0 = None;
+    result.context("legacy GATT slot-0 read timed out")?
 }
 
 /// What the `EndpointInfo` bus is told about a scan event.
@@ -537,7 +777,13 @@ async fn find_target(
     let outcome = loop {
         let started = Instant::now();
         let outcome = {
-            let scan = scan_window(adapter, window, &mut dedup, &mut on_event);
+            let scan = scan_window(
+                adapter,
+                window,
+                SEND_LEGACY_READS,
+                &mut dedup,
+                &mut on_event,
+            );
             tokio::pin!(scan);
             tokio::select! {
                 Some(found) = rx.recv() => Ok(found),
@@ -653,7 +899,7 @@ impl BleScanner {
             *window = interrupt.clone();
         }
         let result = tokio::select! {
-            r = scan_window(&adapter, SCAN_WINDOW, &mut state.dedup, |event| {
+            r = scan_window(&adapter, SCAN_WINDOW, LegacyReads::Off, &mut state.dedup, |event| {
                 let _ = sender.send(endpoint_info(&event));
             }) => r,
             // The window is dropped here, which stops the discovery; the sightings it made stay
@@ -687,6 +933,8 @@ impl BleScanner {
         sender: broadcast::Sender<ChannelMessage>,
         ctk: CancellationToken,
     ) -> anyhow::Result<()> {
+        // The sender watchdog starts before waiting for the adapter (which may still be scanning).
+        let started = Instant::now();
         // A list window under way would keep the slot for up to SCAN_WINDOW.
         if let Ok(window) = self.window.lock() {
             window.cancel();
@@ -714,18 +962,204 @@ impl BleScanner {
         };
         if scan.psm.is_some() {
             slot.dedup.forget_no_psm(&target.endpoint_id);
-            let stream = dial_l2cap(&adapter, &scan).await?;
-            send_over_l2cap(stream, local_endpoint_id, id, name, payload, sender, ctk).await?;
         } else {
             debug!("{} advertises no PSM: sending over GATT", target.id());
-            // Dropping the dial on cancellation also drops its pending BlueZ connect.
-            let link = tokio::select! {
-                link = dial_gatt(&adapter, &scan) => link?,
-                () = ctk.cancelled() => bail!("cancelled while connecting to {}", target.id()),
-            };
-            send_over_gatt(link, local_endpoint_id, id, name, payload, sender, ctk).await?;
+        }
+        match dial_with_fallback(
+            scan.psm.is_some(),
+            dial_l2cap(&adapter, &scan),
+            dial_gatt(&adapter, &scan),
+            BLE_START_BUDGET.saturating_sub(started.elapsed()),
+            &ctk,
+        )
+        .await?
+        {
+            Dialed::L2cap(stream) => {
+                // A failed send on this stream is terminal; never start GATT afterwards.
+                send_over_l2cap(stream, local_endpoint_id, id, name, payload, sender, ctk).await?;
+            }
+            Dialed::Gatt(link) => {
+                send_over_gatt(link, local_endpoint_id, id, name, payload, sender, ctk).await?;
+            }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod dial_fallback_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    const fn secs(n: u64) -> Duration {
+        Duration::from_secs(n)
+    }
+
+    async fn never<T>() -> anyhow::Result<T> {
+        panic!("this dial must not run")
+    }
+
+    #[test]
+    fn l2cap_gets_the_whole_dial_timeout_when_there_is_time() {
+        // The scan of a send ends at 12 s at the latest.
+        assert_eq!(l2cap_budget(BLE_START_BUDGET - RESCAN_WINDOW), DIAL_TIMEOUT);
+        assert_eq!(l2cap_budget(BLE_START_BUDGET), DIAL_TIMEOUT);
+        assert_eq!(l2cap_budget(secs(10)), secs(8));
+        assert_eq!(l2cap_budget(FIRST_FRAME_RESERVE), Duration::ZERO);
+        assert_eq!(l2cap_budget(Duration::ZERO), Duration::ZERO);
+    }
+
+    #[test]
+    fn the_gatt_fallback_needs_its_whole_dial() {
+        let needed = GATT_DIAL_TIMEOUT + FIRST_FRAME_RESERVE;
+        assert!(gatt_fits(needed));
+        assert!(!gatt_fits(needed - Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn a_full_l2cap_dial_after_the_scan_fits_the_ble_start_watchdog() {
+        assert!(RESCAN_WINDOW + DIAL_TIMEOUT + FIRST_FRAME_RESERVE <= BLE_START_BUDGET);
+        // After the longest scan and a failed dial, GATT no longer fits.
+        assert!(!gatt_fits(BLE_START_BUDGET - RESCAN_WINDOW - DIAL_TIMEOUT));
+    }
+
+    #[tokio::test]
+    async fn a_failed_l2cap_dial_falls_back_to_gatt() {
+        let called = AtomicBool::new(false);
+        let selected = dial_with_fallback(
+            true,
+            async { Err::<u8, _>(anyhow::anyhow!("L2CAP failed")) },
+            async {
+                called.store(true, Ordering::SeqCst);
+                Ok::<&str, anyhow::Error>("GATT")
+            },
+            BLE_START_BUDGET,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(selected, Dialed::Gatt("GATT")));
+        assert!(called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_l2cap_timeout_falls_back_to_gatt() {
+        let started = tokio::time::Instant::now();
+        let selected = dial_with_fallback(
+            true,
+            std::future::pending::<anyhow::Result<u8>>(),
+            async { Ok::<&str, anyhow::Error>("GATT") },
+            BLE_START_BUDGET,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(selected, Dialed::Gatt("GATT")));
+        assert_eq!(started.elapsed(), DIAL_TIMEOUT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_gatt_fallback_is_skipped_when_it_no_longer_fits() {
+        // A scan that ended at 12 s leaves 28 s; the dial fails after 5 s.
+        let outcome = dial_with_fallback(
+            true,
+            async {
+                tokio::time::sleep(secs(5)).await;
+                Err::<u8, _>(anyhow::anyhow!("connection refused"))
+            },
+            never::<&str>(),
+            BLE_START_BUDGET - RESCAN_WINDOW,
+            &CancellationToken::new(),
+        )
+        .await;
+        let error = outcome.err().unwrap();
+        assert!(error.to_string().contains("connection refused"), "{error}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_l2cap_dial_after_a_long_scan_gets_all_of_its_timeout() {
+        let started = tokio::time::Instant::now();
+        let outcome = dial_with_fallback(
+            true,
+            async {
+                tokio::time::sleep(DIAL_TIMEOUT - secs(1)).await;
+                Ok::<u8, anyhow::Error>(7)
+            },
+            never::<&str>(),
+            BLE_START_BUDGET - RESCAN_WINDOW,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(outcome, Dialed::L2cap(7)));
+        assert_eq!(started.elapsed(), DIAL_TIMEOUT - secs(1));
+    }
+
+    #[tokio::test]
+    async fn without_a_psm_the_dial_goes_straight_to_gatt() {
+        let selected = dial_with_fallback(
+            false,
+            never::<u8>(),
+            async { Ok::<&str, anyhow::Error>("GATT") },
+            BLE_START_BUDGET - RESCAN_WINDOW,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(selected, Dialed::Gatt("GATT")));
+    }
+
+    #[tokio::test]
+    async fn no_time_left_dials_nothing() {
+        let outcome = dial_with_fallback(
+            true,
+            never::<u8>(),
+            never::<&str>(),
+            FIRST_FRAME_RESERVE,
+            &CancellationToken::new(),
+        )
+        .await;
+        let error = outcome.err().unwrap();
+        assert!(error.to_string().contains("no time remains"), "{error}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancelling_while_dialing_l2cap_stops_the_dial() {
+        let ctk = CancellationToken::new();
+        let canceller = ctk.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(secs(3)).await;
+            canceller.cancel();
+        });
+        let started = tokio::time::Instant::now();
+        let outcome = dial_with_fallback(
+            true,
+            std::future::pending::<anyhow::Result<u8>>(),
+            never::<&str>(),
+            BLE_START_BUDGET,
+            &ctk,
+        )
+        .await;
+        let error = outcome.err().unwrap();
+        assert!(
+            error.to_string().contains("cancelled while dialing L2CAP"),
+            "{error}"
+        );
+        assert_eq!(started.elapsed(), secs(3));
+    }
+
+    #[tokio::test]
+    async fn successful_l2cap_never_dials_gatt() {
+        let selected = dial_with_fallback(
+            true,
+            async { Ok::<u8, anyhow::Error>(17) },
+            async { panic!("must not dial GATT after L2CAP succeeds") as anyhow::Result<()> },
+            BLE_START_BUDGET,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(selected, Dialed::L2cap(17)));
     }
 }
 
@@ -744,9 +1178,15 @@ mod hardware_probe {
         adapter.set_powered(true).await.expect("power on");
         let mut dedup = Dedup::default();
         let started = std::time::Instant::now();
-        scan_window(&adapter, SCAN_WINDOW, &mut dedup, |event| {
-            println!("{:>5.1}s {event:?}", started.elapsed().as_secs_f32());
-        })
+        scan_window(
+            &adapter,
+            SCAN_WINDOW,
+            SEND_LEGACY_READS,
+            &mut dedup,
+            |event| {
+                println!("{:>5.1}s {event:?}", started.elapsed().as_secs_f32());
+            },
+        )
         .await
         .expect("scan window");
         println!("window over after {:.1}s", started.elapsed().as_secs_f32());
@@ -1279,6 +1719,35 @@ mod tests {
         assert_eq!(d.device_type(b"4IX7"), None);
         d.end_window();
         assert_eq!(d.device_type(b"ARWA"), Some(DeviceType::Phone));
+    }
+
+    #[test]
+    fn a_list_scan_never_reads_slot_0() {
+        let mut gate = LegacyGate::new(LegacyReads::Off);
+        assert!(!gate.admit(addr(1)));
+        assert!(!gate.admit(addr(2)));
+    }
+
+    #[test]
+    fn a_send_reads_at_most_twice_per_window_and_a_device_once() {
+        assert_eq!(SEND_LEGACY_READS, LegacyReads::Send { max: 2 });
+        let mut gate = LegacyGate::new(SEND_LEGACY_READS);
+        assert!(gate.admit(addr(1)));
+        assert!(!gate.admit(addr(1)));
+        assert!(gate.admit(addr(2)));
+        assert!(!gate.admit(addr(3)));
+        // A new window starts with a new gate.
+        assert!(LegacyGate::new(SEND_LEGACY_READS).admit(addr(3)));
+    }
+
+    #[test]
+    fn a_device_that_gave_a_full_advertisement_is_not_read() {
+        let mut gate = LegacyGate::new(SEND_LEGACY_READS);
+        gate.saw_full(addr(1));
+        assert!(!gate.admit(addr(1)));
+        // It did not use up a read.
+        assert!(gate.admit(addr(2)));
+        assert!(gate.admit(addr(3)));
     }
 
     #[test]

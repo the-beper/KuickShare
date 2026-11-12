@@ -10,6 +10,7 @@
 //! `--system-talk-name=org.freedesktop.NetworkManager`.
 
 use std::{
+    collections::HashMap,
     io,
     net::Ipv4Addr,
     sync::Mutex as StdMutex,
@@ -40,6 +41,41 @@ const DEFAULT_ZONE: &str = "";
 const PORT_OPEN_SECS: i32 = 300;
 /// Every profile we create starts with this; used to sweep leftovers.
 const PROFILE_PREFIX: &str = "kuickshare-";
+
+/// firewalld zones in which the LAN port is never opened: the network is untrusted or blocked,
+/// so a port opened for the transfer would be reachable by everyone on it. The offer goes to the
+/// hotspot instead, which has its own consent (`HotspotPolicy`).
+const REFUSED_LAN_ZONES: &[&str] = &["public", "external", "dmz", "block", "drop"];
+
+/// An IPv4 address of a network device and the interface that owns it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LanEndpoint {
+    ip: Ipv4Addr,
+    iface: String,
+}
+
+/// The address to offer among the candidates (already limited to physical devices). The default
+/// route's source is preferred only if it is one of them: a full-tunnel VPN owns the default route,
+/// but its address is not a candidate.
+fn select_lan_endpoint(candidates: &[LanEndpoint], route: Option<Ipv4Addr>) -> Option<LanEndpoint> {
+    let private: Vec<_> = candidates.iter().filter(|e| e.ip.is_private()).collect();
+    route
+        .and_then(|ip| private.iter().copied().find(|e| e.ip == ip))
+        .or_else(|| private.first().copied())
+        .cloned()
+}
+
+/// The source address the kernel picks for a public destination. Connecting a UDP socket sends
+/// nothing; it only makes the kernel choose the route.
+fn route_source() -> Option<Ipv4Addr> {
+    use std::net::{IpAddr, UdpSocket};
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:53").ok()?;
+    match socket.local_addr().ok()?.ip() {
+        IpAddr::V4(ip) => Some(ip),
+        IpAddr::V6(_) => None,
+    }
+}
 
 // A fixed subnet can clash with a local network that uses 192.168.49.0/24.
 const GATEWAY: Ipv4Addr = Ipv4Addr::new(192, 168, 49, 1);
@@ -120,8 +156,18 @@ pub enum Kind {
 fn persist_mode(kind: Kind) -> &'static str {
     match kind {
         Kind::Saved { .. } => "disk",
-        Kind::Ap(_) | Kind::Client { .. } => "memory",
+        Kind::Ap(_) | Kind::Client { .. } => "volatile",
     }
+}
+
+/// The `a{sv}` options of `AddAndActivateConnection2`. `bind-activation` ties a temporary
+/// activation to our D-Bus connection: when the daemon exits NetworkManager drops it.
+fn activation_options(kind: Kind) -> HashMap<&'static str, zbus::Variant<'static>> {
+    let mut options = HashMap::from([("persist", zbus::Variant::from(persist_mode(kind)))]);
+    if !matches!(kind, Kind::Saved { .. }) {
+        options.insert("bind-activation", zbus::Variant::from("dbus-client"));
+    }
+    options
 }
 
 #[derive(Clone, Debug)]
@@ -131,6 +177,8 @@ pub struct ConnSettings {
     ssid: Vec<u8>,
     psk: Secret,
     kind: Kind,
+    /// The offered Wi-Fi Direct frequency, only for temporary client profiles.
+    client_band: Option<Band>,
     /// firewalld zone of an access point; empty leaves the choice to NetworkManager.
     zone: &'static str,
 }
@@ -154,6 +202,7 @@ impl ConnSettings {
             ssid: ssid.as_bytes().to_vec(),
             psk: Secret(psk.to_owned()),
             kind,
+            client_band: None,
             zone: "",
         })
     }
@@ -178,6 +227,7 @@ impl ConnSettings {
                     ssid: ssid.as_bytes().to_vec(),
                     psk: Secret(String::new()),
                     kind: Kind::Saved { open: true },
+                    client_band: None,
                     zone: "",
                 })
             }
@@ -251,6 +301,12 @@ mod wire {
                     ("mode", Variant::from("infrastructure")),
                     ("hidden", Variant::from(hidden)),
                 ]);
+                if let Some(band) = s.client_band {
+                    wireless.extend([
+                        ("band", Variant::from(band.nm_name)),
+                        ("channel", Variant::from(band.channel)),
+                    ]);
+                }
                 // The AP is not trusted: it must not provide the default route or DNS.
                 ipv4 = section([
                     ("method", Variant::from("auto")),
@@ -303,6 +359,8 @@ pub struct Created {
 pub trait NmApi: Send + Sync {
     /// First Wi-Fi (not Wi-Fi P2P) device.
     fn wifi_device(&self) -> impl Future<Output = io::Result<WifiDevice>> + Send;
+    /// Bit flags of `WirelessCapabilities` on that same Wi-Fi device.
+    fn wifi_capabilities(&self, dev: &WifiDevice) -> impl Future<Output = io::Result<u32>> + Send;
     /// Settings objects whose id starts with `kuickshare-`.
     fn stale_profiles(&self) -> impl Future<Output = io::Result<Vec<String>>> + Send;
     /// Settings object of the connection active on the device, if any.
@@ -336,6 +394,18 @@ pub trait NmApi: Send + Sync {
     /// Opens a TCP port in the `nm-shared` firewalld zone until `close_port` (or a timeout).
     fn open_port(&self, port: u16) -> impl Future<Output = io::Result<()>> + Send;
     fn close_port(&self, port: u16) -> impl Future<Output = io::Result<()>> + Send;
+    /// IPv4 addresses of the activated Ethernet and Wi-Fi devices: no bridge, tunnel, VPN or VM
+    /// adapter. NetworkManager decides, not the interface name.
+    fn lan_candidates(&self) -> impl Future<Output = io::Result<Vec<LanEndpoint>>> + Send;
+    /// The source address of the default route, if known.
+    fn route_source(&self) -> Option<Ipv4Addr>;
+    /// The firewalld zone of the interface (the default zone if it has none); `None` means
+    /// firewalld is absent.
+    fn lan_zone(&self, iface: &str) -> impl Future<Output = io::Result<Option<String>>> + Send;
+    /// Opens a TCP port in `zone` until `close_lan_port` (or a timeout).
+    fn open_lan_port(&self, zone: &str, port: u16) -> impl Future<Output = io::Result<()>> + Send;
+    /// A port that is not open is not an error.
+    fn close_lan_port(&self, zone: &str, port: u16) -> impl Future<Output = io::Result<()>> + Send;
     /// Activates an existing profile on the device.
     fn activate(
         &self,
@@ -365,6 +435,18 @@ mod proxies {
         ) -> zbus::Result<String>;
         #[zbus(name = "removePort")]
         fn remove_port(&self, zone: &str, port: &str, protocol: &str) -> zbus::Result<String>;
+        #[zbus(name = "getZoneOfInterface")]
+        fn get_zone_of_interface(&self, iface: &str) -> zbus::Result<String>;
+    }
+
+    #[proxy(
+        interface = "org.fedoraproject.FirewallD1",
+        default_service = "org.fedoraproject.FirewallD1",
+        default_path = "/org/fedoraproject/FirewallD1"
+    )]
+    pub trait Firewall {
+        #[zbus(name = "getDefaultZone")]
+        fn get_default_zone(&self) -> zbus::Result<String>;
     }
 
     #[proxy(
@@ -451,6 +533,9 @@ mod proxies {
     pub trait Device {
         #[zbus(property)]
         fn device_type(&self) -> zbus::Result<u32>;
+        /// `NMDeviceState`.
+        #[zbus(property, name = "State")]
+        fn device_state(&self) -> zbus::Result<u32>;
         #[zbus(property)]
         fn interface(&self) -> zbus::Result<String>;
         #[zbus(property)]
@@ -465,6 +550,8 @@ mod proxies {
     )]
     pub trait Wireless {
         fn request_scan(&self, options: HashMap<&str, Variant<'_>>) -> zbus::Result<()>;
+        #[zbus(property)]
+        fn wireless_capabilities(&self) -> zbus::Result<u32>;
         #[zbus(property)]
         fn access_points(&self) -> zbus::Result<Vec<OwnedObjectPath>>;
     }
@@ -491,12 +578,56 @@ mod proxies {
 use proxies::*;
 use zbus::{Connection, ObjectPath, proxy::CacheProperties};
 
-/// NM_DEVICE_TYPE_WIFI
+/// NM_DEVICE_TYPE_ETHERNET / _WIFI
+const DEVICE_TYPE_ETHERNET: u32 = 1;
 const DEVICE_TYPE_WIFI: u32 = 2;
+/// NM_DEVICE_STATE_ACTIVATED
+const DEVICE_STATE_ACTIVATED: u32 = 100;
 /// NM_ACTIVE_CONNECTION_STATE_ACTIVATED / _DEACTIVATED
 const STATE_ACTIVATED: u32 = 2;
 const STATE_DEACTIVATED: u32 = 4;
 const NO_OBJECT: &str = "/";
+/// NM_WIFI_DEVICE_CAP_FREQ_VALID / FREQ_2GHZ / FREQ_5GHZ.
+const FREQ_VALID: u32 = 0x100;
+#[cfg(test)]
+const FREQ_2GHZ: u32 = 0x200;
+const FREQ_5GHZ: u32 = 0x400;
+
+/// Only a connected Ethernet or Wi-Fi device is a LAN the phone can share with us.
+fn is_lan_device(device_type: u32, state: u32) -> bool {
+    matches!(device_type, DEVICE_TYPE_ETHERNET | DEVICE_TYPE_WIFI)
+        && state == DEVICE_STATE_ACTIVATED
+}
+
+/// `None` means NM did not report valid band information; keep legacy behavior then.
+fn supports_5ghz(flags: u32) -> Option<bool> {
+    (flags & FREQ_VALID != 0).then_some(flags & FREQ_5GHZ != 0)
+}
+
+/// The Wi-Fi Direct offer may carry 0/-1 or invalid channels. Pin only known channels.
+fn band_from_frequency(mhz: u32) -> Option<Band> {
+    if (2412..=2472).contains(&mhz) && (mhz - 2412).is_multiple_of(5) {
+        return Some(Band {
+            nm_name: "bg",
+            channel: (mhz - 2407) / 5,
+            mhz,
+        });
+    }
+    if mhz > 5000 && (mhz - 5000).is_multiple_of(5) {
+        let channel = (mhz - 5000) / 5;
+        if (36..=64).contains(&channel) && (channel - 36).is_multiple_of(4)
+            || (100..=144).contains(&channel) && (channel - 100).is_multiple_of(4)
+            || (149..=177).contains(&channel) && (channel - 149).is_multiple_of(4)
+        {
+            return Some(Band {
+                nm_name: "a",
+                channel,
+                mhz,
+            });
+        }
+    }
+    None
+}
 
 fn io_err(e: impl std::fmt::Display) -> io::Error {
     io::Error::other(format!("NetworkManager: {e}"))
@@ -562,6 +693,23 @@ fn firewall_err(e: zbus::Error) -> io::Error {
 
 fn path(p: &str) -> zbus::Result<ObjectPath<'_>> {
     ObjectPath::try_from(p)
+}
+
+/// The error of a call on an object, or a connection, that no longer exists. `UnknownMethod` is
+/// not one: it also says the object is not what we think it is.
+fn is_gone(e: &zbus::Error) -> bool {
+    match e {
+        zbus::Error::FDO(f) => matches!(**f, zbus::fdo::Error::UnknownObject(_)),
+        zbus::Error::MethodError(name, ..) => ["UnknownConnection", "UnknownObject"]
+            .iter()
+            .any(|suffix| name.as_str().ends_with(suffix)),
+        _ => false,
+    }
+}
+
+/// firewalld's answer to `removePort` for a port that is not open.
+fn is_port_not_enabled(e: &zbus::Error) -> bool {
+    matches!(e, zbus::Error::MethodError(_, Some(detail), _) if detail.contains("NOT_ENABLED"))
 }
 
 /// Real implementation on the system bus.
@@ -692,10 +840,13 @@ impl DbusNm {
             .into_iter()
             .map(|(k, v)| (k, v.into_iter().collect()))
             .collect();
-        // "memory": our temporary profile (and its key) is never written to disk.
-        let options = [("persist", persist_mode(settings.kind).into())]
-            .into_iter()
-            .collect();
+        // The long-lived OnceCell D-Bus connection owns the temporary activation. When the daemon
+        // exits, NM drops it, restores normal autoconnect and deletes the volatile profile
+        // *(inferred)*: the effect is not yet observed with a `kill -9` (see the hand tests).
+        // `bind-activation` needs no fallback for old NetworkManager: it came with
+        // `AddAndActivateConnection2` itself (1.16; its `nm-manager.c` already accepts
+        // `dbus-client`, whereas the API docs of 1.16 to 1.36 wrongly say `dbus-name`).
+        let options = activation_options(settings.kind);
         let (settings, active, _) = ManagerProxy::new(c)
             .await?
             .add_and_activate_connection2(
@@ -764,10 +915,13 @@ impl DbusNm {
     }
 
     async fn ipv4_z(&self, dev: &WifiDevice) -> zbus::Result<Option<Ipv4Addr>> {
+        self.ipv4_at(&dev.path).await
+    }
+
+    /// The first IPv4 address of the device at `device`.
+    async fn ipv4_at(&self, device: &str) -> zbus::Result<Option<Ipv4Addr>> {
         let c = self.conn().await?;
-        let cfg = proxy_at!(DeviceProxy, c, dev.path.as_str())
-            .ip4_config()
-            .await?;
+        let cfg = proxy_at!(DeviceProxy, c, device).ip4_config().await?;
         if cfg.as_str() == NO_OBJECT {
             return Ok(None);
         }
@@ -785,6 +939,28 @@ impl DbusNm {
         }
         Ok(None)
     }
+
+    async fn lan_candidates_z(&self) -> zbus::Result<Vec<LanEndpoint>> {
+        let c = self.conn().await?;
+        let mut found = Vec::new();
+        for p in ManagerProxy::new(c).await?.get_devices().await? {
+            let device = proxy_at!(DeviceProxy, c, p.as_str());
+            // A device can vanish while the list is read.
+            let (Ok(kind), Ok(state)) = (device.device_type().await, device.device_state().await)
+            else {
+                continue;
+            };
+            if !is_lan_device(kind, state) {
+                continue;
+            }
+            if let (Ok(iface), Ok(Some(ip))) =
+                (device.interface().await, self.ipv4_at(p.as_str()).await)
+            {
+                found.push(LanEndpoint { ip, iface });
+            }
+        }
+        Ok(found)
+    }
 }
 
 impl NmApi for DbusNm {
@@ -793,6 +969,17 @@ impl NmApi for DbusNm {
             .await
             .map_err(io_err)?
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no Wi-Fi device found"))
+    }
+
+    async fn wifi_capabilities(&self, dev: &WifiDevice) -> io::Result<u32> {
+        async {
+            let conn = self.conn().await?;
+            proxy_at!(WirelessProxy, conn, dev.path.as_str())
+                .wireless_capabilities()
+                .await
+        }
+        .await
+        .map_err(io_err)
     }
 
     async fn stale_profiles(&self) -> io::Result<Vec<String>> {
@@ -855,7 +1042,15 @@ impl NmApi for DbusNm {
             proxy_at!(ProfileProxy, c, settings).delete().await
         }
         .await
-        .map_err(io_err)
+        .map_err(|e| {
+            // With `persist=volatile` NM can remove the profile during deactivation.
+            // A deletion of an already-removed object is successful cleanup.
+            if is_gone(&e) {
+                io::Error::new(io::ErrorKind::NotFound, "volatile profile already removed")
+            } else {
+                io_err(e)
+            }
+        })
     }
 
     async fn open_port(&self, port: u16) -> io::Result<()> {
@@ -882,6 +1077,68 @@ impl NmApi for DbusNm {
         }
         .await
         .map_err(|e| io::Error::other(format!("firewalld: {e}")))
+    }
+
+    async fn lan_candidates(&self) -> io::Result<Vec<LanEndpoint>> {
+        self.lan_candidates_z().await.map_err(io_err)
+    }
+
+    fn route_source(&self) -> Option<Ipv4Addr> {
+        route_source()
+    }
+
+    async fn lan_zone(&self, iface: &str) -> io::Result<Option<String>> {
+        let result = async {
+            let c = self.conn().await?;
+            let zone = FirewallZoneProxy::new(c)
+                .await?
+                .get_zone_of_interface(iface)
+                .await?;
+            if zone.is_empty() {
+                FirewallProxy::new(c).await?.get_default_zone().await
+            } else {
+                Ok(zone)
+            }
+        }
+        .await;
+        match result {
+            Ok(zone) => Ok(Some(zone)),
+            Err(e) if classify_firewall_error(&e) == FirewallFault::Missing => Ok(None),
+            Err(e) => Err(firewall_err(e)),
+        }
+    }
+
+    async fn open_lan_port(&self, zone: &str, port: u16) -> io::Result<()> {
+        async {
+            let c = self.conn().await?;
+            FirewallZoneProxy::new(c)
+                .await?
+                .add_port(zone, &port.to_string(), "tcp", PORT_OPEN_SECS)
+                .await
+                .map(drop)
+        }
+        .await
+        .map_err(firewall_err)
+    }
+
+    async fn close_lan_port(&self, zone: &str, port: u16) -> io::Result<()> {
+        async {
+            let conn = self.conn().await?;
+            FirewallZoneProxy::new(conn)
+                .await?
+                .remove_port(zone, &port.to_string(), "tcp")
+                .await
+                .map(drop)
+        }
+        .await
+        .or_else(|e| {
+            if is_port_not_enabled(&e) {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        })
+        .map_err(firewall_err)
     }
 
     async fn activate(&self, dev: &WifiDevice, settings: &str) -> io::Result<()> {
@@ -921,6 +1178,8 @@ struct State {
     touched: bool,
     /// Port opened in the firewall zone and not yet closed.
     open_port: Option<u16>,
+    /// LAN listener's transient firewalld rule. The LAN connection itself is not touched.
+    lan_port: Option<(String, u16)>,
     /// The hotspot runs in an open (or default) zone, on the user's consent for this session.
     open_zone: bool,
 }
@@ -1152,8 +1411,12 @@ impl<A: NmApi> NmLink<A> {
         match self.api.stale_profiles().await {
             Ok(stale) => {
                 for p in stale {
-                    if let Err(e) = self.api.delete(&p).await {
-                        tracing::warn!("could not delete stale profile {p}: {e}");
+                    match self.api.delete(&p).await {
+                        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                            tracing::debug!("stale profile {p} was already removed");
+                        }
+                        Err(e) => tracing::warn!("could not delete stale profile {p}: {e}"),
+                        Ok(()) => {}
                     }
                 }
             }
@@ -1200,8 +1463,12 @@ impl<A: NmApi> NmLink<A> {
             if let Err(e) = self.api.deactivate(&c.active).await {
                 tracing::debug!("deactivate: {e}");
             }
-            if let Err(e) = self.api.delete(&c.settings).await {
-                tracing::warn!("could not delete profile {}: {e}", c.settings);
+            match self.api.delete(&c.settings).await {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    tracing::debug!("volatile profile {} was already removed", c.settings);
+                }
+                Err(e) => tracing::warn!("could not delete profile {}: {e}", c.settings),
+                Ok(()) => {}
             }
             st.created = None;
         }
@@ -1226,7 +1493,12 @@ impl<A: NmApi> NmLink<A> {
             .await
     }
 
-    async fn host_inner(&self, st: &mut State, port: u16) -> io::Result<WifiCredentials> {
+    async fn host_inner(
+        &self,
+        st: &mut State,
+        port: u16,
+        peer_5ghz: Option<bool>,
+    ) -> io::Result<WifiCredentials> {
         let dev = self.api.wifi_device().await?;
         st.dev = Some(dev.clone());
 
@@ -1248,20 +1520,27 @@ impl<A: NmApi> NmLink<A> {
         self.sweep().await;
         self.remember_previous(st, &dev).await;
         let (ssid, password) = (random_ssid(), random_password());
-        let band = match self
-            .bring_up(st, &dev, &ssid, &password, BAND_5GHZ, zone)
-            .await
-        {
-            Ok(()) => BAND_5GHZ,
-            Err(e) => {
-                tracing::warn!("5 GHz access point failed ({e}); trying 2.4 GHz");
-                self.drop_created(st).await;
-                self.bring_up(st, &dev, &ssid, &password, BAND_2GHZ, zone)
-                    .await
-                    .inspect_err(|e| {
-                        tracing::warn!("the hotspot could not start on 2.4 GHz either: {e}");
-                    })?;
-                BAND_2GHZ
+        let band = if peer_5ghz == Some(false) {
+            // A 2.4 GHz-only phone must never be offered a 5 GHz AP.
+            self.bring_up(st, &dev, &ssid, &password, BAND_2GHZ, zone)
+                .await?;
+            BAND_2GHZ
+        } else {
+            match self
+                .bring_up(st, &dev, &ssid, &password, BAND_5GHZ, zone)
+                .await
+            {
+                Ok(()) => BAND_5GHZ,
+                Err(e) => {
+                    tracing::warn!("5 GHz access point failed ({e}); trying 2.4 GHz");
+                    self.drop_created(st).await;
+                    self.bring_up(st, &dev, &ssid, &password, BAND_2GHZ, zone)
+                        .await
+                        .inspect_err(|e| {
+                            tracing::warn!("the hotspot could not start on 2.4 GHz either: {e}")
+                        })?;
+                    BAND_2GHZ
+                }
             }
         };
         Ok(WifiCredentials {
@@ -1399,10 +1678,63 @@ impl<A: NmApi> NmLink<A> {
         }
     }
 
+    /// Closes the LAN port recorded in `st`, if any. Failures are only logged. Cancel safe: the
+    /// record goes only when the port is closed.
+    async fn close_lan_rule(&self, st: &mut State) {
+        if let Some((zone, port)) = st.lan_port.clone() {
+            if let Err(e) = self.api.close_lan_port(&zone, port).await {
+                tracing::warn!("could not close LAN port {port} in {zone}: {e}");
+            }
+            st.lan_port = None;
+        }
+    }
+
+    /// Opens `port` for a LAN listener bound to `ip`. `false`: nothing was changed and the LAN
+    /// must not be offered. The port is recorded in `st` before it is opened, so a future dropped
+    /// half-way is still cleaned by `release`.
+    async fn host_lan_inner(&self, st: &mut State, ip: Ipv4Addr, port: u16) -> io::Result<bool> {
+        let Some(endpoint) = self
+            .api
+            .lan_candidates()
+            .await?
+            .into_iter()
+            .find(|e| e.ip == ip)
+        else {
+            tracing::info!("{ip} is no longer a LAN address; no LAN offer");
+            return Ok(false);
+        };
+        // No firewalld: no rule to add (another firewall may still block the phone).
+        let Some(zone) = self.api.lan_zone(&endpoint.iface).await? else {
+            return Ok(true);
+        };
+        if REFUSED_LAN_ZONES.contains(&zone.as_str()) {
+            tracing::info!(
+                "{} is in the {zone} zone: not opening a port there, no LAN offer",
+                endpoint.iface
+            );
+            return Ok(false);
+        }
+        st.lan_port = Some((zone.clone(), port));
+        self.api.open_lan_port(&zone, port).await?;
+        Ok(true)
+    }
+
+    /// The LAN address to offer, if NetworkManager reports one.
+    async fn lan_endpoint(&self) -> Option<LanEndpoint> {
+        match self.api.lan_candidates().await {
+            Ok(candidates) => select_lan_endpoint(&candidates, self.api.route_source()),
+            Err(e) => {
+                tracing::debug!("no LAN address: {e}");
+                None
+            }
+        }
+    }
+
     /// Undoes whatever `st` records and resets it. Failures are only logged. Cancel safe: each
     /// record is cleared only after its undo is done, and `busy` last, so when the future is
     /// dropped half-way a later call undoes the rest.
     async fn teardown(&self, st: &mut State) {
+        self.close_lan_rule(st).await;
         if let Some(port) = st.open_port {
             if let Err(e) = self.api.close_port(port).await {
                 tracing::warn!("could not close port {port} in the firewall: {e}");
@@ -1434,10 +1766,53 @@ impl<A: NmApi> NmLink<A> {
 }
 
 impl<A: NmApi> WifiLink for NmLink<A> {
-    fn host(&self, port: u16) -> BoxFuture<'_, io::Result<WifiCredentials>> {
+    fn lan_address(&self) -> BoxFuture<'_, Option<Ipv4Addr>> {
+        Box::pin(async move { self.lan_endpoint().await.map(|e| e.ip) })
+    }
+
+    fn host_lan(&self, ip: Ipv4Addr, port: u16) -> BoxFuture<'_, io::Result<bool>> {
         Box::pin(async move {
             let mut st = self.begin()?;
-            let result = self.host_inner(&mut st, port).await;
+            match self.host_lan_inner(&mut st, ip, port).await {
+                Ok(true) => Ok(true),
+                Ok(false) => {
+                    *st = State::default();
+                    Ok(false)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "could not open a temporary LAN port ({e}); using hotspot if possible"
+                    );
+                    self.teardown(&mut st).await;
+                    Ok(false)
+                }
+            }
+        })
+    }
+
+    fn close_lan(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            let mut st = self.state.lock().await;
+            self.close_lan_rule(&mut st).await;
+        })
+    }
+
+    fn supports_5ghz(&self) -> BoxFuture<'_, Option<bool>> {
+        Box::pin(async move {
+            let dev = self.api.wifi_device().await.ok()?;
+            let flags = self.api.wifi_capabilities(&dev).await.ok()?;
+            supports_5ghz(flags)
+        })
+    }
+
+    fn host(
+        &self,
+        port: u16,
+        peer_5ghz: Option<bool>,
+    ) -> BoxFuture<'_, io::Result<WifiCredentials>> {
+        Box::pin(async move {
+            let mut st = self.begin()?;
+            let result = self.host_inner(&mut st, port, peer_5ghz).await;
             // A refusal by the firewall and a missing Wi-Fi device are not a hotspot that failed
             // to start: the report has rows for them.
             match &result {
@@ -1475,13 +1850,15 @@ impl<A: NmApi> WifiLink for NmLink<A> {
 }
 
 fn client_settings(iface: &str, creds: &WifiCredentials, hidden: bool) -> io::Result<ConnSettings> {
-    ConnSettings::new(
+    let mut settings = ConnSettings::new(
         JOIN_PROFILE,
         iface,
         &creds.ssid,
         &creds.password,
         Kind::Client { hidden },
-    )
+    )?;
+    settings.client_band = band_from_frequency(creds.frequency_mhz);
+    Ok(settings)
 }
 
 /// Looks like a Wi-Fi Direct group name: `DIRECT-xy-KuickShare`.
@@ -1525,6 +1902,11 @@ mod tests {
         /// `find_ap` finds the AP from this call on (1-based); 0 = never.
         ap_from: usize,
         ip: Option<Ipv4Addr>,
+        capabilities: u32,
+        lan_devices: Vec<LanEndpoint>,
+        route: Option<Ipv4Addr>,
+        /// firewalld zone of the LAN interface; `None`: firewalld is absent.
+        lan_zone: Option<String>,
         /// This operation never returns (the caller drops the future to simulate a timeout).
         hang: StdMutex<Option<&'static str>>,
     }
@@ -1557,6 +1939,10 @@ mod tests {
                 path: "/dev/1".into(),
                 iface: "wlan0".into(),
             })
+        }
+        async fn wifi_capabilities(&self, _: &WifiDevice) -> io::Result<u32> {
+            self.step("wifi_capabilities", "")?;
+            Ok(self.capabilities)
         }
         async fn stale_profiles(&self) -> io::Result<Vec<String>> {
             self.step("stale_profiles", "")?;
@@ -1608,10 +1994,17 @@ mod tests {
             Ok(())
         }
         async fn delete(&self, settings: &str) -> io::Result<()> {
-            self.step("delete", settings)?;
+            let result = self.step("delete", settings);
+            // `NotFound`: the profile is gone already, as when NetworkManager removed a volatile one.
+            if result
+                .as_ref()
+                .is_err_and(|e| e.kind() != io::ErrorKind::NotFound)
+            {
+                return result;
+            }
             self.maybe_hang("delete").await;
             self.live.lock().unwrap().remove(settings);
-            Ok(())
+            result
         }
         async fn open_port(&self, port: u16) -> io::Result<()> {
             self.step("open_port", &port.to_string())
@@ -1620,6 +2013,25 @@ mod tests {
             self.step("close_port", &port.to_string())?;
             self.maybe_hang("close_port").await;
             Ok(())
+        }
+        async fn lan_candidates(&self) -> io::Result<Vec<LanEndpoint>> {
+            self.step("lan_candidates", "")?;
+            Ok(self.lan_devices.clone())
+        }
+        fn route_source(&self) -> Option<Ipv4Addr> {
+            self.route
+        }
+        async fn lan_zone(&self, iface: &str) -> io::Result<Option<String>> {
+            self.step("lan_zone", iface)?;
+            Ok(self.lan_zone.clone())
+        }
+        async fn open_lan_port(&self, zone: &str, port: u16) -> io::Result<()> {
+            self.step("open_lan_port", &format!("{zone} {port}"))?;
+            self.maybe_hang("open_lan_port").await;
+            Ok(())
+        }
+        async fn close_lan_port(&self, zone: &str, port: u16) -> io::Result<()> {
+            self.step("close_lan_port", &format!("{zone} {port}"))
         }
         async fn activate(&self, _: &WifiDevice, settings: &str) -> io::Result<()> {
             self.step("activate", settings)
@@ -1633,6 +2045,19 @@ mod tests {
         ap_from: usize,
         budget: Duration,
         hang: Option<&'static str>,
+        capabilities: u32,
+        lan_devices: Vec<LanEndpoint>,
+        route: Option<Ipv4Addr>,
+        lan_zone: Option<String>,
+    }
+
+    const LAN_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 22);
+
+    fn lan_endpoint(iface: &str, ip: Ipv4Addr) -> LanEndpoint {
+        LanEndpoint {
+            ip,
+            iface: iface.into(),
+        }
     }
 
     fn fake() -> Builder {
@@ -1643,6 +2068,10 @@ mod tests {
             ap_from: 1,
             budget: Duration::from_secs(60),
             hang: None,
+            capabilities: FREQ_VALID | FREQ_2GHZ | FREQ_5GHZ,
+            lan_devices: vec![lan_endpoint("wlan0", LAN_IP)],
+            route: Some(LAN_IP),
+            lan_zone: Some("home".into()),
         }
     }
 
@@ -1664,6 +2093,10 @@ mod tests {
                 previous: self.previous,
                 ap_from: self.ap_from,
                 ip: Some(Ipv4Addr::new(192, 168, 49, 7)),
+                capabilities: self.capabilities,
+                lan_devices: self.lan_devices,
+                route: self.route,
+                lan_zone: self.lan_zone,
                 hang: StdMutex::new(self.hang),
             };
             let timing = Timing {
@@ -1858,7 +2291,7 @@ mod tests {
     #[tokio::test]
     async fn host_creates_a_shared_ap_with_a_fresh_password() {
         let (link, log) = fake().build();
-        let c = link.host(4000).await.unwrap();
+        let c = link.host(4000, None).await.unwrap();
         assert_eq!((c.port, c.frequency_mhz, c.gateway), (4000, 5180, GATEWAY));
         assert!(c.password.len() >= 24);
         assert!(position(&log, "stale_profiles") < position(&log, "add_and_activate"));
@@ -1874,7 +2307,7 @@ mod tests {
     #[tokio::test]
     async fn host_opens_only_its_port_in_the_sharing_zone_and_release_closes_it() {
         let (link, log) = fake().build();
-        link.host(4000).await.unwrap();
+        link.host(4000, None).await.unwrap();
         assert!(position(&log, "open_port 4000") < position(&log, "add_and_activate"));
         assert_eq!(link.api.added.lock().unwrap()[0].1.zone, SHARED_ZONE);
         assert_eq!(count(&log, "close_port"), 0);
@@ -1887,7 +2320,7 @@ mod tests {
     /// The firewall refused (or is not there): `host` must fail without touching
     /// the AP profile, the previous connection or the zone.
     async fn assert_host_refused(link: &NmLink<Fake>, log: &Arc<StdMutex<Vec<String>>>) {
-        let err = link.host(4000).await.expect_err("host must refuse");
+        let err = link.host(4000, None).await.expect_err("host must refuse");
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
         assert!(
             link.api.added.lock().unwrap().is_empty(),
@@ -1966,7 +2399,7 @@ mod tests {
         let (link, _) = fake().build();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let link = link.with_test_notices(tx);
-        link.host(4000).await.unwrap();
+        link.host(4000, None).await.unwrap();
         assert_eq!(
             drain(&mut rx),
             [
@@ -1981,7 +2414,7 @@ mod tests {
         let (link, _) = fake().fail(|op, _| op == "open_port").build();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let link = link.with_test_notices(tx);
-        assert!(link.host(4000).await.is_err());
+        assert!(link.host(4000, None).await.is_err());
         assert_eq!(
             drain(&mut rx),
             [
@@ -1998,7 +2431,7 @@ mod tests {
         let (link, _) = fake().fail(|op, _| op == "add_and_activate").build();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let link = link.with_test_notices(tx);
-        assert!(link.host(4000).await.is_err());
+        assert!(link.host(4000, None).await.is_err());
         assert_eq!(
             drain(&mut rx).last(),
             Some(&evidence(RuntimeEvidence::HotspotFailed))
@@ -2011,7 +2444,7 @@ mod tests {
         let (link, _) = b.build();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let link = link.with_test_notices(tx);
-        assert!(link.host(4000).await.is_err());
+        assert!(link.host(4000, None).await.is_err());
         assert!(drain(&mut rx).is_empty());
     }
 
@@ -2021,7 +2454,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let link = link.with_test_notices(tx);
         let held = link.begin().unwrap();
-        assert!(link.host(4000).await.is_err());
+        assert!(link.host(4000, None).await.is_err());
         drop(held);
         assert!(drain(&mut rx).is_empty());
     }
@@ -2076,7 +2509,7 @@ mod tests {
             let (link, _) = b.build();
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let link = link.with_test_notices(tx);
-            assert!(link.host(4000).await.is_err());
+            assert!(link.host(4000, None).await.is_err());
             let Some(LinkNotice::WifiUpgradeBlocked(reason)) = next_notice(&mut rx) else {
                 panic!("no notice for {code}");
             };
@@ -2091,7 +2524,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let link = link.with_test_notices(tx);
         link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
-        link.host(4000).await.unwrap();
+        link.host(4000, None).await.unwrap();
         assert_eq!(link.api.added.lock().unwrap()[0].1.zone, OPEN_ZONE);
         assert!(next_notice(&mut rx).is_none(), "nothing was blocked");
         link.release().await;
@@ -2108,7 +2541,7 @@ mod tests {
         });
         let (link, _) = b.build();
         link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
-        link.host(4000).await.unwrap();
+        link.host(4000, None).await.unwrap();
         let added = link.api.added.lock().unwrap().clone();
         assert_eq!(added[0].1.zone, "");
         assert!(added.iter().all(|(_, s)| s.zone != OPEN_ZONE));
@@ -2118,7 +2551,7 @@ mod tests {
     async fn consent_does_not_change_the_targeted_port_when_it_can_be_opened() {
         let (link, _) = fake().build();
         link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
-        link.host(4000).await.unwrap();
+        link.host(4000, None).await.unwrap();
         assert_eq!(link.api.added.lock().unwrap()[0].1.zone, SHARED_ZONE);
     }
 
@@ -2128,10 +2561,10 @@ mod tests {
         let (link, _) = fake().fail(|op, _| op == "open_port").build();
         assert_eq!(link.hotspot_policy(), HotspotPolicy::TargetedPortOnly);
         link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
-        link.host(4000).await.unwrap();
+        link.host(4000, None).await.unwrap();
         link.release().await;
         link.set_hotspot_policy(HotspotPolicy::TargetedPortOnly);
-        let e = link.host(4000).await.unwrap_err();
+        let e = link.host(4000, None).await.unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
     }
 
@@ -2141,14 +2574,15 @@ mod tests {
         b.hang = Some("wait_activated");
         let (link, log) = b.build();
         // The host future is dropped half-way (the upgrade timed out or was cancelled).
-        let timed_out = tokio::time::timeout(Duration::from_millis(50), link.host(4000)).await;
+        let timed_out =
+            tokio::time::timeout(Duration::from_millis(50), link.host(4000, None)).await;
         assert!(timed_out.is_err(), "the host call was meant to hang");
         assert_eq!(count(&log, "open_port 4000"), 1);
         assert_eq!(live(&link), 1);
         assert_eq!(count(&log, "close_port"), 0);
         // The link still looks busy until it is released.
         assert_eq!(
-            link.host(5).await.unwrap_err().kind(),
+            link.host(5, None).await.unwrap_err().kind(),
             io::ErrorKind::WouldBlock
         );
 
@@ -2165,7 +2599,7 @@ mod tests {
     #[tokio::test]
     async fn shutdown_closes_port_and_restores_previous() {
         let (link, log) = fake().build();
-        link.host(4000).await.unwrap();
+        link.host(4000, None).await.unwrap();
         assert_eq!(count(&log, "close_port"), 0);
         // The shutdown goes through the very link the transfer used, not through a new one.
         link.shutdown().await;
@@ -2199,7 +2633,7 @@ mod tests {
         let link = Arc::new(link);
         let host = tokio::spawn({
             let link = link.clone();
-            async move { link.host(4000).await }
+            async move { link.host(4000, None).await }
         });
         settled().await;
         // The shutdown waits for the link and gives up (the daemon's bound runs out).
@@ -2220,7 +2654,7 @@ mod tests {
     #[tokio::test]
     async fn dropping_the_teardown_half_way_lets_release_finish_it() {
         let (link, log) = fake().build();
-        link.host(4000).await.unwrap();
+        link.host(4000, None).await.unwrap();
         // The profile cannot be deleted in time: the port is closed and the profile is stopped.
         *link.api.hang.lock().unwrap() = Some("delete");
         let waited = tokio::time::timeout(Duration::from_millis(50), link.shutdown()).await;
@@ -2242,7 +2676,7 @@ mod tests {
     #[tokio::test]
     async fn dropping_the_teardown_while_closing_the_port_keeps_the_port_for_release() {
         let (link, log) = fake().build();
-        link.host(4000).await.unwrap();
+        link.host(4000, None).await.unwrap();
         *link.api.hang.lock().unwrap() = Some("close_port");
         let waited = tokio::time::timeout(Duration::from_millis(50), link.shutdown()).await;
         assert!(waited.is_err());
@@ -2257,7 +2691,7 @@ mod tests {
     async fn taking_back_the_consent_stops_a_hotspot_in_an_open_zone() {
         let (link, log) = fake().fail(|op, _| op == "open_port").build();
         link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
-        link.host(4000).await.unwrap();
+        link.host(4000, None).await.unwrap();
         assert_eq!(live(&link), 1);
 
         // Still allowed: nothing happens.
@@ -2270,7 +2704,7 @@ mod tests {
         assert_eq!(count(&log, "deactivate /act/1"), 1);
         assert_eq!(count(&log, "activate /prev/home"), 1);
         // The link is free for the next upgrade, which is now refused.
-        let e = link.host(4000).await.unwrap_err();
+        let e = link.host(4000, None).await.unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
     }
 
@@ -2278,7 +2712,7 @@ mod tests {
     async fn taking_back_the_consent_leaves_a_targeted_hotspot_alone() {
         let (link, _) = fake().build();
         link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
-        link.host(4000).await.unwrap();
+        link.host(4000, None).await.unwrap();
         link.set_hotspot_policy(HotspotPolicy::TargetedPortOnly);
         link.drop_open_zone_hotspot().await;
         assert_eq!(live(&link), 1);
@@ -2290,7 +2724,7 @@ mod tests {
         let (link, _) = fake().fail(|op, _| op == "open_port").build();
         link.set_hotspot_policy(HotspotPolicy::AllowOpenZone);
         link.set_hotspot_policy(HotspotPolicy::TargetedPortOnly);
-        let e = link.host(4000).await.unwrap_err();
+        let e = link.host(4000, None).await.unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(live(&link), 0);
     }
@@ -2360,7 +2794,7 @@ mod tests {
     #[tokio::test]
     async fn release_removes_everything_restores_previous_and_is_idempotent() {
         let (link, log) = fake().build();
-        link.host(1).await.unwrap();
+        link.host(1, None).await.unwrap();
         link.release().await;
         settled().await;
         assert_eq!(live(&link), 0);
@@ -2372,7 +2806,42 @@ mod tests {
         link.release().await;
         assert_eq!(quiet_len(&log), n);
         // The link is free again.
-        link.host(1).await.unwrap();
+        link.host(1, None).await.unwrap();
+    }
+
+    #[test]
+    fn capability_flags_only_answer_if_valid() {
+        assert_eq!(supports_5ghz(FREQ_5GHZ), None);
+        assert_eq!(supports_5ghz(0), None);
+        assert_eq!(supports_5ghz(FREQ_VALID | FREQ_2GHZ), Some(false));
+        assert_eq!(supports_5ghz(FREQ_VALID | FREQ_5GHZ), Some(true));
+        assert_eq!(
+            supports_5ghz(FREQ_VALID | FREQ_2GHZ | FREQ_5GHZ),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn capabilities_from_selected_wifi_device() {
+        let (link, log) = fake().build();
+        assert_eq!(link.supports_5ghz().await, Some(true));
+        assert_eq!(count(&log, "wifi_capabilities"), 1);
+    }
+
+    #[tokio::test]
+    async fn host_obeys_a_24ghz_only_peer() {
+        let (link, log) = fake().build();
+        let creds = link.host(4100, Some(false)).await.unwrap();
+        assert_eq!(creds.frequency_mhz, 2437);
+        assert_eq!(count(&log, "add_and_activate"), 1);
+        let added = link.api.added.lock().unwrap();
+        assert!(matches!(added[0].1.kind, Kind::Ap(b) if b.nm_name == "bg"));
+    }
+
+    #[tokio::test]
+    async fn host_ignores_unspecified_peer_band() {
+        let (link, _) = fake().build();
+        assert_eq!(link.host(4100, None).await.unwrap().frequency_mhz, 5180);
     }
 
     #[tokio::test]
@@ -2380,7 +2849,7 @@ mod tests {
         let (link, log) = fake()
             .fail(|op, n| op == "wait_activated" && n == 1)
             .build();
-        let c = link.host(1).await.unwrap();
+        let c = link.host(1, None).await.unwrap();
         assert_eq!(c.frequency_mhz, 2437);
         let added = link.api.added.lock().unwrap().clone();
         assert_eq!(added.len(), 2);
@@ -2395,7 +2864,7 @@ mod tests {
         let (link, _) = fake()
             .fail(|op, n| op == "add_and_activate" && n == 1)
             .build();
-        assert_eq!(link.host(1).await.unwrap().frequency_mhz, 2437);
+        assert_eq!(link.host(1, None).await.unwrap().frequency_mhz, 2437);
     }
 
     #[tokio::test]
@@ -2406,7 +2875,7 @@ mod tests {
             ("wait_activated", 1),
         ] {
             let (link, log) = fake().fail(move |o, n| o == op && n >= from).build();
-            let e = link.host(1).await.unwrap_err();
+            let e = link.host(1, None).await.unwrap_err();
             assert_eq!(e.to_string(), "boom", "{op}");
             settled().await;
             assert_eq!(live(&link), 0, "{op}");
@@ -2426,7 +2895,7 @@ mod tests {
                 (op == "wait_activated" && n >= 1) || (op == "add_and_activate" && n == 2)
             })
             .build();
-        assert!(link.host(1).await.is_err());
+        assert!(link.host(1, None).await.is_err());
         assert_eq!(live(&link), 0);
     }
 
@@ -2435,7 +2904,7 @@ mod tests {
         let (link, _) = fake()
             .fail(|op, _| op == "stale_profiles" || op == "current_profile")
             .build();
-        link.host(1).await.unwrap();
+        link.host(1, None).await.unwrap();
         link.release().await;
         assert_eq!(live(&link), 0);
     }
@@ -2443,9 +2912,9 @@ mod tests {
     #[tokio::test]
     async fn a_second_upgrade_is_refused_and_does_not_tear_down_the_first() {
         let (link, log) = fake().build();
-        link.host(1).await.unwrap();
+        link.host(1, None).await.unwrap();
         let n = quiet_len(&log);
-        let e = link.host(2).await.unwrap_err();
+        let e = link.host(2, None).await.unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::WouldBlock);
         let e = link.join(&creds()).await.unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::WouldBlock);
@@ -2461,7 +2930,7 @@ mod tests {
         let mut b = fake();
         b.stale = stale();
         let (link, log) = b.build();
-        link.host(1).await.unwrap();
+        link.host(1, None).await.unwrap();
         assert_eq!(count(&log, "delete /old/"), 2);
         assert!(position(&log, "delete /old/1") < position(&log, "add_and_activate"));
         link.release().await;
@@ -2479,11 +2948,324 @@ mod tests {
         let mut b = fake();
         b.stale = vec!["/old/1".into()];
         let (link, log) = b.build();
-        link.host(1).await.unwrap();
+        link.host(1, None).await.unwrap();
         link.shutdown().await;
         assert_eq!(count(&log, "delete /old/1"), 2); // sweep at host + at cleanup
         assert_eq!(live(&link), 0);
-        link.host(1).await.unwrap(); // free again
+        link.host(1, None).await.unwrap(); // free again
+    }
+
+    #[test]
+    fn only_connected_ethernet_and_wifi_devices_are_lan_candidates() {
+        // NMDeviceType: 1 Ethernet, 2 Wi-Fi, 13 bridge, 16 tun, 20 veth, 29 WireGuard, 30 Wi-Fi P2P.
+        for (kind, state, expected) in [
+            (1, 100, true),
+            (2, 100, true),
+            (2, 40, false),
+            (1, 20, false),
+            (13, 100, false),
+            (16, 100, false),
+            (20, 100, false),
+            (29, 100, false),
+            (30, 100, false),
+        ] {
+            assert_eq!(
+                is_lan_device(kind, state),
+                expected,
+                "type {kind} state {state}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_default_route_is_preferred_only_among_the_candidates() {
+        let wlan = lan_endpoint("wlp2s0", LAN_IP);
+        let eth = lan_endpoint("enp3s0", Ipv4Addr::new(10, 2, 0, 15));
+        let wg_source = Ipv4Addr::new(10, 50, 0, 4);
+
+        // Full-tunnel VPN: the route source is the tunnel's, which is not a candidate.
+        assert_eq!(
+            select_lan_endpoint(std::slice::from_ref(&wlan), Some(wg_source)),
+            Some(wlan.clone())
+        );
+        // Only virtual devices: no candidate at all.
+        assert_eq!(select_lan_endpoint(&[], Some(wg_source)), None);
+        assert_eq!(select_lan_endpoint(&[], None), None);
+        // Two physical devices: the one of the default route, else the first.
+        let both = [eth.clone(), wlan.clone()];
+        assert_eq!(
+            select_lan_endpoint(&both, Some(wlan.ip)),
+            Some(wlan.clone())
+        );
+        assert_eq!(select_lan_endpoint(&both, Some(eth.ip)), Some(eth.clone()));
+        assert_eq!(select_lan_endpoint(&both, None), Some(eth));
+        // A public address is never offered.
+        let public = lan_endpoint("enp3s0", Ipv4Addr::new(93, 184, 216, 34));
+        assert_eq!(select_lan_endpoint(&[public], None), None);
+    }
+
+    #[tokio::test]
+    async fn the_lan_address_comes_from_the_networkmanager_devices() {
+        // WireGuard full tunnel: the route source is on wg0, the Wi-Fi address is picked.
+        let mut b = fake();
+        b.route = Some(Ipv4Addr::new(10, 50, 0, 4));
+        let (link, _) = b.build();
+        assert_eq!(link.lan_address().await, Some(LAN_IP));
+
+        let mut b = fake();
+        b.lan_devices = vec![];
+        let (link, _) = b.build();
+        assert_eq!(link.lan_address().await, None);
+
+        // Without NetworkManager there is no LAN offer.
+        let (link, _) = fake().fail(|op, _| op == "lan_candidates").build();
+        assert_eq!(link.lan_address().await, None);
+    }
+
+    #[tokio::test]
+    async fn the_lan_port_is_not_opened_in_an_untrusted_zone() {
+        for zone in REFUSED_LAN_ZONES {
+            let mut b = fake();
+            b.lan_zone = Some((*zone).into());
+            let (link, log) = b.build();
+            assert!(!link.host_lan(LAN_IP, 4000).await.unwrap(), "{zone}");
+            assert_eq!(count(&log, "open_lan_port"), 0, "{zone}");
+            assert!(link.begin().is_ok(), "{zone}: the link must be free");
+        }
+        for zone in ["home", "FedoraWorkstation", "work", "trusted"] {
+            let mut b = fake();
+            b.lan_zone = Some(zone.into());
+            let (link, log) = b.build();
+            assert!(link.host_lan(LAN_IP, 4000).await.unwrap(), "{zone}");
+            assert_eq!(count(&log, &format!("open_lan_port {zone} 4000")), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn the_lan_is_not_offered_on_an_address_that_is_gone_and_needs_no_rule_without_firewalld()
+    {
+        let (link, log) = fake().build();
+        assert!(
+            !link
+                .host_lan(Ipv4Addr::new(10, 9, 9, 9), 4000)
+                .await
+                .unwrap()
+        );
+        assert_eq!(count(&log, "open_lan_port"), 0);
+
+        let mut b = fake();
+        b.lan_zone = None;
+        let (link, log) = b.build();
+        assert!(link.host_lan(LAN_IP, 4000).await.unwrap());
+        link.release().await;
+        assert_eq!(count(&log, "open_lan_port"), 0);
+        assert_eq!(count(&log, "close_lan_port"), 0);
+    }
+
+    #[tokio::test]
+    async fn a_refused_firewall_call_leaves_no_lease_and_no_hotspot_is_touched() {
+        let (link, log) = fake().fail(|op, _| op == "open_lan_port").build();
+        assert!(!link.host_lan(LAN_IP, 4000).await.unwrap());
+        // The rule may have been half added: removing it is tried, and the link is free.
+        assert_eq!(count(&log, "close_lan_port home 4000"), 1);
+        assert!(link.begin().is_ok());
+        assert_eq!(count(&log, "add_and_activate"), 0);
+    }
+
+    #[tokio::test]
+    async fn the_lan_port_is_closed_early_and_the_lease_ends_with_release() {
+        let (link, log) = fake().build();
+        assert!(link.host_lan(LAN_IP, 4000).await.unwrap());
+        link.close_lan().await;
+        assert_eq!(count(&log, "close_lan_port home 4000"), 1);
+        // The lease is still held: nothing else gets the link before `release`.
+        assert!(link.begin().is_err());
+        link.close_lan().await;
+        link.release().await;
+        assert_eq!(count(&log, "close_lan_port"), 1);
+        assert!(link.begin().is_ok());
+        assert_eq!(count(&log, "deactivate"), 0);
+        assert_eq!(count(&log, "activate"), 0);
+    }
+
+    #[tokio::test]
+    async fn an_open_that_is_cancelled_is_still_closed_by_release() {
+        use futures_util::FutureExt;
+        let mut b = fake();
+        b.hang = Some("open_lan_port");
+        let (link, log) = b.build();
+        // Polled once and dropped while the firewall call is pending.
+        assert!(link.host_lan(LAN_IP, 4000).now_or_never().is_none());
+        assert_eq!(count(&log, "open_lan_port home 4000"), 1);
+        assert_eq!(count(&log, "close_lan_port"), 0);
+        link.release().await;
+        // The port was recorded before it was opened, so it is closed.
+        assert_eq!(count(&log, "close_lan_port home 4000"), 1);
+        assert!(link.begin().is_ok());
+    }
+
+    #[tokio::test]
+    async fn release_finishes_even_if_the_port_was_never_added() {
+        let (link, log) = fake().fail(|op, _| op == "close_lan_port").build();
+        assert!(link.host_lan(LAN_IP, 4000).await.unwrap());
+        link.release().await;
+        assert_eq!(count(&log, "close_lan_port home 4000"), 1);
+        assert!(link.begin().is_ok());
+    }
+
+    #[test]
+    fn temporary_profiles_are_volatile_and_bound_to_the_daemon_and_saved_ones_are_not() {
+        for kind in [
+            Kind::Ap(BAND_5GHZ),
+            Kind::Client { hidden: false },
+            Kind::Client { hidden: true },
+        ] {
+            let o = activation_options(kind);
+            assert_eq!(o.len(), 2);
+            assert_eq!(o["persist"], Variant::from("volatile"));
+            assert_eq!(o["bind-activation"], Variant::from("dbus-client"));
+        }
+        for open in [false, true] {
+            let o = activation_options(Kind::Saved { open });
+            assert_eq!(o.len(), 1);
+            assert_eq!(o["persist"], Variant::from("disk"));
+        }
+    }
+
+    #[test]
+    fn only_a_vanished_object_or_connection_counts_as_gone() {
+        use zbus::fdo::Error as Fdo;
+        let fdo = |e: Fdo| zbus::Error::FDO(Box::new(e));
+        let call = zbus::Message::method_call("/org/freedesktop/NetworkManager", "Delete")
+            .build(&())
+            .unwrap();
+        let method_error = |name: &str, detail: Option<&str>| {
+            zbus::Error::MethodError(
+                zbus::names::OwnedErrorName::try_from(name).unwrap(),
+                detail.map(str::to_owned),
+                call.clone(),
+            )
+        };
+        assert!(is_gone(&fdo(Fdo::UnknownObject("x".into()))));
+        assert!(is_gone(&method_error(
+            "org.freedesktop.NetworkManager.UnknownConnection",
+            None
+        )));
+        assert!(is_gone(&method_error(
+            "org.freedesktop.DBus.Error.UnknownObject",
+            None
+        )));
+        // Too broad: it also means the object is not what we think it is.
+        assert!(!is_gone(&fdo(Fdo::UnknownMethod("x".into()))));
+        assert!(!is_gone(&method_error(
+            "org.freedesktop.DBus.Error.UnknownMethod",
+            None
+        )));
+        assert!(!is_gone(&fdo(Fdo::AccessDenied("x".into()))));
+        assert!(!is_gone(&zbus::Error::Failure("x".into())));
+        assert!(!is_gone(&method_error(
+            "org.freedesktop.NetworkManager.Settings.Connection.InvalidProperty",
+            None
+        )));
+    }
+
+    #[test]
+    fn a_port_that_is_not_open_is_recognised_in_the_firewalld_error() {
+        let call = zbus::Message::method_call("/org/fedoraproject/FirewallD1", "removePort")
+            .build(&())
+            .unwrap();
+        let exception = |detail: Option<&str>| {
+            zbus::Error::MethodError(
+                zbus::names::OwnedErrorName::try_from("org.fedoraproject.FirewallD1.Exception")
+                    .unwrap(),
+                detail.map(str::to_owned),
+                call.clone(),
+            )
+        };
+        assert!(is_port_not_enabled(&exception(Some(
+            "NOT_ENABLED: 4000:tcp"
+        ))));
+        assert!(!is_port_not_enabled(&exception(Some("INVALID_ZONE: x"))));
+        assert!(!is_port_not_enabled(&exception(None)));
+        assert!(!is_port_not_enabled(&zbus::Error::Failure("x".into())));
+    }
+
+    #[tokio::test]
+    async fn profiles_that_are_already_gone_are_not_a_problem() {
+        let mut b = fake();
+        b.stale = vec!["/old/1".into()];
+        b.fail = Box::new(|op, _| {
+            (op == "delete").then(|| io::Error::new(io::ErrorKind::NotFound, "gone"))
+        });
+        let (link, log) = b.build();
+        // The sweep at the start and the teardown both meet a profile that is gone.
+        link.host(1, None).await.unwrap();
+        link.release().await;
+        assert_eq!(count(&log, "delete /set/1"), 1);
+        assert_eq!(live(&link), 0);
+        // The link is free again.
+        link.host(1, None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_5ghz_support_follows_the_adapters_bands() {
+        for (flags, expected) in [
+            (FREQ_VALID | FREQ_2GHZ | FREQ_5GHZ, Some(true)),
+            (FREQ_VALID | FREQ_2GHZ, Some(false)),
+            // Band information that NetworkManager does not call valid says nothing.
+            (FREQ_2GHZ | FREQ_5GHZ, None),
+            (0, None),
+        ] {
+            let mut b = fake();
+            b.capabilities = flags;
+            let (link, _) = b.build();
+            assert_eq!(link.supports_5ghz().await, expected, "{flags:#x}");
+        }
+        for op in ["wifi_device", "wifi_capabilities"] {
+            let (link, _) = fake().fail(move |o, _| o == op).build();
+            assert_eq!(link.supports_5ghz().await, None, "{op}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_lan_firewall_rule_is_removed_without_touching_wifi() {
+        let (link, log) = fake().build();
+        {
+            let mut state = link.begin().unwrap();
+            state.lan_port = Some(("home".into(), 41234));
+        }
+        link.release().await;
+        assert_eq!(count(&log, "close_lan_port home 41234"), 1);
+        assert_eq!(count(&log, "deactivate"), 0);
+        assert_eq!(count(&log, "activate"), 0);
+        link.release().await;
+        assert_eq!(count(&log, "close_lan_port"), 1);
+    }
+
+    #[test]
+    fn join_settings_pin_known_band_and_channel() {
+        for (freq, band, channel) in [
+            (2412, "bg", 1),
+            (2437, "bg", 6),
+            (2472, "bg", 13),
+            (5180, "a", 36),
+            (5745, "a", 149),
+        ] {
+            let mut c = creds();
+            c.frequency_mhz = freq;
+            let s = client_settings("wlan0", &c, false).unwrap();
+            let w = wire::dict(&s).remove("802-11-wireless").unwrap();
+            assert_eq!(w["band"], Variant::from(band));
+            assert_eq!(w["channel"], Variant::from(channel as u32));
+        }
+        for freq in [0, 2000, 2484, 5000, 5182, 5210, 7000] {
+            let mut c = creds();
+            c.frequency_mhz = freq;
+            let s = client_settings("wlan0", &c, false).unwrap();
+            let w = wire::dict(&s).remove("802-11-wireless").unwrap();
+            assert!(!w.contains_key("band"), "{freq} must not pin a channel");
+            assert!(!w.contains_key("channel"));
+        }
     }
 
     #[tokio::test]
@@ -2658,7 +3440,7 @@ mod tests {
         let mut b = fake();
         b.previous = None;
         let (link, log) = b.build();
-        link.host(1).await.unwrap();
+        link.host(1, None).await.unwrap();
         link.release().await;
         assert_eq!(count(&log, "activate"), 0);
     }
@@ -2680,8 +3462,8 @@ mod tests {
         assert!(!d["ipv4"].contains_key("never-default"));
         assert!(!d["ipv4"].contains_key("ignore-auto-dns"));
         assert_eq!(persist_mode(s.kind), "disk");
-        assert_eq!(persist_mode(Kind::Client { hidden: false }), "memory");
-        assert_eq!(persist_mode(Kind::Ap(BAND_2GHZ)), "memory");
+        assert_eq!(persist_mode(Kind::Client { hidden: false }), "volatile");
+        assert_eq!(persist_mode(Kind::Ap(BAND_2GHZ)), "volatile");
         assert!(!format!("{s:?}").contains("Passw0rdPassw0rd"));
     }
 
@@ -2760,7 +3542,7 @@ mod tests {
     #[ignore = "needs NetworkManager and a Wi-Fi card that can run an access point"]
     async fn real_networkmanager_hosts_and_releases() {
         let link = NmLink::new();
-        let creds = link.host(40000).await.expect("hotspot");
+        let creds = link.host(40000, None).await.expect("hotspot");
         assert!(!creds.ssid.is_empty() && creds.password.len() >= 8);
         link.release().await;
     }

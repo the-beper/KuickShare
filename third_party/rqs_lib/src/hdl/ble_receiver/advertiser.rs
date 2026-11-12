@@ -11,7 +11,7 @@ use futures::FutureExt;
 use tokio::sync::Notify;
 use tokio::time::Instant;
 
-use super::service_data::SERVICE_UUID;
+use super::service_data::{SERVICE_UUID, build_legacy_header};
 
 const MIN_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_INTERVAL: Duration = Duration::from_millis(150);
@@ -28,7 +28,7 @@ pub fn required_adv_length(payload_len: usize) -> usize {
     payload_len + 4 + 3
 }
 
-pub fn advertisement(service_data: Vec<u8>) -> Advertisement {
+pub fn advertisement(service_data: Vec<u8>, legacy: bool) -> Advertisement {
     Advertisement {
         // Connectable: the phone connects to read slot 0 and open the weave socket.
         advertisement_type: Type::Peripheral,
@@ -36,9 +36,9 @@ pub fn advertisement(service_data: Vec<u8>) -> Advertisement {
         discoverable: Some(true),
         min_interval: Some(MIN_INTERVAL),
         max_interval: Some(MAX_INTERVAL),
-        // The service data does not fit a legacy PDU (31 bytes): without a secondary channel
-        // BlueZ may refuse the set (`Invalid Parameters`, seen upstream, not reproduced here).
-        secondary_channel: Some(SecondaryChannel::OneM),
+        // Only full service data needs an extended advertising set. 23 bytes of base64
+        // legacy header (plus flags and AD overhead) fit in the classic 31-byte PDU.
+        secondary_channel: (!legacy).then_some(SecondaryChannel::OneM),
         ..Default::default()
     }
 }
@@ -52,6 +52,7 @@ pub trait Register {
 struct BluerRegister {
     adapter: Arc<Adapter>,
     service_data: Vec<u8>,
+    legacy: bool,
 }
 
 impl Register for BluerRegister {
@@ -60,7 +61,7 @@ impl Register for BluerRegister {
     async fn register(&self) -> anyhow::Result<AdvertisementHandle> {
         Ok(self
             .adapter
-            .advertise(advertisement(self.service_data.clone()))
+            .advertise(advertisement(self.service_data.clone(), self.legacy))
             .await?)
     }
 }
@@ -98,28 +99,90 @@ impl ReceiverAdvertiser {
     }
 
     /// Advertises until the future is dropped, which deregisters the advertisement.
-    /// Fails if the very first registration does; later failures are retried.
+    /// Fails if the very first registration does (after the one retry of
+    /// [`retry_as_legacy`]); later failures are retried.
     pub async fn run(self) -> anyhow::Result<Infallible> {
-        // The payload does not fit a legacy advertisement; only extended advertising carries it.
-        if let Ok(Some(caps)) = self.adapter.supported_advertising_capabilities().await {
-            let need = required_adv_length(self.service_data.len());
-            if usize::from(caps.max_advertisement_length) < need {
-                bail!(
-                    "controller advertises at most {} bytes, {need} needed (no extended advertising?)",
-                    caps.max_advertisement_length
+        let full = self.service_data;
+        let max = match self.adapter.supported_advertising_capabilities().await {
+            Ok(Some(caps)) => Some(usize::from(caps.max_advertisement_length)),
+            _ => None,
+        };
+        let mut payload = payload_for(max, &full)?;
+        loop {
+            let (len, legacy) = (payload.data.len(), payload.legacy);
+            let register = BluerRegister {
+                adapter: self.adapter.clone(),
+                service_data: payload.data,
+                legacy,
+            };
+            let outcome = keep_advertising(&register, &self.rearm, TIMING, || {
+                info!(
+                    "ble receiver: advertising {len} bytes on 0x{SERVICE_UUID:04X} (legacy={legacy})"
                 );
+            })
+            .await;
+            match outcome {
+                Err(e) if retry_as_legacy(max, legacy, &e) => {
+                    warn!(
+                        "ble receiver: the extended advertisement was refused ({e:#}); trying the legacy header"
+                    );
+                    payload = legacy_payload(&full);
+                }
+                outcome => return outcome,
             }
         }
-        let len = self.service_data.len();
-        let register = BluerRegister {
-            adapter: self.adapter,
-            service_data: self.service_data,
-        };
-        keep_advertising(&register, &self.rearm, TIMING, || {
-            info!("ble receiver: advertising {len} bytes on 0x{SERVICE_UUID:04X}");
-        })
-        .await
     }
+}
+
+/// The service data to register and whether it needs the legacy set (the classic 31-byte PDU).
+#[derive(Debug, PartialEq, Eq)]
+pub struct Payload {
+    pub data: Vec<u8>,
+    pub legacy: bool,
+}
+
+fn legacy_payload(full: &[u8]) -> Payload {
+    Payload {
+        data: build_legacy_header(full),
+        legacy: true,
+    }
+}
+
+/// Picks the payload for a controller that can advertise `max_len` bytes (`None`: BlueZ did not
+/// say). The full record is kept whenever it fits or the capacity is unknown (the extended
+/// advertising path that works today); only a known shortfall selects the legacy header, with
+/// the full record still served from GATT slot 0.
+pub fn payload_for(max_len: Option<usize>, full: &[u8]) -> anyhow::Result<Payload> {
+    match max_len {
+        Some(max) if max < required_adv_length(full.len()) => {
+            let payload = legacy_payload(full);
+            let needed = required_adv_length(payload.data.len());
+            if max < needed {
+                bail!(
+                    "controller advertises at most {max} bytes, even a legacy Nearby header needs {needed}"
+                );
+            }
+            Ok(payload)
+        }
+        _ => Ok(Payload {
+            data: full.to_vec(),
+            legacy: false,
+        }),
+    }
+}
+
+/// With the capacity unknown the extended record was tried blind; a refusal of its parameters
+/// (BlueZ answers `InvalidArguments` or `InvalidLength`, *(inferred)* from the error kinds bluer
+/// knows) gets one retry with the legacy header. A known capacity was already respected by [`payload_for`].
+fn retry_as_legacy(max_len: Option<usize>, already_legacy: bool, error: &anyhow::Error) -> bool {
+    max_len.is_none()
+        && !already_legacy
+        && error.downcast_ref::<bluer::Error>().is_some_and(|e| {
+            matches!(
+                e.kind,
+                bluer::ErrorKind::InvalidArguments | bluer::ErrorKind::InvalidLength
+            )
+        })
 }
 
 /// Keeps one registration alive, replacing it every `reregister_every` and as soon as `rearm`
@@ -175,6 +238,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use crate::hdl::ble_receiver::service_data::parse_legacy_header;
 
     #[derive(Default)]
     struct Fake {
@@ -340,7 +404,7 @@ mod tests {
 
     #[test]
     fn advertisement_is_connectable_fast_and_carries_the_service_data() {
-        let adv = advertisement(vec![1, 2, 3]);
+        let adv = advertisement(vec![1, 2, 3], false);
         assert_eq!(adv.advertisement_type, Type::Peripheral);
         assert_eq!(adv.discoverable, Some(true));
         assert_eq!(adv.min_interval, Some(Duration::from_millis(100)));
@@ -354,10 +418,85 @@ mod tests {
     }
 
     #[test]
+    fn legacy_header_disables_secondary_channel_and_fits() {
+        let header = build_legacy_header(b"full advertisement");
+        let adv = advertisement(header.clone(), true);
+        assert!(required_adv_length(header.len()) <= 31);
+        assert_eq!(adv.secondary_channel, None);
+        assert_eq!(
+            adv.service_data.get(&Uuid::from_u16(SERVICE_UUID)),
+            Some(&header)
+        );
+    }
+
+    #[test]
     fn a_typical_payload_needs_extended_advertising() {
         use crate::hdl::ble_receiver::service_data::ReceiverAdvertisement;
         let data = ReceiverAdvertisement::new([b'A'; 4], 3, [0; 16], "my laptop").to_bytes();
         assert!(required_adv_length(data.len()) > 31);
         assert!(required_adv_length(data.len()) < 251);
+    }
+
+    const FULL_LEN: usize = 132;
+
+    #[test]
+    fn the_full_record_is_used_when_it_fits_or_the_capacity_is_unknown() {
+        let full = vec![7u8; FULL_LEN];
+        let expected = Payload {
+            data: full.clone(),
+            legacy: false,
+        };
+        assert_eq!(payload_for(None, &full).unwrap(), expected);
+        assert_eq!(
+            payload_for(Some(required_adv_length(FULL_LEN)), &full).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn a_controller_that_cannot_carry_the_record_gets_the_legacy_header() {
+        let full = vec![7u8; FULL_LEN];
+        let payload = payload_for(Some(required_adv_length(FULL_LEN) - 1), &full).unwrap();
+        assert!(payload.legacy);
+        assert_eq!(payload.data.len(), 23);
+        assert!(parse_legacy_header(&payload.data).is_some());
+        // 31 bytes, the classic PDU, is exactly enough for it.
+        assert!(payload_for(Some(31), &full).unwrap().legacy);
+    }
+
+    #[test]
+    fn a_controller_too_small_even_for_the_legacy_header_is_an_error() {
+        let full = vec![7u8; FULL_LEN];
+        let error = payload_for(Some(required_adv_length(23) - 1), &full).unwrap_err();
+        assert!(error.to_string().contains("legacy"), "{error}");
+    }
+
+    fn refused(kind: bluer::ErrorKind) -> anyhow::Error {
+        anyhow::Error::from(bluer::Error {
+            kind,
+            message: "refused".into(),
+        })
+        .context("registering the advertisement")
+    }
+
+    #[test]
+    fn only_a_blind_extended_registration_refused_for_its_parameters_is_retried() {
+        let invalid = refused(bluer::ErrorKind::InvalidArguments);
+        assert!(retry_as_legacy(None, false, &invalid));
+        assert!(retry_as_legacy(
+            None,
+            false,
+            &refused(bluer::ErrorKind::InvalidLength)
+        ));
+        // The capacity was known, or the legacy header was already the one refused.
+        assert!(!retry_as_legacy(Some(251), false, &invalid));
+        assert!(!retry_as_legacy(None, true, &invalid));
+        // Other failures are not about the size.
+        assert!(!retry_as_legacy(
+            None,
+            false,
+            &refused(bluer::ErrorKind::Failed)
+        ));
+        assert!(!retry_as_legacy(None, false, &anyhow::anyhow!("no bus")));
     }
 }

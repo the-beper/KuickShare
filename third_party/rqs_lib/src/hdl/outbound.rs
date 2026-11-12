@@ -373,6 +373,22 @@ impl OutboundRequest {
 
     pub async fn send_connection_request(&mut self) -> Result<(), anyhow::Error> {
         let device_name = DEVICE_NAME.read().unwrap().clone();
+        // The query is capped: a stuck NM D-Bus call must not delay the handshake.
+        let has_upgrade = self.mediums.is_none() && self.upgrade.enabled();
+        let supports_5ghz = if has_upgrade {
+            match self.upgrade.link() {
+                Some(link) => {
+                    tokio::time::timeout(Duration::from_millis(500), link.supports_5ghz())
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or(true)
+                }
+                None => true,
+            }
+        } else {
+            true
+        };
         let request = location_nearby_connections::OfflineFrame {
             version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
             v1: Some(location_nearby_connections::V1Frame {
@@ -397,13 +413,13 @@ impl OutboundRequest {
                     } else {
                         vec![Medium::WifiLan.into()]
                     },
-                    medium_metadata: (self.mediums.is_none() && self.upgrade.enabled()).then(
-                        || location_nearby_connections::MediumMetadata {
-                            supports_5_ghz: Some(true),
+                    medium_metadata: has_upgrade.then(|| {
+                        location_nearby_connections::MediumMetadata {
+                            supports_5_ghz: Some(supports_5ghz),
                             ap_frequency: Some(-1),
                             ..Default::default()
-                        },
-                    ),
+                        }
+                    }),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -1007,7 +1023,9 @@ impl OutboundRequest {
                 self.offer = None;
                 self.upgrade.begin_draining(stream);
             }
-            UpgradeEvent::Prepared(Ok(upgrade::Prepared::Hosted(..))) => {}
+            UpgradeEvent::Prepared(Ok(
+                upgrade::Prepared::Hosted(..) | upgrade::Prepared::HostedLan(..),
+            )) => {}
             UpgradeEvent::Prepared(Err(e)) => {
                 warn!("upgrade: not possible ({e:#}); staying on the current channel");
                 self.upgrade.fail().await;
@@ -2039,6 +2057,46 @@ pub(crate) async fn wait_for_cancel(rx: &mut Receiver<ChannelMessage>, id: &str)
 mod tests {
     use super::*;
     use tokio::io::AsyncReadExt;
+
+    /// Sender capability reaches the wire; an unknown 5 GHz ability stays true for
+    /// backwards compatibility, but a 2.4-only adapter must be reported accurately.
+    #[tokio::test]
+    async fn connection_request_reports_real_wifi_band_capability() {
+        use crate::upgrade::tests::FakeLink;
+        for (capability, expected) in [(Some(false), false), (Some(true), true), (None, true)] {
+            let (mut peer, ours) = tokio::io::duplex(4096);
+            let (bus, _rx) = tokio::sync::broadcast::channel(8);
+            let mut req = OutboundRequest::new_over(
+                *b"SEND",
+                MigratableStream::Duplex(ours),
+                "id".into(),
+                bus,
+                OutboundPayload::Text {
+                    text: "x".into(),
+                    text_type: TextPayloadType::Text,
+                },
+                RemoteDeviceInfo {
+                    device_type: crate::DeviceType::Unknown,
+                    name: "test".into(),
+                },
+            );
+            req.upgrade = UpgradeState::new(Some(std::sync::Arc::new(FakeLink {
+                capability,
+                ..Default::default()
+            })));
+            req.send_connection_request().await.unwrap();
+            let frame = upgrade::read_plain_frame(&mut peer).await.unwrap();
+            let metadata = frame
+                .v1
+                .unwrap()
+                .connection_request
+                .unwrap()
+                .medium_metadata
+                .unwrap();
+            assert_eq!(metadata.supports_5_ghz, Some(expected));
+            assert_eq!(metadata.ap_frequency, Some(-1));
+        }
+    }
 
     /// After an upgrade with disabled encryption frames are bare OfflineFrames both ways.
     #[tokio::test]

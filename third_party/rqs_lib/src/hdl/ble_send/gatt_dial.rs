@@ -18,6 +18,7 @@ use tokio::time::{Instant, sleep, timeout};
 
 use super::dial::{Next, SETTLE, drop_stale_link, next_step_within};
 use super::gatt_bridge::GattLink;
+use crate::hdl::ble_disconnect::{DISCONNECT_TIMEOUT, DisconnectOnDrop, disconnect};
 use crate::hdl::ble_receiver::gatt::{FROM_PERIPHERAL_UUID, TO_PERIPHERAL_UUID};
 use crate::hdl::ble_receiver::service_data::SERVICE_UUID;
 use crate::hdl::ble_scan::{ScanResult, wait_discovery_stopped};
@@ -26,13 +27,11 @@ const INNER_NAME: &str = "GattDial";
 /// Whole dial, settle and service discovery included. A send scans for at most 12 s and the
 /// app gives up on a send that has not started after 40 s (`BLE_START_TIMEOUT`), so this
 /// leaves the rest for the first frame.
-const GATT_DIAL_TIMEOUT: Duration = Duration::from_secs(22);
+pub(crate) const GATT_DIAL_TIMEOUT: Duration = Duration::from_secs(22);
 /// One `connect` call. The Galaxy A55 took 5.8 s once (0.8 s on other runs).
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long to wait for BlueZ to list a device it dropped, once the phone is heard again.
 const REDISCOVER_TIMEOUT: Duration = Duration::from_secs(5);
-/// BlueZ was seen finishing a disconnect 0.3-0.6 s after 2 s.
-const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the last queued writes get to go out once the bridge is done.
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(3);
 /// Writes waiting for the pump; a full queue blocks the bridge.
@@ -76,17 +75,6 @@ pub async fn dial_gatt(adapter: &Adapter, scan: &ScanResult) -> anyhow::Result<G
     }
     guard.0 = None;
     result
-}
-
-/// Closes the link, or cancels the connect BlueZ still has pending, when dropped while armed.
-struct DisconnectOnDrop(Option<Device>);
-
-impl Drop for DisconnectOnDrop {
-    fn drop(&mut self) {
-        if let (Some(device), Ok(rt)) = (self.0.take(), tokio::runtime::Handle::try_current()) {
-            rt.spawn(async move { disconnect(&device).await });
-        }
-    }
 }
 
 async fn dial(
@@ -275,17 +263,6 @@ async fn rediscover(adapter: &Adapter, address: Address) {
     );
 }
 
-/// Best effort: a link that cannot be closed is BlueZ's to clean up.
-async fn disconnect(device: &Device) {
-    match timeout(DISCONNECT_TIMEOUT, device.disconnect()).await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => debug!("{INNER_NAME}: disconnect failed: {e}"),
-        Err(_) => debug!(
-            "{INNER_NAME}: no answer to the disconnect within {DISCONNECT_TIMEOUT:?}; BlueZ closes the link later"
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,7 +303,7 @@ mod tests {
 #[cfg(test)]
 pub(crate) mod hardware_probe {
     use super::*;
-    use crate::hdl::ble_scan::{Dedup, SCAN_WINDOW, ScanEvent, scan_window};
+    use crate::hdl::ble_scan::{Dedup, SCAN_WINDOW, SEND_LEGACY_READS, ScanEvent, scan_window};
 
     /// Hand test on a real adapter and phone: open Quick Share on the phone (Everyone), then
     /// run `cargo test -p rqs_lib --no-run` and execute the printed test binary on the host
@@ -347,12 +324,18 @@ pub(crate) mod hardware_probe {
 
         let wanted = std::env::var("KS_ENDPOINT").ok();
         let mut found: Vec<ScanResult> = Vec::new();
-        scan_window(&adapter, SCAN_WINDOW, &mut Dedup::default(), |event| {
-            if let ScanEvent::Found(r) = event {
-                println!("found {r:?}");
-                found.push(r);
-            }
-        })
+        scan_window(
+            &adapter,
+            SCAN_WINDOW,
+            SEND_LEGACY_READS,
+            &mut Dedup::default(),
+            |event| {
+                if let ScanEvent::Found(r) = event {
+                    println!("found {r:?}");
+                    found.push(r);
+                }
+            },
+        )
         .await
         .expect("scan window");
         let scan = found

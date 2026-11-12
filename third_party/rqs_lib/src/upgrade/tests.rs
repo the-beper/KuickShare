@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use once_cell::sync::Lazy;
@@ -136,6 +136,270 @@ fn hotspot_is_only_skipped_when_the_peer_lists_other_mediums() {
 }
 
 #[test]
+fn lan_offer_carries_an_ipv4_address_and_ephemeral_port() {
+    let ip = Ipv4Addr::new(192, 168, 12, 5);
+    let frame = lan_path_available_frame(ip, 45678, false);
+    let bwu = parse_bwu(&frame).unwrap();
+    assert_eq!(bwu.event_type(), EventType::UpgradePathAvailable);
+    let info = bwu.upgrade_path_info.as_ref().unwrap();
+    assert_eq!(info.medium(), Medium::WifiLan);
+    assert!(info.supports_client_introduction_ack());
+    assert_eq!(
+        info.wifi_lan_socket.as_ref().unwrap().ip_address.as_deref(),
+        Some(ip.octets().as_slice())
+    );
+    assert_eq!(
+        info.wifi_lan_socket.as_ref().unwrap().wifi_port,
+        Some(45678)
+    );
+    assert_eq!(info.supports_disabling_encryption, None);
+    assert_eq!(
+        parse_bwu(&lan_path_available_frame(ip, 45678, true))
+            .unwrap()
+            .upgrade_path_info
+            .as_ref()
+            .unwrap()
+            .supports_disabling_encryption,
+        Some(true)
+    );
+}
+
+#[tokio::test]
+async fn inbound_prefers_lan_then_hotspot_then_ble() {
+    let with_lan = Arc::new(FakeLink {
+        lan_address: Some(Ipv4Addr::LOCALHOST),
+        ..Default::default()
+    });
+    let result = prepare_inbound(with_lan.clone(), true, true, Some(false))
+        .await
+        .unwrap();
+    let Prepared::HostedLan(Ipv4Addr::LOCALHOST, listener) = result else {
+        panic!("expected a LAN offer");
+    };
+    // The listener is bound to the offered address and the link was asked for its port.
+    let bound_to = listener.local_addr().unwrap();
+    assert_eq!(bound_to.ip(), std::net::IpAddr::from(Ipv4Addr::LOCALHOST));
+    assert_eq!(*with_lan.lan_ports.lock().unwrap(), [bound_to.port()]);
+    assert_eq!(with_lan.hosts.load(Ordering::SeqCst), 0);
+    assert_eq!(with_lan.releases.load(Ordering::SeqCst), 0);
+
+    // No LAN address: the hotspot, 2.4 GHz for a phone without 5 GHz.
+    let hotspot = Arc::new(FakeLink::default());
+    let result = prepare_inbound(hotspot.clone(), true, true, Some(false))
+        .await
+        .unwrap();
+    assert!(matches!(result, Prepared::Hosted(_, _)));
+    assert_eq!(hotspot.lan_hosts.load(Ordering::SeqCst), 0);
+    assert_eq!(hotspot.hosts.load(Ordering::SeqCst), 1);
+    assert!(hotspot.hosted_2ghz.load(Ordering::SeqCst));
+
+    // Neither: stays on BLE.
+    assert!(
+        prepare_inbound(hotspot.clone(), true, false, None)
+            .await
+            .is_err()
+    );
+    assert_eq!(hotspot.hosts.load(Ordering::SeqCst), 1);
+    // The peer does not list WIFI_LAN: the LAN is not even asked about.
+    assert!(matches!(
+        prepare_inbound(with_lan.clone(), false, true, None)
+            .await
+            .unwrap(),
+        Prepared::Hosted(..)
+    ));
+    assert_eq!(with_lan.lan_hosts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_refused_or_failed_lan_port_goes_to_the_hotspot() {
+    // The zone refuses: nothing was changed, so nothing is released.
+    let refusing = Arc::new(FakeLink {
+        lan_address: Some(Ipv4Addr::LOCALHOST),
+        lan_refuses: true,
+        ..Default::default()
+    });
+    let result = prepare_inbound(refusing.clone(), true, true, None)
+        .await
+        .unwrap();
+    assert!(matches!(result, Prepared::Hosted(..)));
+    assert_eq!(refusing.hosts.load(Ordering::SeqCst), 1);
+    assert_eq!(refusing.releases.load(Ordering::SeqCst), 0);
+
+    // An error: whatever was half done is released before the hotspot.
+    let failing = Arc::new(FakeLink {
+        lan_address: Some(Ipv4Addr::LOCALHOST),
+        lan_fails: true,
+        ..Default::default()
+    });
+    let result = prepare_inbound(failing.clone(), true, true, None)
+        .await
+        .unwrap();
+    assert!(matches!(result, Prepared::Hosted(..)));
+    assert_eq!(failing.hosts.load(Ordering::SeqCst), 1);
+    assert_eq!(failing.releases.load(Ordering::SeqCst), 1);
+
+    // Without the hotspot the session stays on BLE.
+    let stay = Arc::new(FakeLink {
+        lan_address: Some(Ipv4Addr::LOCALHOST),
+        lan_fails: true,
+        ..Default::default()
+    });
+    assert!(
+        prepare_inbound(stay.clone(), true, false, None)
+            .await
+            .is_err()
+    );
+    assert_eq!(stay.hosts.load(Ordering::SeqCst), 0);
+}
+
+/// A receiver state that has prepared a LAN offer and waits for the peer on it.
+async fn waiting_on_lan(link: &Arc<FakeLink>, mediums: &[i32]) -> UpgradeState {
+    let mut state = UpgradeState::new(Some(link.clone()));
+    state.set_peer_mediums(mediums);
+    let (lan, hotspot, peer_5ghz) = state.peer_upgrade_options();
+    state.begin_preparing(tokio::spawn(prepare_inbound(
+        link.clone(),
+        lan,
+        hotspot,
+        peer_5ghz,
+    )));
+    let UpgradeEvent::Prepared(Ok(Prepared::HostedLan(ip, listener))) = state.next_event().await
+    else {
+        panic!("expected a LAN offer");
+    };
+    state.begin_waiting_lan(tokio::spawn(accept_introduced(
+        listener,
+        "WXYZ".into(),
+        ip,
+        false,
+    )));
+    state
+}
+
+fn lan_and_hotspot() -> [i32; 2] {
+    use crate::location_nearby_connections::connection_request_frame::Medium as M;
+    [M::WifiLan as i32, M::WifiHotspot as i32]
+}
+
+#[tokio::test]
+async fn the_lan_accept_window_is_short() {
+    let link = Arc::new(FakeLink {
+        lan_address: Some(Ipv4Addr::LOCALHOST),
+        ..Default::default()
+    });
+    let state = waiting_on_lan(&link, &lan_and_hotspot()).await;
+    let left = state.deadline.unwrap() - Instant::now();
+    assert!(left <= LAN_ACCEPT_TIMEOUT && LAN_ACCEPT_TIMEOUT < ACCEPT_TIMEOUT);
+    assert!(left > LAN_ACCEPT_TIMEOUT - Duration::from_secs(2));
+}
+
+#[tokio::test]
+async fn a_lan_accept_timeout_offers_the_hotspot_once() {
+    let link = Arc::new(FakeLink {
+        lan_address: Some(Ipv4Addr::LOCALHOST),
+        ..Default::default()
+    });
+    let mut state = waiting_on_lan(&link, &lan_and_hotspot()).await;
+    assert_eq!(link.hosts.load(Ordering::SeqCst), 0);
+
+    state.deadline = Some(Instant::now());
+    assert!(matches!(
+        state.next_event().await,
+        UpgradeEvent::WaitTimedOut
+    ));
+    state.fail().await;
+    // The LAN lease is released, then the hotspot is prepared.
+    assert_eq!(link.releases.load(Ordering::SeqCst), 1);
+    assert!(state.in_progress());
+    let UpgradeEvent::Prepared(Ok(Prepared::Hosted(_, listener))) = state.next_event().await else {
+        panic!("expected a hotspot offer");
+    };
+    assert_eq!(link.hosts.load(Ordering::SeqCst), 1);
+    assert_eq!(link.lan_hosts.load(Ordering::SeqCst), 1);
+    state.begin_waiting(tokio::spawn(accept_introduced(
+        listener,
+        "WXYZ".into(),
+        LO,
+        false,
+    )));
+    assert!(
+        state
+            .deadline
+            .is_some_and(|d| d > Instant::now() + LAN_ACCEPT_TIMEOUT)
+    );
+
+    // The hotspot failing in turn ends the upgrade: no third offer.
+    state.fail().await;
+    assert_eq!(link.releases.load(Ordering::SeqCst), 2);
+    assert!(!state.in_progress());
+    assert!(!state.can_start());
+    assert_eq!(link.hosts.load(Ordering::SeqCst), 1);
+    assert_eq!(link.lan_hosts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_peer_failure_after_the_lan_offer_offers_the_hotspot() {
+    let link = Arc::new(FakeLink {
+        lan_address: Some(Ipv4Addr::LOCALHOST),
+        ..Default::default()
+    });
+    let mut state = waiting_on_lan(&link, &lan_and_hotspot()).await;
+    assert!(state.is_waiting());
+    state.fail().await;
+    assert!(matches!(
+        state.next_event().await,
+        UpgradeEvent::Prepared(Ok(Prepared::Hosted(..)))
+    ));
+    assert_eq!(link.hosts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_failed_lan_offer_stays_on_ble_when_the_hotspot_is_not_allowed() {
+    use crate::location_nearby_connections::connection_request_frame::Medium as M;
+    let link = Arc::new(FakeLink {
+        lan_address: Some(Ipv4Addr::LOCALHOST),
+        ..Default::default()
+    });
+    let mut state = waiting_on_lan(&link, &[M::WifiLan as i32]).await;
+    state.fail().await;
+    assert!(!state.in_progress());
+    assert!(!state.can_start());
+    assert_eq!(link.hosts.load(Ordering::SeqCst), 0);
+    assert_eq!(link.releases.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_connected_lan_peer_closes_the_port_early_and_a_hotspot_never_does() {
+    let link = Arc::new(FakeLink {
+        lan_address: Some(Ipv4Addr::LOCALHOST),
+        ..Default::default()
+    });
+    let mut state = waiting_on_lan(&link, &lan_and_hotspot()).await;
+    state.close_lan_port().await;
+    assert_eq!(link.lan_closes.load(Ordering::SeqCst), 1);
+
+    let hotspot = Arc::new(FakeLink::default());
+    let mut state = UpgradeState::new(Some(hotspot.clone()));
+    state.close_lan_port().await;
+    assert_eq!(hotspot.lan_closes.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn lan_is_only_offered_for_explicit_peer_capability() {
+    use crate::location_nearby_connections::connection_request_frame::Medium as M;
+    assert!(!peer_allows_lan(&[]));
+    assert!(!peer_allows_lan(&[M::WifiHotspot as i32]));
+    assert!(peer_allows_lan(&[M::WifiLan as i32]));
+    let mut state = UpgradeState::new(Some(Arc::new(FakeLink::default())));
+    state.set_peer_mediums(&[M::WifiLan as i32]);
+    state.set_peer_5ghz(Some(false));
+    assert!(state.can_start());
+    assert_eq!(state.peer_upgrade_options(), (true, false, Some(false)));
+    state.set_peer_mediums(&[M::Bluetooth as i32]);
+    assert!(!state.can_start());
+}
+
+#[test]
 fn handover_needs_both_peer_events() {
     let mut h = Handover::default();
     assert!(!h.is_complete());
@@ -219,14 +483,55 @@ pub(crate) struct FakeLink {
     pub host_busy: bool,
     pub join_fails: bool,
     pub host_delay: Duration,
+    pub lan_address: Option<Ipv4Addr>,
+    /// `host_lan` answers `Ok(false)`: the zone refuses the port.
+    pub lan_refuses: bool,
+    pub lan_fails: bool,
+    pub lan_hosts: AtomicUsize,
+    /// The ports `host_lan` was asked to open.
+    pub lan_ports: std::sync::Mutex<Vec<u16>>,
+    pub lan_closes: AtomicUsize,
+    pub hosted_2ghz: AtomicBool,
+    pub capability: Option<bool>,
     pub hosts: AtomicUsize,
     pub joins: AtomicUsize,
     pub releases: AtomicUsize,
 }
 
 impl WifiLink for FakeLink {
-    fn host(&self, port: u16) -> BoxFuture<'_, io::Result<WifiCredentials>> {
+    fn supports_5ghz(&self) -> BoxFuture<'_, Option<bool>> {
+        Box::pin(async move { self.capability })
+    }
+
+    fn lan_address(&self) -> BoxFuture<'_, Option<Ipv4Addr>> {
+        Box::pin(async move { self.lan_address })
+    }
+
+    fn host_lan(&self, _ip: Ipv4Addr, port: u16) -> BoxFuture<'_, io::Result<bool>> {
         Box::pin(async move {
+            self.lan_hosts.fetch_add(1, Ordering::SeqCst);
+            self.lan_ports.lock().unwrap().push(port);
+            if self.lan_fails {
+                return Err(io::Error::other("no LAN port"));
+            }
+            Ok(!self.lan_refuses)
+        })
+    }
+
+    fn close_lan(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            self.lan_closes.fetch_add(1, Ordering::SeqCst);
+        })
+    }
+
+    fn host(
+        &self,
+        port: u16,
+        peer_5ghz: Option<bool>,
+    ) -> BoxFuture<'_, io::Result<WifiCredentials>> {
+        Box::pin(async move {
+            self.hosted_2ghz
+                .store(peer_5ghz == Some(false), Ordering::SeqCst);
             self.hosts.fetch_add(1, Ordering::SeqCst);
             tokio::time::sleep(self.host_delay).await;
             if self.host_busy {
@@ -355,6 +660,55 @@ async fn introduction_over_loopback_ignores_strangers() {
 }
 
 #[tokio::test]
+async fn three_wrong_introductions_end_the_wait() {
+    let (listener, port) = bound().await;
+    let server = tokio::spawn(accept_introduced(listener, "WXYZ".into(), LO, false));
+    let intruders: Vec<_> = (0..MAX_WRONG_INTRO).map(|_| client(port, "EVIL")).collect();
+    let err = server.await.unwrap().unwrap_err();
+    assert!(
+        err.to_string().contains("too many wrong introductions"),
+        "{err}"
+    );
+    for intruder in intruders {
+        assert!(intruder.await.unwrap().is_err());
+    }
+}
+
+#[tokio::test]
+async fn the_right_peer_still_wins_after_two_wrong_introductions() {
+    let (listener, port) = bound().await;
+    let server = tokio::spawn(accept_introduced(listener, "WXYZ".into(), LO, false));
+    for _ in 0..MAX_WRONG_INTRO - 1 {
+        // The server closes a wrong connection without an ACK: the client's connect fails.
+        assert!(client(port, "EVIL").await.unwrap().is_err());
+    }
+    let client = client(port, "WXYZ");
+    let mut accepted = server.await.unwrap().unwrap();
+    write_plain_frame(&mut accepted, &client_introduction_ack_frame())
+        .await
+        .unwrap();
+    client.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn junk_and_silent_connections_do_not_count_as_wrong_introductions() {
+    let (listener, port) = bound().await;
+    let server = tokio::spawn(accept_introduced(listener, "WXYZ".into(), LO, false));
+    let mut junk = Vec::new();
+    for _ in 0..MAX_WRONG_INTRO + 1 {
+        let mut c = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        c.write_all(&[0, 0, 0, 3, 1, 2, 3]).await.unwrap();
+        junk.push(c);
+    }
+    let client = client(port, "WXYZ");
+    let mut accepted = server.await.unwrap().unwrap();
+    write_plain_frame(&mut accepted, &client_introduction_ack_frame())
+        .await
+        .unwrap();
+    client.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn the_host_keeps_its_own_encryption_choice_when_the_client_differs() {
     for offered in [true, false] {
         let (listener, port) = bound().await;
@@ -417,7 +771,7 @@ async fn pending_setup_does_not_block_the_event_loop() {
     });
     let mut state = UpgradeState::new(Some(link.clone()));
     let (listener, _) = bound().await;
-    state.begin_preparing(tokio::spawn(prepare_host(link.clone(), listener)));
+    state.begin_preparing(tokio::spawn(prepare_host(link.clone(), listener, None)));
     assert!(!state.can_start());
     assert!(
         timeout(Duration::from_millis(200), state.next_event())
@@ -568,7 +922,7 @@ async fn a_refused_session_does_not_release_the_other_sessions_link() {
         });
         let mut state = UpgradeState::new(Some(link.clone()));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        state.begin_preparing(tokio::spawn(prepare_host(link.clone(), listener)));
+        state.begin_preparing(tokio::spawn(prepare_host(link.clone(), listener, None)));
         assert!(matches!(
             state.next_event().await,
             UpgradeEvent::Prepared(Err(_))
