@@ -1902,9 +1902,10 @@ pub async fn watch_network(core: Arc<tokio::sync::Mutex<Core>>) {
     }
 }
 
-/// A Bluetooth send scans for at most 12 s, then dials (a GATT dial takes up to 22 s) and waits
-/// for the phone's first frame. The library reports a failure itself; this only covers a hang.
-const BLE_START_TIMEOUT: Duration = Duration::from_secs(40);
+/// A Bluetooth send scans for at most 12 s, dials (L2CAP up to 15 s, then GATT only if 22 s are
+/// left) and waits for the phone's first frame, all within the library's `BLE_START_BUDGET`. The
+/// library reports a failure itself; this only covers a hang.
+const BLE_START_TIMEOUT: Duration = rqs_lib::BLE_START_BUDGET;
 
 /// A LAN send connects within 8 s and finishes the handshake within 20 s (both enforced by the
 /// library, which reports the failure); this only covers a hang. Below the shell's own 45 s.
@@ -3242,6 +3243,12 @@ mod tests {
         assert!(rqs_lib::manager::STOP_WIND_DOWN >= Duration::from_millis(400));
         assert!(rqs_lib::manager::STOP_WIND_DOWN < SHUTDOWN_STOP.service);
         assert!(SHUTDOWN_STOP.service < RESTART_STOP.service);
+    }
+
+    #[test]
+    fn the_ble_start_watchdog_fits_in_the_shells_timer() {
+        // The shell's own timer for a send is 45 s (`corebridge.cpp`).
+        assert!(BLE_START_TIMEOUT < Duration::from_secs(45));
     }
 
     /// What the user's Cancel puts on the bus: an action, not a word of the library.

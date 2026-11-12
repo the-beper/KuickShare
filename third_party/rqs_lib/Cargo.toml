@@ -46,6 +46,8 @@ tokio = { version = "1.54", features = [
     "time",
     "io-util",
     "signal",
+    # start_paused and pause() in the timing tests; rqs_lib is not a workspace member, so a dev-dependency would break `cargo test -p rqs_lib`
+    "test-util",
 ] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

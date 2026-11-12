@@ -5,6 +5,9 @@
 //! with `DATA = 23 | fc9f5e | endpoint_id(4) | info_len | endpoint_info | mac(6) | 00 00`.
 
 use super::socket::SERVICE_HASH;
+use base64::Engine;
+use base64::engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE_NO_PAD};
+use sha2::{Digest, Sha256};
 
 /// 16-bit service UUID of the receiver advertisement and the GATT service.
 pub const SERVICE_UUID: u16 = 0xFEF3;
@@ -21,6 +24,187 @@ const MAX_PARSE_LEN: usize = 512;
 const DATA_VERSION_PCP: u8 = 0x23;
 const MASK_PSM: u8 = 0x01;
 const MASK_RX_INSTANT: u8 = 0x02;
+
+/// The legacy advertisement is a base64url encoding of 17 bytes. It announces
+/// the full advertisement in GATT slot 0; unlike the 0x4a fast form it has a
+/// service-id bloom filter and an advertisement hash, not endpoint metadata.
+/// Layout: `flags(1) | bloom(10) | advert_hash(4) | psm(2)`; PR #8 of rquickshare
+/// (`ble_discovery/adv.rs`, from google/nearby `ble_advertisement_header.cc`) builds it the same way.
+const LEGACY_HEADER_BYTES: usize = 17;
+/// Version of the header, bits 7..5 of byte 0: the one field known for sure (PR #8 and the
+/// captured header both read `2`).
+const HEADER_VERSION: u8 = 2;
+/// Byte 0 below the version. Only "`1` is one slot, not extended" comes from PR #8; where the
+/// extended flag sits (bit 4) and that the low nibble counts slots are *(inferred)* from the one
+/// captured header, whose byte 0 is `0x55`: version 2, bit 4 set, low nibble 5.
+const HEADER_EXTENDED: u8 = 0x10;
+const HEADER_SLOTS_MASK: u8 = 0x0f;
+const BLOOM_FILTER_LEN: usize = 10;
+const BLOOM_HASHES: i32 = 5;
+const DUMMY_SERVICE_ID_LEN: usize = 128;
+const SERVICE_ID: &str = "NearbySharing";
+
+/// Last four hash bytes cannot authenticate the remote record: the dummy seed is
+/// intentionally unpublished. Parse the *full* GATT record before listing it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LegacyHeader {
+    pub advert_hash: [u8; 4],
+}
+
+/// Returns None for unrelated services, malformed headers and normal 0x48/0x4a data.
+pub fn parse_legacy_header(data: &[u8]) -> Option<LegacyHeader> {
+    let text = std::str::from_utf8(data).ok()?.trim_end_matches('=');
+    let raw = URL_SAFE_NO_PAD
+        .decode(text)
+        .or_else(|_| STANDARD_NO_PAD.decode(text))
+        .ok()?;
+    if raw.len() != LEGACY_HEADER_BYTES
+        || raw[0] >> 5 != HEADER_VERSION
+        || !bloom_contains(&raw[1..11], SERVICE_ID.as_bytes())
+    {
+        return None;
+    }
+    Some(LegacyHeader {
+        advert_hash: raw[11..15].try_into().ok()?,
+    })
+}
+
+/// Generate a private randomized Nearby Connections bloom header. The complete
+/// receiver record remains in GATT slot 0; the header itself reveals no name.
+pub fn build_legacy_header(full: &[u8]) -> Vec<u8> {
+    let mut dummy = [0u8; DUMMY_SERVICE_ID_LEN];
+    rand::fill(&mut dummy[..]);
+    URL_SAFE_NO_PAD
+        .encode(legacy_header_bytes(SERVICE_ID, &dummy, full))
+        .into_bytes()
+}
+
+/// Byte 0 of the legacy header; see [`HEADER_EXTENDED`] for what is known of the layout.
+fn legacy_header_flags(extended: bool, slots: u8) -> u8 {
+    (HEADER_VERSION << 5) | if extended { HEADER_EXTENDED } else { 0 } | (slots & HEADER_SLOTS_MASK)
+}
+
+fn legacy_header_bytes(service_id: &str, dummy: &[u8], full: &[u8]) -> [u8; LEGACY_HEADER_BYTES] {
+    let mut bloom = [0u8; BLOOM_FILTER_LEN];
+    bloom_add(&mut bloom, dummy);
+    bloom_add(&mut bloom, service_id.as_bytes());
+    let seed = Sha256::digest(dummy);
+    // Same formula as PR #8's `header_bytes`: the first 4 bytes of SHA-256(first 4 bytes of
+    // SHA-256(dummy service id) | full record). The captured header cannot confirm it (its dummy
+    // service id is unknown), and whether a phone checks the hash is unknown: *(inferred)* that
+    // it only uses it as a cache key.
+    let advert_hash = Sha256::new()
+        .chain_update(&seed[..4])
+        .chain_update(full)
+        .finalize();
+    let mut result = [0u8; LEGACY_HEADER_BYTES];
+    // Slot 0 only, no extended advertisement: this advertiser has a PSM-less GATT record.
+    result[0] = legacy_header_flags(false, 1);
+    result[1..11].copy_from_slice(&bloom);
+    result[11..15].copy_from_slice(&advert_hash[..4]);
+    // The PSM bytes stay 0: the GATT weave socket is used.
+    result
+}
+
+fn bloom_positions(data: &[u8]) -> impl Iterator<Item = usize> {
+    let (hash, _) = murmur3_x64_128(data, 0);
+    let (h1, h2) = (hash as i32, (hash >> 32) as i32);
+    (1..=BLOOM_HASHES).map(move |n| {
+        let combined = h1.wrapping_add(n.wrapping_mul(h2));
+        let positive = if combined < 0 { !combined } else { combined };
+        positive as usize % (BLOOM_FILTER_LEN * 8)
+    })
+}
+
+fn bloom_add(bloom: &mut [u8; BLOOM_FILTER_LEN], data: &[u8]) {
+    for pos in bloom_positions(data) {
+        bloom[pos / 8] |= 1 << (pos % 8);
+    }
+}
+
+fn bloom_contains(bloom: &[u8], data: &[u8]) -> bool {
+    bloom_positions(data).all(|pos| bloom[pos / 8] & (1 << (pos % 8)) != 0)
+}
+
+/// MurmurHash3 x64 128-bit, with the Nearby bloom filter's 32-bit slices of h1.
+fn murmur3_x64_128(data: &[u8], seed: u64) -> (u64, u64) {
+    const C1: u64 = 0x87c3_7b91_1142_53d5;
+    const C2: u64 = 0x4cf5_ad43_2745_937f;
+    fn fmix(mut k: u64) -> u64 {
+        k ^= k >> 33;
+        k = k.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        k ^= k >> 33;
+        k = k.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+        k ^ (k >> 33)
+    }
+    let mix1 = |k: u64| k.wrapping_mul(C1).rotate_left(31).wrapping_mul(C2);
+    let mix2 = |k: u64| k.wrapping_mul(C2).rotate_left(33).wrapping_mul(C1);
+    let (mut h1, mut h2) = (seed, seed);
+    // The words are read from fixed-size arrays, so the slice lengths cannot differ.
+    fn word(block: &[u8; 16], index: usize) -> u64 {
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&block[index * 8..index * 8 + 8]);
+        u64::from_le_bytes(bytes)
+    }
+    let (blocks, tail) = data.as_chunks::<16>();
+    for block in blocks {
+        let (k1, k2) = (word(block, 0), word(block, 1));
+        h1 ^= mix1(k1);
+        h1 = h1
+            .rotate_left(27)
+            .wrapping_add(h2)
+            .wrapping_mul(5)
+            .wrapping_add(0x52dc_e729);
+        h2 ^= mix2(k2);
+        h2 = h2
+            .rotate_left(31)
+            .wrapping_add(h1)
+            .wrapping_mul(5)
+            .wrapping_add(0x3849_5ab5);
+    }
+    let mut padded = [0u8; 16];
+    padded[..tail.len()].copy_from_slice(tail);
+    if tail.len() > 8 {
+        h2 ^= mix2(word(&padded, 1));
+    }
+    if !tail.is_empty() {
+        h1 ^= mix1(word(&padded, 0));
+    }
+    h1 ^= data.len() as u64;
+    h2 ^= data.len() as u64;
+    h1 = h1.wrapping_add(h2);
+    h2 = h2.wrapping_add(h1);
+    h1 = fmix(h1);
+    h2 = fmix(h2);
+    h1 = h1.wrapping_add(h2);
+    h2 = h2.wrapping_add(h1);
+    (h1, h2)
+}
+
+/// Minimum bytes required to parse a slot-0 advertisement, including PSM and
+/// RxInstant fields when present. Rejects bogus lengths instead of allocating.
+pub fn regular_length(data: &[u8]) -> Option<usize> {
+    if data.len() < 8 || data[0] != HEADER || &data[1..4] != SERVICE_HASH.as_slice() {
+        return None;
+    }
+    let len = u32::from_be_bytes(data[4..8].try_into().ok()?) as usize;
+    let tail = 8usize.checked_add(len)?;
+    let mask_at = tail.checked_add(2)?;
+    let mut total = mask_at.checked_add(1)?;
+    if total > MAX_PARSE_LEN {
+        return None;
+    }
+    if let Some(&mask) = data.get(mask_at) {
+        if mask & MASK_PSM != 0 {
+            total += 2;
+        }
+        if mask & MASK_RX_INSTANT != 0 {
+            let rx_len = data.get(total).copied().unwrap_or(0);
+            total += 1 + usize::from(rx_len);
+        }
+    }
+    (total <= MAX_PARSE_LEN).then_some(total)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceiverAdvertisement {
@@ -325,6 +509,74 @@ mod tests {
         let parsed = ReceiverAdvertisement::parse(&adv.to_bytes()).unwrap();
         assert_eq!(parsed.name, adv.name);
         assert!(adv.to_bytes().len() < 251);
+    }
+
+    #[test]
+    fn legacy_header_matches_nearby_reference_vectors() {
+        assert_eq!(murmur3_x64_128(b"", 0), (0, 0));
+        assert_eq!(
+            murmur3_x64_128(b"The quick brown fox jumps over the lazy dog", 0),
+            (0xe34bbc7bbc071b6c, 0x7a433ca9c49a9347)
+        );
+        let captured = parse_legacy_header(b"VSAACFACACADAQFQDlSFAAA").unwrap();
+        assert_eq!(captured.advert_hash, [0x50, 0x0e, 0x54, 0x85]);
+        assert!(parse_legacy_header(b"VSAACFACACADAQFQDlSFAAA!").is_none());
+        assert!(parse_legacy_header(&[0x4a, 0x17]).is_none());
+        assert!(parse_legacy_header(b"a random Bluetooth name").is_none());
+    }
+
+    #[test]
+    fn legacy_header_byte_0_has_the_known_version_and_the_inferred_rest() {
+        let captured = URL_SAFE_NO_PAD.decode("VSAACFACACADAQFQDlSFAAA").unwrap();
+        assert_eq!(captured[0], 0x55);
+        assert_eq!(captured[0] >> 5, HEADER_VERSION);
+        // Known from PR #8: version 2, not extended, one slot.
+        assert_eq!(legacy_header_flags(false, 1), 0x41);
+        // (inferred) layout: it reproduces the captured byte with the extended bit and 5 slots.
+        assert_eq!(legacy_header_flags(true, 5), captured[0]);
+        let full = ReceiverAdvertisement::new(*b"ABCD", 3, [7; 16], "laptop").to_bytes();
+        let ours = legacy_header_bytes(SERVICE_ID, &[7u8; DUMMY_SERVICE_ID_LEN], &full);
+        assert_eq!(ours[0], 0x41);
+        assert_eq!(ours[0] >> 5, captured[0] >> 5);
+        assert_eq!(&ours[15..], [0, 0], "PSM 0: the GATT weave socket");
+    }
+
+    #[test]
+    fn the_advert_hash_changes_with_the_record_and_the_dummy_service_id() {
+        let a = ReceiverAdvertisement::new(*b"ABCD", 3, [7; 16], "laptop").to_bytes();
+        let b = ReceiverAdvertisement::new(*b"ABCD", 3, [7; 16], "laptop2").to_bytes();
+        let hash = |dummy: u8, full: &[u8]| {
+            parse_legacy_header(
+                URL_SAFE_NO_PAD
+                    .encode(legacy_header_bytes(
+                        SERVICE_ID,
+                        &[dummy; DUMMY_SERVICE_ID_LEN],
+                        full,
+                    ))
+                    .as_bytes(),
+            )
+            .unwrap()
+            .advert_hash
+        };
+        assert_eq!(hash(7, &a), hash(7, &a));
+        assert_ne!(hash(7, &a), hash(7, &b));
+        assert_ne!(hash(7, &a), hash(8, &a));
+    }
+
+    #[test]
+    fn generated_legacy_header_is_bloom_filtered_and_points_to_gatt() {
+        let full = ReceiverAdvertisement::new(*b"ABCD", 3, [7; 16], "laptop").to_bytes();
+        let dummy = [7u8; DUMMY_SERVICE_ID_LEN];
+        let raw = legacy_header_bytes(SERVICE_ID, &dummy, &full);
+        assert_eq!(raw.len(), 17);
+        assert!(bloom_contains(&raw[1..11], SERVICE_ID.as_bytes()));
+        assert!(!bloom_contains(&raw[1..11], b"SomeOtherService"));
+        let encoded = build_legacy_header(&full);
+        assert_eq!(encoded.len(), 23);
+        assert!(parse_legacy_header(&encoded).is_some());
+        assert!(ReceiverAdvertisement::parse(&encoded).is_none());
+        assert!(regular_length(&full).is_some_and(|n| n == full.len()));
+        assert_eq!(regular_length(&[0x49]), None);
     }
 
     #[test]

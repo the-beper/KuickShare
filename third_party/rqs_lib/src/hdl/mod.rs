@@ -7,6 +7,8 @@ use crate::securegcm::ukey2_client_init::CipherCommitment;
 use crate::sharing_nearby::wifi_credentials_metadata::SecurityType;
 use crate::utils::RemoteDeviceInfo;
 
+#[cfg(all(feature = "experimental", target_os = "linux"))]
+pub(crate) mod ble_disconnect;
 pub(crate) mod ble_receiver;
 #[cfg(all(feature = "experimental", target_os = "linux"))]
 pub(crate) mod ble_scan;

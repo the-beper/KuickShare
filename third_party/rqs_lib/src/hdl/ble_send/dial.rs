@@ -254,7 +254,7 @@ pub(crate) mod hardware_probe {
     use crate::channel::{ChannelMessage, Message};
     use crate::hdl::OutboundPayload;
     use crate::hdl::TransferState;
-    use crate::hdl::ble_scan::{Dedup, SCAN_WINDOW, ScanEvent, scan_window};
+    use crate::hdl::ble_scan::{Dedup, SCAN_WINDOW, SEND_LEGACY_READS, ScanEvent, scan_window};
     use crate::hdl::ble_send::bridge::BridgeExit;
     use crate::hdl::ble_send::gatt_dial::dial_gatt;
     use crate::hdl::ble_send::{send_over_gatt, send_over_l2cap};
@@ -271,12 +271,18 @@ pub(crate) mod hardware_probe {
         step("scanning");
         let wanted = std::env::var("KS_ENDPOINT").ok();
         let mut found: Vec<ScanResult> = Vec::new();
-        scan_window(adapter, SCAN_WINDOW, &mut Dedup::default(), |event| {
-            if let ScanEvent::Found(r) = event {
-                step(&format!("found {r:?}"));
-                found.push(r);
-            }
-        })
+        scan_window(
+            adapter,
+            SCAN_WINDOW,
+            SEND_LEGACY_READS,
+            &mut Dedup::default(),
+            |event| {
+                if let ScanEvent::Found(r) = event {
+                    step(&format!("found {r:?}"));
+                    found.push(r);
+                }
+            },
+        )
         .await
         .expect("scan window");
         let scan = found
@@ -498,7 +504,11 @@ pub(crate) mod hardware_probe {
     pub(crate) struct ObserverLink(pub(crate) tokio::sync::mpsc::UnboundedSender<String>);
 
     impl WifiLink for ObserverLink {
-        fn host(&self, _port: u16) -> BoxFuture<'_, io::Result<WifiCredentials>> {
+        fn host(
+            &self,
+            _port: u16,
+            _peer_5ghz: Option<bool>,
+        ) -> BoxFuture<'_, io::Result<WifiCredentials>> {
             Box::pin(async { Err(io::Error::other("observer link does not host")) })
         }
 

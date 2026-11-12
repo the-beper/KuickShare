@@ -16,9 +16,14 @@ KuickShare is GPL-3.0-or-later (see [LICENSE](LICENSE)). It builds on the projec
 | Change | Files |
 | --- | --- |
 | WIFI_HOTSPOT and WIFI_DIRECT bandwidth upgrade in both directions, plain frames when the host disables encryption (new) | `src/upgrade.rs`, `src/upgrade/tests.rs`; handlers in `src/hdl/inbound.rs`, `src/hdl/outbound.rs`; `src/lib.rs` (`set_wifi_link`) |
+| Prefer a same-network `WIFI_LAN` BLE reception upgrade when offered by the peer and possible (`WifiLink`: `lan_address`, `host_lan(ip, port)`, `close_lan`, `release`; a 10 s accept window, 3 wrong introductions end the offer); on any LAN failure offer the hotspot once, otherwise stay on BLE; same introduction/ACK/drain and transfer-stream handover | `src/upgrade.rs`, `src/upgrade/tests.rs`, `src/hdl/inbound.rs` |
+| Propagate the sender Wi-Fi adapter's 5 GHz support in `MediumMetadata` and pass the peer's 5 GHz support to the hotspot host (including the `ObserverLink::host` signature) | `src/upgrade.rs`, `src/upgrade/tests.rs`, `src/hdl/outbound.rs`, `src/hdl/inbound.rs`, `src/hdl/ble_send/dial.rs` |
 | Receive session over a non-TCP stream, cancel-safe length prefix, keep-alive tolerance in the handshake | `src/hdl/migratable.rs` (new), `src/hdl/inbound.rs`, `src/hdl/outbound.rs`, `src/utils.rs`, `src/manager.rs` |
 | Bluetooth receiver (new) | `src/hdl/ble_receiver/`, `src/hdl/mod.rs`, `src/lib.rs` |
 | Bluetooth sender: windowed scan, L2CAP dial and bridge, BLE endpoints in `EndpointInfo` and `SendInfo` (new) | `src/hdl/ble_scan.rs`, `src/hdl/ble_send/`, `src/lib.rs`, `src/manager.rs`, `src/hdl/mdns_discovery.rs` |
+| If the L2CAP dial fails before sending any data, fall back to GATT only if a whole GATT dial plus a 2 s first-frame reserve fits in the BLE start budget (L2CAP gets min(15 s, remaining - 2 s)); never retry after a stream send starts; `BLE_START_BUDGET` is re-exported for the daemon's watchdog; tokio `test-util` for the paused-time tests | `src/hdl/ble_scan.rs`, `src/lib.rs`, `Cargo.toml` |
+| Advertise a 17-byte Nearby legacy BLE header (byte 0 `0x41`, version 2 only established) when BlueZ reports a capacity too small for the full receiver record, or after an `InvalidArguments` refusal when the capacity is unknown; scan such headers via GATT slot-0 reads (during a send only, at most 2 per window, once per address, bounded by min(7 s, time left)) and parse the full record; no change to fast `0x4a` visibility | `src/hdl/ble_receiver/advertiser.rs`, `src/hdl/ble_receiver/service_data.rs`, `src/hdl/ble_receiver/gatt.rs` (`SLOT0_UUID` is `pub(crate)`), `src/hdl/ble_scan.rs` |
+| `DisconnectOnDrop` and `disconnect` shared by the GATT dial and the slot-0 read, so a dropped read closes its connection (moved from `ble_send/gatt_dial.rs`) | `src/hdl/ble_disconnect.rs` (new), `src/hdl/mod.rs`, `src/hdl/ble_send/gatt_dial.rs`, `src/hdl/ble_scan.rs` |
 | BLE scanner removed (`src/hdl/ble.rs`, `btleplug`); periodic mDNS re-announce instead | `src/hdl/mdns.rs`, `src/lib.rs`, `Cargo.toml` |
 | The `MDnsServer` task logs its error instead of dropping it | `src/lib.rs` |
 | Four fixes:<br>- mDNS ignores the hotspot subnet<br>- a send reads the phone's cancel or disconnection while it writes<br>- a phone known to advertise no PSM is dialled over GATT at once<br>- a pending BLE connect is cancelled when a dial ends | `src/hdl/mdns.rs`, `src/hdl/mdns_discovery.rs`, `src/hdl/outbound.rs`, `src/utils.rs`, `src/hdl/ble_scan.rs`, `src/hdl/ble_send/` |
@@ -167,7 +172,7 @@ The list is generated from `cargo metadata` (`Cargo.lock`), restricted to normal
 | hmac | 0.12.1 | MIT OR Apache-2.0 |
 | hybrid-array | 0.4.15 | MIT OR Apache-2.0 |
 | ident_case | 1.0.1 | MIT/Apache-2.0 |
-| if-addrs | 0.10.2 | MIT OR BSD-3-Clause |
+| if-addrs | 0.15.0 | MIT OR BSD-3-Clause |
 | inout | 0.1.4 | MIT OR Apache-2.0 |
 | itertools | 0.14.0 | MIT OR Apache-2.0 |
 | itoa | 1.0.18 | MIT OR Apache-2.0 |

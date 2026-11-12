@@ -351,6 +351,8 @@ impl InboundRequest {
                     .and_then(|v| v.connection_request.as_ref())
                 {
                     self.upgrade.set_peer_mediums(&cr.mediums);
+                    self.upgrade
+                        .set_peer_5ghz(cr.medium_metadata.as_ref().and_then(|m| m.supports_5_ghz));
                     self.upgrade.set_peer_endpoint_id(cr.endpoint_id());
                 }
                 debug!(
@@ -1564,8 +1566,9 @@ impl InboundRequest {
         Ok(())
     }
 
-    /// Starts hosting a hotspot in the background; the offer goes out once it is up.
-    /// Any failure leaves the session on the current channel.
+    /// Starts preparing the upgrade in the background: the existing LAN if the peer lists
+    /// WIFI_LAN and a LAN can be offered, otherwise (or if that fails) a hotspot. The offer goes
+    /// out once it is ready. Any failure leaves the session on the current channel.
     async fn start_upgrade(&mut self) {
         let Some(link) = self.upgrade.link().filter(|_| self.upgrade.can_start()) else {
             return;
@@ -1573,13 +1576,37 @@ impl InboundRequest {
         if self.upgrade.peer_endpoint_id().is_none() {
             return;
         }
-        match TcpListener::bind(("0.0.0.0", 0)).await {
-            Ok(listener) => {
-                let task = tokio::spawn(upgrade::prepare_host(link, listener));
-                self.upgrade.begin_preparing(task);
-            }
-            Err(e) => warn!("upgrade: not possible ({e}); staying on the current channel"),
-        }
+        let (lan, hotspot, peer_5ghz) = self.upgrade.peer_upgrade_options();
+        let task = tokio::spawn(upgrade::prepare_inbound(link, lan, hotspot, peer_5ghz));
+        self.upgrade.begin_preparing(task);
+    }
+
+    async fn offer_lan_upgrade(
+        &mut self,
+        ip: std::net::Ipv4Addr,
+        listener: TcpListener,
+    ) -> Result<(), anyhow::Error> {
+        let endpoint_id = self
+            .upgrade
+            .peer_endpoint_id()
+            .ok_or_else(|| anyhow!("unknown peer endpoint id"))?
+            .to_owned();
+        let port = listener.local_addr()?.port();
+        info!("upgrade: offering WIFI_LAN on {ip}:{port}");
+        self.encrypt_and_send(&upgrade::lan_path_available_frame(
+            ip,
+            port,
+            self.upgrade.disable_encryption(),
+        ))
+        .await?;
+        self.upgrade
+            .begin_waiting_lan(tokio::spawn(upgrade::accept_introduced(
+                listener,
+                endpoint_id,
+                ip,
+                self.upgrade.disable_encryption(),
+            )));
+        Ok(())
     }
 
     async fn offer_upgrade(
@@ -1619,6 +1646,12 @@ impl InboundRequest {
                     self.upgrade.fail().await;
                 }
             }
+            UpgradeEvent::Prepared(Ok(upgrade::Prepared::HostedLan(ip, listener))) => {
+                if let Err(e) = self.offer_lan_upgrade(ip, listener).await {
+                    warn!("upgrade: LAN offer failed ({e:#})");
+                    self.upgrade.fail().await;
+                }
+            }
             UpgradeEvent::Prepared(Ok(upgrade::Prepared::Joined(_))) => {}
             UpgradeEvent::Prepared(Err(e)) => {
                 warn!("upgrade: not possible ({e:#}); staying on the current channel");
@@ -1630,6 +1663,7 @@ impl InboundRequest {
                     &upgrade::client_introduction_ack_frame(),
                 )
                 .await;
+                self.upgrade.close_lan_port().await;
                 match acked {
                     Ok(()) => {
                         self.encrypt_and_send(&upgrade::event_frame(
@@ -1639,17 +1673,17 @@ impl InboundRequest {
                         self.upgrade.begin_draining(stream);
                     }
                     Err(e) => {
-                        warn!("upgrade: ACK failed ({e:#}); staying on the current channel");
+                        warn!("upgrade: ACK failed ({e:#})");
                         self.upgrade.fail().await;
                     }
                 }
             }
             UpgradeEvent::Connected(Err(e)) => {
-                warn!("upgrade: accept failed ({e}); staying on the current channel");
+                warn!("upgrade: accept failed ({e})");
                 self.upgrade.fail().await;
             }
             UpgradeEvent::WaitTimedOut => {
-                warn!("upgrade: peer did not connect in time; staying on the current channel");
+                warn!("upgrade: peer did not connect in time");
                 self.upgrade.fail().await;
             }
             UpgradeEvent::DrainTimedOut => {
@@ -1671,8 +1705,17 @@ impl InboundRequest {
         let event = bwu.event_type();
         match event {
             EventType::UpgradeFailure if self.upgrade.is_waiting() => {
-                warn!("upgrade: peer reported a failure; staying on the current channel");
-                self.upgrade.fail().await;
+                // The phone may report the failed LAN offer after the hotspot was offered.
+                let failed_lan = bwu.upgrade_path_info.as_ref().map(|i| i.medium())
+                    == Some(
+                        location_nearby_connections::bandwidth_upgrade_negotiation_frame::upgrade_path_info::Medium::WifiLan,
+                    );
+                if failed_lan && !self.upgrade.lan_offer_pending() {
+                    debug!("upgrade: ignoring the failure of the LAN offer already given up");
+                } else {
+                    warn!("upgrade: peer reported a failure");
+                    self.upgrade.fail().await;
+                }
             }
             EventType::LastWriteToPriorChannel | EventType::SafeToClosePriorChannel => {
                 if self.upgrade.on_peer_event(event) == Some(Reply::SendSafeToClose) {
@@ -1709,9 +1752,9 @@ impl InboundRequest {
         self.poisoned = false;
         self.plain_frames = self.upgrade.disable_encryption();
         if self.plain_frames {
-            info!("upgrade: now on the hotspot, plain frames");
+            info!("upgrade: now on the new channel, plain frames");
         } else {
-            info!("upgrade: now on the hotspot");
+            info!("upgrade: now on the new channel");
         }
     }
 
@@ -2146,6 +2189,7 @@ pub mod capture_log {
 mod tests {
     use std::path::Path;
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
     use std::time::Duration;
 
     use tokio::io::AsyncWriteExt;
@@ -2185,7 +2229,11 @@ mod tests {
         req.upgrade = UpgradeState::new(Some(link.clone()));
         let hosting = TcpListener::bind("127.0.0.1:0").await.unwrap();
         req.upgrade
-            .begin_preparing(tokio::spawn(upgrade::prepare_host(link.clone(), hosting)));
+            .begin_preparing(tokio::spawn(upgrade::prepare_host(
+                link.clone(),
+                hosting,
+                None,
+            )));
 
         // An absurd frame length makes `handle` fail right away, which proves it ran.
         peer.write_all(&[0xff; 4]).await.unwrap();
@@ -2193,6 +2241,188 @@ mod tests {
             .await
             .expect("handle() was blocked by the pending hotspot");
         assert!(handled.is_err());
+    }
+
+    fn connection_request(mediums: &[i32], supports_5ghz: Option<bool>) -> OfflineFrame {
+        OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(
+                    location_nearby_connections::v1_frame::FrameType::ConnectionRequest.into(),
+                ),
+                connection_request: Some(location_nearby_connections::ConnectionRequestFrame {
+                    endpoint_id: Some("WXYZ".into()),
+                    endpoint_info: Some(
+                        RemoteDeviceInfo {
+                            name: "Phone".into(),
+                            device_type: DeviceType::Phone,
+                        }
+                        .serialize(),
+                    ),
+                    mediums: mediums.to_vec(),
+                    medium_metadata: supports_5ghz.map(|v| {
+                        location_nearby_connections::MediumMetadata {
+                            supports_5_ghz: Some(v),
+                            ..Default::default()
+                        }
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        }
+    }
+
+    /// A session that received the phone's ConnectionRequest and may upgrade through `link`.
+    async fn upgrade_session(
+        dir: &Path,
+        link: &Arc<FakeLink>,
+        mediums: &[i32],
+        supports_5ghz: Option<bool>,
+    ) -> Session {
+        let mut s = Session::new(dir);
+        s.req.state.state = TransferState::Initial;
+        s.req.upgrade = UpgradeState::new(Some(link.clone()));
+        s.feed(&connection_request(mediums, supports_5ghz))
+            .await
+            .unwrap();
+        s
+    }
+
+    /// Runs the next upgrade step of the session and returns the offer the phone receives.
+    async fn next_offer(
+        s: &mut Session,
+    ) -> crate::location_nearby_connections::bandwidth_upgrade_negotiation_frame::UpgradePathInfo
+    {
+        let ev = s.req.upgrade.next_event().await;
+        s.req.on_upgrade_event(ev).await.unwrap();
+        let frame = upgrade::read_plain_frame(s.peer.as_mut().unwrap())
+            .await
+            .unwrap();
+        upgrade::parse_bwu(&frame)
+            .and_then(|b| b.upgrade_path_info.clone())
+            .expect("not an upgrade offer")
+    }
+
+    fn medium(m: crate::location_nearby_connections::connection_request_frame::Medium) -> i32 {
+        m as i32
+    }
+
+    /// The `supports_5_ghz` of the ConnectionRequest decides the band the hotspot is hosted on.
+    #[tokio::test]
+    async fn the_phones_5_ghz_support_reaches_the_hotspot_host() {
+        use crate::location_nearby_connections::connection_request_frame::Medium as M;
+        let tmp = TempDir::new("wiring-5ghz");
+        for (reported, expect_2ghz) in [(Some(false), true), (Some(true), false), (None, false)] {
+            let link = Arc::new(FakeLink::default());
+            let mut s = upgrade_session(&tmp.0, &link, &[medium(M::WifiHotspot)], reported).await;
+            s.req.start_upgrade().await;
+            assert!(matches!(
+                s.req.upgrade.next_event().await,
+                UpgradeEvent::Prepared(Ok(upgrade::Prepared::Hosted(..)))
+            ));
+            assert_eq!(link.hosts.load(Ordering::SeqCst), 1);
+            assert_eq!(link.hosted_2ghz.load(Ordering::SeqCst), expect_2ghz);
+        }
+    }
+
+    /// A phone that lists WIFI_LAN gets the LAN offer, with the address the listener is bound to
+    /// and the port the link was asked to open.
+    #[tokio::test]
+    async fn the_lan_offer_carries_the_offered_address_and_port() {
+        use crate::location_nearby_connections::bandwidth_upgrade_negotiation_frame::upgrade_path_info::Medium;
+        use crate::location_nearby_connections::connection_request_frame::Medium as M;
+        let tmp = TempDir::new("wiring-lan");
+        let link = Arc::new(FakeLink {
+            lan_address: Some(std::net::Ipv4Addr::LOCALHOST),
+            ..Default::default()
+        });
+        let mut s = upgrade_session(
+            &tmp.0,
+            &link,
+            &[medium(M::WifiLan), medium(M::WifiHotspot)],
+            Some(true),
+        )
+        .await;
+        s.req.start_upgrade().await;
+        let offer = next_offer(&mut s).await;
+        assert_eq!(offer.medium(), Medium::WifiLan);
+        let socket = offer.wifi_lan_socket.unwrap();
+        assert_eq!(socket.ip_address(), [127, 0, 0, 1]);
+        let ports = link.lan_ports.lock().unwrap().clone();
+        assert_eq!(ports.len(), 1);
+        assert_eq!(socket.wifi_port(), i32::from(ports[0]));
+        assert!(s.req.upgrade.is_waiting());
+        assert_eq!(link.hosts.load(Ordering::SeqCst), 0);
+    }
+
+    /// The phone answers the LAN offer with UPGRADE_FAILURE (not on the same network): the
+    /// hotspot is offered next.
+    #[tokio::test]
+    async fn a_declined_lan_offer_is_followed_by_the_hotspot_offer() {
+        use crate::location_nearby_connections::bandwidth_upgrade_negotiation_frame::upgrade_path_info::Medium;
+        use crate::location_nearby_connections::connection_request_frame::Medium as M;
+        let tmp = TempDir::new("wiring-fallback");
+        let link = Arc::new(FakeLink {
+            lan_address: Some(std::net::Ipv4Addr::LOCALHOST),
+            ..Default::default()
+        });
+        let mut s = upgrade_session(
+            &tmp.0,
+            &link,
+            &[medium(M::WifiLan), medium(M::WifiHotspot)],
+            Some(true),
+        )
+        .await;
+        s.req.start_upgrade().await;
+        assert_eq!(next_offer(&mut s).await.medium(), Medium::WifiLan);
+
+        // The upgrade starts after the handshake: later frames are not UKey2 messages.
+        s.req.state.state = TransferState::ReceivedPairedKeyResult;
+        s.feed(&upgrade::upgrade_failure_frame(None)).await.unwrap();
+        assert_eq!(next_offer(&mut s).await.medium(), Medium::WifiHotspot);
+        assert_eq!(link.hosts.load(Ordering::SeqCst), 1);
+        assert_eq!(link.lan_hosts.load(Ordering::SeqCst), 1);
+
+        // A second refusal ends it: nothing more is offered.
+        s.feed(&upgrade::upgrade_failure_frame(None)).await.unwrap();
+        assert!(!s.req.upgrade.in_progress());
+        assert_eq!(link.hosts.load(Ordering::SeqCst), 1);
+    }
+
+    /// The phone reports the failed LAN offer only after the hotspot was offered: that report is
+    /// not a refusal of the hotspot.
+    #[tokio::test]
+    async fn a_late_failure_of_the_lan_offer_does_not_end_the_hotspot_offer() {
+        use crate::location_nearby_connections::bandwidth_upgrade_negotiation_frame::UpgradePathInfo;
+        use crate::location_nearby_connections::bandwidth_upgrade_negotiation_frame::upgrade_path_info::Medium;
+        use crate::location_nearby_connections::connection_request_frame::Medium as M;
+        let tmp = TempDir::new("wiring-late-failure");
+        let link = Arc::new(FakeLink {
+            lan_address: Some(std::net::Ipv4Addr::LOCALHOST),
+            ..Default::default()
+        });
+        let mut s = upgrade_session(
+            &tmp.0,
+            &link,
+            &[medium(M::WifiLan), medium(M::WifiHotspot)],
+            Some(true),
+        )
+        .await;
+        s.req.start_upgrade().await;
+        assert_eq!(next_offer(&mut s).await.medium(), Medium::WifiLan);
+        s.req.state.state = TransferState::ReceivedPairedKeyResult;
+        s.feed(&upgrade::upgrade_failure_frame(None)).await.unwrap();
+        assert_eq!(next_offer(&mut s).await.medium(), Medium::WifiHotspot);
+
+        let lan = UpgradePathInfo {
+            medium: Some(Medium::WifiLan.into()),
+            ..Default::default()
+        };
+        s.feed(&upgrade::upgrade_failure_frame(Some(lan)))
+            .await
+            .unwrap();
+        assert!(s.req.upgrade.is_waiting(), "the hotspot offer was dropped");
     }
 
     /// After an upgrade with disabled encryption frames are bare OfflineFrames both ways.

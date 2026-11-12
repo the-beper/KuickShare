@@ -28,6 +28,8 @@ pub mod safety;
 pub mod upgrade;
 pub mod utils;
 
+#[cfg(all(feature = "experimental", target_os = "linux"))]
+pub use hdl::ble_scan::BLE_START_BUDGET;
 pub use hdl::{
     BleTarget, EndpointInfo, OutboundPayload, TextPayloadType, TransferState, Visibility,
 };
