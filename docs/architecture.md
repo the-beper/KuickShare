@@ -221,7 +221,7 @@ Paths follow the XDG variables; defaults are shown. All four JSON files are writ
 | `history.json` | `~/.local/share/kuickshare/` | Finished transfers, newest first | Moved aside to `history.json.bak` (see above), treated as empty |
 | Received files | Setting `download_dir`, else the library default (XDG download dir) | Written by `rqs_lib`: each name is reserved when the transfer is accepted (never overwriting: `name (1).ext`) and written through a directory handle, at most one file open at a time; see [Receive limits](#receive-limits) | An incomplete file is removed on cancel, decline, error, disconnect and timeout, but not after a crash, SIGKILL or power loss |
 | Clipboard images | `<cache>/clipboard/` | PNGs saved to send a pasted image; the shell deletes those older than 1 h at startup | |
-| Autostart entry | `~/.config/autostart/io.github.the_beper.KuickShare.desktop` | Written by the shell setting | |
+| Autostart entry | `~/.config/autostart/io.github.the_beper.KuickShare.desktop` | Written by the shell setting; an entry added from Plasma's Autostart page is rewritten to the same hidden start (a disabled one stays disabled) | |
 | Installation | `~/.local/share/kuickshare/bin/`, `.desktop`, icons, `.mo`, service menu | See [Packaging](#packaging) | |
 
 `--uninstall` keeps the first four rows; `--uninstall --purge` deletes them: the installer removes the whole `kuickshare` folders under the config and data directories, so backups (`.bak`, `.bak.N`) and leftover temporary files go too.

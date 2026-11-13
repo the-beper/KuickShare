@@ -22,6 +22,7 @@
 #include <KLocalizedString>
 #include <KSignalHandler>
 
+#include "autostart.h"
 #include "corebridge.h"
 #include "devicematch.h"
 #include "devicemodel.h"
@@ -84,6 +85,11 @@ int main(int argc, char *argv[])
     // A newer or older version left running by an update must not answer in place of this one.
     Instance::replaceRunning(parser.isSet(replace));
     KDBusService service(KDBusService::Unique);
+
+    // "Start at login" may have been added from Plasma's Autostart page, which copies the menu
+    // entry: that one opens the window. Make it the hidden start the setting promises (and a
+    // disabled entry stays disabled) before the core reads the setting.
+    Autostart::repair();
 
     CoreBridge core;
 

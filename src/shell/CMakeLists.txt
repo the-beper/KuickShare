@@ -179,6 +179,11 @@ if(BUILD_TESTING)
     target_link_libraries(launcher_test PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME launcher COMMAND launcher_test)
 
+    qt_add_executable(autostart_test ../../tests/shell/autostart_test.cpp autostart.cpp)
+    target_include_directories(autostart_test PRIVATE .)
+    target_link_libraries(autostart_test PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME autostart COMMAND autostart_test)
+
     qt_add_executable(integration_test ../../tests/shell/integration_test.cpp integration.cpp dolphinmenu.cpp)
     qt_add_resources(integration_test servicemenu
         PREFIX /data

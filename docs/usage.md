@@ -393,7 +393,7 @@ Open it with `Ctrl+,`, from the menu, or from the tray. Changes apply at once an
 | Trusted devices | Trust devices | On | Accept [trusted devices](#trusted-devices) without asking; lists them |
 | History | Save transfer history | On | Record finished transfers |
 | History | Delete entries after | Never | Never, 1, 7, 30 or 90 days. Applied at startup, when the history is read and when a transfer is added |
-| Startup | Start at login | Off | Writes the autostart entry; the service starts and the shell exits, so only the tray shows it. The entry points at the running binary, so switch it off and on again after moving the installation |
+| Startup | Start at login | Off | Writes the autostart entry; the service starts and the shell exits, so only the tray shows it. An entry added from Plasma's System Settings → Autostart is a copy of the menu entry and opens the window; the app rewrites it the next time it runs, so the following login starts hidden. The entry points at the running binary, so switch it off and on again after moving the installation |
 | Integration | Keep running in the background | On | Shows the tray icon while the service runs. Off, nothing appears while no window is open, and closing the window stops the service with it |
 | Integration | Show in Dolphin’s context menu | On | Adds or removes **Send With KuickShare**. Kept in line with the setting: written in your home if on and no copy exists there or in a system folder, removed if off (not in the AppImage, which adds it only when you say so). A package that does not ship the entry still gets the menu. Uninstalling the package leaves the copy in your home: remove `~/.local/share/kio/servicemenus/kuickshare-send.desktop` |
 | Wi-Fi Direct | Receive and send without a shared network | Off | Experimental; see [Without a shared network](#without-a-shared-network-experimental) |
@@ -435,6 +435,8 @@ Also listed in the app under More, Shortcuts.
 **This computer does not see the phone.** The phone must be set to **Everyone** and its Quick Share screen should stay open. A phone that is hidden or set to contacts announces no name and is not listed. Android sets the visibility back after 10 minutes, so set it again when the list goes empty.
 
 **The red banner "The sharing service is not running".** The window could not reach `kuickshared`. Click **Start service** in the banner. If it does not come back, start `kuickshare` from a terminal to see the service's output.
+
+**The window opens at login instead of only the tray icon.** The autostart entry was added from Plasma's System Settings → Autostart, which copies the menu entry: that one starts the window. Start KuickShare once: the entry is rewritten to start hidden, and the next login shows only the tray icon. An entry disabled there stays disabled.
 
 **A trusted phone is asked about again.** It joined another network and has a new MAC, or its name changed. Accept and trust it again.
 
