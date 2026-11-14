@@ -48,6 +48,8 @@ class CoreBridge : public QObject
     Q_PROPERTY(bool hideHistoryFilters READ hideHistoryFilters WRITE setHideHistoryFilters NOTIFY hideHistoryFiltersChanged)
     Q_PROPERTY(bool trayIcon READ trayIcon WRITE setTrayIcon NOTIFY trayIconChanged)
     Q_PROPERTY(bool wifiUpgrade READ wifiUpgrade WRITE setWifiUpgrade NOTIFY wifiUpgradeChanged)
+    /// Join a Wi-Fi network shared by a phone without asking first (off by default).
+    Q_PROPERTY(bool wifiAutoJoin READ wifiAutoJoin WRITE setWifiAutoJoin NOTIFY wifiAutoJoinChanged)
     /// The user allowed the computer's hotspot to use an open firewall zone for this session (the core forgets it at restart).
     Q_PROPERTY(bool insecureHotspotAllowed READ insecureHotspotAllowed NOTIFY insecureHotspotAllowedChanged)
     Q_PROPERTY(bool dolphinIntegration READ dolphinIntegration WRITE setDolphinIntegration NOTIFY dolphinIntegrationChanged)
@@ -101,6 +103,7 @@ public:
     bool trustedDevicesEnabled() const { return m_trustedDevicesEnabled; }
     bool trustedDevicesReset() const { return m_trustedDevicesReset; }
     bool wifiUpgrade() const { return m_wifiUpgrade; }
+    bool wifiAutoJoin() const { return m_wifiAutoJoin; }
     bool insecureHotspotAllowed() const { return m_insecureHotspotAllowed; }
     bool dolphinIntegration() const { return m_dolphinIntegration; }
     int historyKeepDays() const { return m_historyKeepDays; }
@@ -125,6 +128,8 @@ public:
     void setTrustedDevicesEnabled(bool enabled);
     /// The same as `requestWifiUpgrade(enabled, false)`: nothing is shown as changed until the core confirms it.
     void setWifiUpgrade(bool enabled);
+    /// Joins a Wi-Fi network shared by a phone without asking first (stored by the core).
+    void setWifiAutoJoin(bool enabled);
     /// Turns the Wi-Fi upgrade on, or emits `firewallWarning` first when firewalld is not running (the
     /// user must then agree to the hotspot using an open zone) and waits for the answer.
     Q_INVOKABLE void enableWifiUpgrade();
@@ -259,6 +264,7 @@ Q_SIGNALS:
     void trustedDevicesEnabledChanged();
     void trustedDevicesResetChanged();
     void wifiUpgradeChanged();
+    void wifiAutoJoinChanged();
     void wifiRequirementsChanged();
     void wifiRequirementsBusyChanged();
     void insecureHotspotAllowedChanged();
@@ -352,6 +358,7 @@ private:
     // Off until the core says otherwise: the tray icon stays hidden meanwhile.
     bool m_trayIcon = false;
     bool m_wifiUpgrade = false;
+    bool m_wifiAutoJoin = false;
     bool m_insecureHotspotAllowed = false;
     bool m_dolphinIntegration = true;
     bool m_dolphinSyncFailed = false;

@@ -82,12 +82,13 @@ message WifiCredentialsMetadata {
     OPEN = 1;
     WPA_PSK = 2;
     WEP = 3;
+    SAE = 4;
   }
 
   // The Wifi network name. This will be sent in introduction.
   optional string ssid = 2;
 
-  // The security type of network (OPEN, WPA_PSK, WEP).
+  // The security type of network (OPEN, WPA_PSK, WEP, SAE).
   optional SecurityType security_type = 3 [default = UNKNOWN_SECURITY_TYPE];
 
   // The BYTE payload id that will be sent as a follow up containing the

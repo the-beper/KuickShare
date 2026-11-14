@@ -752,6 +752,12 @@ impl Core {
         self.save();
     }
 
+    /// Joins a Wi-Fi network shared by a phone without asking first.
+    pub fn set_wifi_auto_join(&mut self, enabled: bool) {
+        self.settings.wifi_auto_join = enabled;
+        self.save();
+    }
+
     fn apply_history_policy(&self) {
         self.history.lock().unwrap().set_policy(
             self.settings.history_enabled,

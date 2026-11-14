@@ -217,8 +217,9 @@ impl Service {
 
     /// Joins the Wi-Fi network received in a finished transfer, as a saved connection that
     /// reconnects by itself. The password stays in the core (never on the bus). Fails for an
-    /// unknown or expired transfer, a WEP or unknown security type, while a transfer or a Wi-Fi
-    /// upgrade is running, or when NetworkManager cannot connect.
+    /// unknown or expired transfer, a WEP or unknown security type, a WPA/WPA3 network whose
+    /// password did not arrive, while a transfer or a Wi-Fi upgrade is running, or when
+    /// NetworkManager cannot connect.
     async fn join_network(&self, transfer_id: &str) -> fdo::Result<()> {
         let (nm, store) = self.core.lock().await.wifi_join_parts().map_err(failed)?;
         let wifi = store
@@ -226,10 +227,13 @@ impl Service {
             .unwrap()
             .get(transfer_id, Instant::now())
             .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+        let security = wifi
+            .saved_security()
+            .ok_or_else(|| fdo::Error::Failed(wifi_credentials::Error::Unsupported.to_string()))?;
         // Its own task: if the caller goes away (the call is dropped) the join still runs to the
         // end, so the link is freed and a failed profile removed.
         let (ssid, psk) = (wifi.ssid.clone(), wifi.psk().map(str::to_owned));
-        tokio::spawn(async move { nm.join_saved(&ssid, psk.as_deref()).await })
+        tokio::spawn(async move { nm.join_saved(&ssid, security, psk.as_deref()).await })
             .await
             .map_err(|_| fdo::Error::Failed("Could not join the network: interrupted".into()))?
             .map_err(|e| fdo::Error::Failed(format!("Could not join the network: {e}")))?;
@@ -517,6 +521,17 @@ impl Service {
         Ok(())
     }
 
+    /// Whether a Wi-Fi network shared by a phone is joined without asking first.
+    #[zbus(property)]
+    async fn wifi_auto_join(&self) -> bool {
+        self.core.lock().await.settings().wifi_auto_join
+    }
+
+    #[zbus(property)]
+    async fn set_wifi_auto_join(&self, enabled: bool) {
+        self.core.lock().await.set_wifi_auto_join(enabled);
+    }
+
     /// The single way to change the Wi-Fi upgrade together with the firewall consent.
     /// `enabled` is saved. `allow_insecure_hotspot` lets the computer's hotspot use an open
     /// firewall zone when the firewall refuses to open its one port, for this session only: it is
@@ -593,6 +608,7 @@ impl Service {
         let _ = self.hide_history_filters_changed(&emitter).await;
         let _ = self.trusted_devices_enabled_changed(&emitter).await;
         let _ = self.wifi_upgrade_changed(&emitter).await;
+        let _ = self.wifi_auto_join_changed(&emitter).await;
         let _ = self.insecure_hotspot_allowed_changed(&emitter).await;
         let _ = self.tray_icon_changed(&emitter).await;
         let _ = self.dolphin_integration_changed(&emitter).await;

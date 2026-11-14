@@ -36,7 +36,7 @@ use crate::{
         self, ACCEPT, ACCEPT_AND_TRUST, COPY, DECLINE, Event, Notice, Notifier, OPEN_FILE,
         OPEN_FOLDER, OPEN_LINK, VIEW,
     },
-    tray,
+    tray, wifi_credentials,
 };
 
 /// The state of an incoming transfer waiting for the user's consent.
@@ -501,15 +501,22 @@ impl Desktop {
     /// The transfer is over: tells how it ended (see `appraise_final`) and marks it ended.
     async fn finish_transfer(&mut self, event: TransferEvent) {
         let id = event.id.clone();
-        let (window_open, folder) = {
+        let (window_open, folder, auto_join) = {
             let core = self.core.lock().await;
-            (core.window_open(), download_dir(&core))
+            (
+                core.window_open(),
+                download_dir(&core),
+                auto_join_wanted(&event, core.settings().wifi_auto_join),
+            )
         };
         let tracked = self.tracked.get_mut(&id).expect("tracked above");
-        let Some(notice) = conclude(tracked, &event, window_open) else {
-            return;
-        };
-        if let Some(server) = self.notifier.show(&notice, 0).await {
+        let notice = conclude(tracked, &event, window_open);
+        // The result of the automatic join is the notice for a shared network; the generic
+        // "Text Received" would only duplicate it.
+        let notice = notice.filter(|notice| !(auto_join && matches!(notice, Notice::Text { .. })));
+        if let Some(notice) = notice
+            && let Some(server) = self.notifier.show(&notice, 0).await
+        {
             // The actions of the note must answer: what a press does, per server id.
             let button = match notice {
                 Notice::Text { text, .. } => Some(Button::Text {
@@ -532,12 +539,28 @@ impl Desktop {
                 Notice::Refusal { .. }
                 | Notice::NotAccepted { .. }
                 | Notice::Interrupted { .. }
+                | Notice::WifiJoined { .. }
+                | Notice::WifiJoinFailed { .. }
                 | Notice::Consent { .. } => None,
             };
             if let Some(button) = button {
                 self.prompts.insert(server, button);
             }
         }
+        if auto_join {
+            self.spawn_auto_join(id, event.text.clone());
+        }
+    }
+
+    /// Joins a network shared over Wi-Fi without asking (the opt-in setting), in a task of its
+    /// own: a join can take about 15 s, and the desktop must keep answering meanwhile.
+    fn spawn_auto_join(&self, id: String, ssid: String) {
+        let core = self.core.clone();
+        let notifier = self.notifier.clone();
+        tokio::spawn(async move {
+            let outcome = auto_join(&core, &id, ssid).await;
+            notifier.show(&outcome.notice(), 0).await;
+        });
     }
 
     // Notifications --------------------------------------------------------------
@@ -1012,6 +1035,69 @@ fn received_notice(event: &TransferEvent) -> Notice {
     }
 }
 
+// Automatic Wi-Fi joining ------------------------------------------------------------
+
+/// Whether a finished transfer asks for the automatic join of the network a phone shared: only
+/// an inbound Wi-Fi transfer that finished, and only while the opt-in setting is on.
+fn auto_join_wanted(event: &TransferEvent, enabled: bool) -> bool {
+    enabled && event.kind == "inbound" && event.state == "Finished" && event.payload_kind == "WiFi"
+}
+
+/// What an automatic join ended with: the network name for the notice and, on failure, why.
+/// The reason comes from NetworkManager or the core and never contains the password.
+struct AutoJoined {
+    ssid: String,
+    error: Option<String>,
+}
+
+impl AutoJoined {
+    fn notice(self) -> Notice {
+        match self.error {
+            Some(reason) => Notice::WifiJoinFailed {
+                ssid: self.ssid,
+                reason,
+            },
+            None => Notice::WifiJoined { ssid: self.ssid },
+        }
+    }
+}
+
+/// Joins the network of a finished Wi-Fi transfer and forgets its password on success. `ssid` is
+/// the name the transfer showed, used until the store can name the network itself. A failure
+/// leaves the credentials in the store, so the transfer's Join network button still works.
+async fn auto_join(core: &Mutex<Core>, id: &str, ssid: String) -> AutoJoined {
+    let mut outcome = AutoJoined { ssid, error: None };
+    let (nm, store) = {
+        let core = core.lock().await;
+        match core.wifi_join_parts() {
+            Ok(parts) => parts,
+            Err(e) => {
+                outcome.error = Some(e.to_string());
+                return outcome;
+            }
+        }
+    };
+    let wifi = match store.lock().unwrap().get(id, Instant::now()) {
+        Ok(wifi) => wifi,
+        Err(e) => {
+            outcome.error = Some(e.to_string());
+            return outcome;
+        }
+    };
+    outcome.ssid.clone_from(&wifi.ssid);
+    let Some(security) = wifi.saved_security() else {
+        outcome.error = Some(wifi_credentials::Error::Unsupported.to_string());
+        return outcome;
+    };
+    let psk = wifi.psk().map(str::to_owned);
+    if let Err(e) = nm.join_saved(&outcome.ssid, security, psk.as_deref()).await {
+        outcome.error = Some(e.to_string());
+        return outcome;
+    }
+    store.lock().unwrap().remove(id);
+    outcome
+}
+
 // Do Not Disturb --------------------------------------------------------------------
 
 /// The notification daemon's Do Not Disturb mode: while it is on and `HideWhenDnd` is set, this
@@ -1370,5 +1456,42 @@ mod tests {
             "file:///home/user/rom%C3%B6"
         );
         assert_eq!(file_uri("/"), "file:///");
+    }
+
+    #[test]
+    fn only_a_finished_inbound_wifi_share_is_joined_automatically() {
+        let mut wifi = TransferEvent::for_test("10.0.0.5:1", "inbound", "Finished", "Pixel");
+        wifi.payload_kind = "WiFi".to_owned();
+        assert!(auto_join_wanted(&wifi, true));
+        assert!(!auto_join_wanted(&wifi, false), "the setting is opt-in");
+
+        let mut sending = wifi.clone();
+        sending.kind = "outbound";
+        assert!(!auto_join_wanted(&sending, true));
+
+        let mut running = wifi.clone();
+        running.state = "Transferring".to_owned();
+        assert!(!auto_join_wanted(&running, true));
+
+        let mut text = wifi.clone();
+        text.payload_kind = "Text".to_owned();
+        assert!(!auto_join_wanted(&text, true));
+    }
+
+    #[test]
+    fn a_join_result_names_the_network() {
+        let joined = AutoJoined {
+            ssid: "Home".to_owned(),
+            error: None,
+        }
+        .notice();
+        assert!(matches!(joined, Notice::WifiJoined { .. }));
+
+        let failed = AutoJoined {
+            ssid: "Home".to_owned(),
+            error: Some("NetworkManager failed".to_owned()),
+        }
+        .notice();
+        assert!(matches!(failed, Notice::WifiJoinFailed { .. }));
     }
 }

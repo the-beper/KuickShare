@@ -161,6 +161,21 @@ FormCard.FormCardPage {
     }
 
     SectionTitle {
+        text: KI18n.i18nc("@title:group", "Wi-Fi Networks")
+    }
+    FormCard.FormCard {
+        maximumWidth: width - 1
+        FormCard.FormSwitchDelegate {
+            icon.name: "network-wireless"
+            text: KI18n.i18nc("@option:check", "Join shared networks automatically")
+            description: KI18n.i18n("Connect this computer when a phone shares a Wi-Fi network; the current Wi-Fi connection may be replaced")
+            checked: page.core.wifiAutoJoin
+            enabled: page.core.connected
+            onToggled: page.core.wifiAutoJoin = checked
+        }
+    }
+
+    SectionTitle {
         text: KI18n.i18nc("@title:group", "Wi-Fi Direct")
     }
     FormCard.FormCard {

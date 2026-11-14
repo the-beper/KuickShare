@@ -34,6 +34,7 @@ KuickShare is GPL-3.0-or-later (see [LICENSE](LICENSE)). It builds on the projec
 | The inbound and outbound sessions log no PIN, sender name, file name or path, text or SSID above `debug` (frames are logged by type only); `OutboundPayload` has a hand-written `Debug` that shows only counts and lengths. Other modules (mDNS, BLE) were not reviewed for this | `src/hdl/inbound.rs`, `src/hdl/outbound.rs`, `src/manager.rs` |
 | The receiver advertisement asks for the 1M secondary PHY (extended PDU), as its service data exceeds a legacy PDU (the failure without it is taken from upstream, *(inferred)*, not reproduced) | `src/hdl/ble_receiver/advertiser.rs` |
 | `TransferMetadata::saved_paths`: where an inbound file is saved | `src/hdl/info.rs`, `src/hdl/inbound.rs`, `src/hdl/outbound.rs` |
+| Wi-Fi credentials payload decoded as a `WifiCredentials` protobuf (password in field 1; the optional `hidden_ssid` in field 2), instead of assuming a trailing `hidden_ssid`; `SAE = 4` added to `WifiCredentialsMetadata.SecurityType` and WPA3-SAE accepted | `src/hdl/inbound.rs`, `src/proto_src/wire_format.proto` |
 | `TransferPayload` has a hand-written `Debug` that redacts a Wi-Fi password, and the errors of the Wi-Fi payload parser no longer quote the raw buffer (it holds the password) | `src/hdl/info.rs`, `src/hdl/inbound.rs` |
 | Per-chunk logs lowered to `trace` | `src/hdl/inbound.rs`, `src/hdl/outbound.rs` |
 | `sys_metrics` (AGPL-3.0) replaced by reading `/proc/sys/kernel/hostname`; `get_if_addrs` replaced by `if-addrs` | `src/utils.rs`, `src/lib.rs`, `Cargo.toml` |

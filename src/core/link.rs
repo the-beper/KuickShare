@@ -140,15 +140,24 @@ impl std::fmt::Debug for Secret {
     }
 }
 
+/// How a saved network authenticates; NetworkManager's `key-mgmt` follows from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SavedSecurity {
+    Open,
+    WpaPsk,
+    /// WPA3-SAE, which newer phones may report for a network.
+    Sae,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum Kind {
     Ap(Band),
     Client {
         hidden: bool,
     },
-    /// A network the user chose to join for good: saved, autoconnect, normal routing. `open`: no key.
+    /// A network the user chose to join for good: saved, autoconnect, normal routing.
     Saved {
-        open: bool,
+        security: SavedSecurity,
     },
 }
 
@@ -188,7 +197,7 @@ fn invalid(msg: &str) -> io::Error {
 }
 
 impl ConnSettings {
-    /// Rejects an SSID or key WPA2 cannot carry (the error never quotes either).
+    /// Rejects an SSID or key WPA/WPA3 cannot carry (the error never quotes either).
     fn new(id: &str, iface: &str, ssid: &str, psk: &str, kind: Kind) -> io::Result<Self> {
         if ssid.is_empty() || ssid.len() > MAX_SSID {
             return Err(invalid("Wi-Fi SSID must be 1..=32 bytes"));
@@ -207,17 +216,28 @@ impl ConnSettings {
         })
     }
 
-    /// A saved profile named after the network; `psk` is `None` for an open one.
-    fn saved(iface: &str, ssid: &str, psk: Option<&str>) -> io::Result<Self> {
+    /// A saved profile named after the network; `psk` is `None` only for an open network.
+    fn saved(
+        iface: &str,
+        ssid: &str,
+        security: SavedSecurity,
+        psk: Option<&str>,
+    ) -> io::Result<Self> {
         // The sweep of leftover temporary profiles would delete a saved one with such a name.
         if ssid.starts_with(PROFILE_PREFIX) {
             return Err(invalid(
                 "Networks whose name starts with \"kuickshare-\" cannot be joined from here",
             ));
         }
-        match psk {
-            Some(psk) => Self::new(ssid, iface, ssid, psk, Kind::Saved { open: false }),
-            None => {
+        match (security, psk) {
+            (SavedSecurity::WpaPsk | SavedSecurity::Sae, Some(psk)) => {
+                Self::new(ssid, iface, ssid, psk, Kind::Saved { security })
+            }
+            (SavedSecurity::WpaPsk | SavedSecurity::Sae, None) => {
+                Err(invalid("Wi-Fi key must be 8..=63 bytes"))
+            }
+            (SavedSecurity::Open, Some(_)) => Err(invalid("an open network has no key")),
+            (SavedSecurity::Open, None) => {
                 if ssid.is_empty() || ssid.len() > MAX_SSID {
                     return Err(invalid("Wi-Fi SSID must be 1..=32 bytes"));
                 }
@@ -226,7 +246,9 @@ impl ConnSettings {
                     iface: iface.to_owned(),
                     ssid: ssid.as_bytes().to_vec(),
                     psk: Secret(String::new()),
-                    kind: Kind::Saved { open: true },
+                    kind: Kind::Saved {
+                        security: SavedSecurity::Open,
+                    },
                     client_band: None,
                     zone: "",
                 })
@@ -240,7 +262,7 @@ mod wire {
 
     use zbus::Variant;
 
-    use super::{ConnSettings, GATEWAY, Kind};
+    use super::{ConnSettings, GATEWAY, Kind, SavedSecurity};
 
     pub type Dict = HashMap<&'static str, HashMap<&'static str, Variant<'static>>>;
 
@@ -266,8 +288,14 @@ mod wire {
             ("interface-name", Variant::from(s.iface.clone())),
         ];
         let mut wireless = vec![("ssid", Variant::from(s.ssid.clone()))];
+        let key_mgmt = match s.kind {
+            Kind::Saved {
+                security: SavedSecurity::Sae,
+            } => "sae",
+            _ => "wpa-psk",
+        };
         let mut security = vec![
-            ("key-mgmt", Variant::from("wpa-psk")),
+            ("key-mgmt", Variant::from(key_mgmt)),
             ("psk", Variant::from(s.psk.0.clone())),
         ];
         let (ipv4, ipv6);
@@ -330,7 +358,12 @@ mod wire {
             ("ipv6", ipv6),
         ]);
         // An open network has no security section at all.
-        if matches!(s.kind, Kind::Saved { open: true }) {
+        if matches!(
+            s.kind,
+            Kind::Saved {
+                security: SavedSecurity::Open
+            }
+        ) {
             dict.remove("802-11-wireless-security");
         }
         dict
@@ -1645,10 +1678,11 @@ impl<A: NmApi> NmLink<A> {
         &self,
         st: &mut State,
         ssid: &str,
+        security: SavedSecurity,
         psk: Option<&str>,
     ) -> io::Result<()> {
         let dev = self.api.wifi_device().await?;
-        let settings = ConnSettings::saved(&dev.iface, ssid, psk)?;
+        let settings = ConnSettings::saved(&dev.iface, ssid, security, psk)?;
         st.dev = Some(dev.clone());
         self.remember_previous(st, &dev).await;
         st.touched = true;
@@ -1660,12 +1694,18 @@ impl<A: NmApi> NmLink<A> {
     }
 
     /// Joins a network the user chose, as a saved profile that connects by itself next time
-    /// (unlike `join`, whose profile is temporary). `psk` is `None` for an open network.
+    /// (unlike `join`, whose profile is temporary). `security` is `SavedSecurity::Open` with
+    /// `psk` `None` for an open network; WPA and WPA3-SAE take the key.
     /// Refuses while an upgrade holds the link. On failure the profile is removed and the previous
     /// connection restored; on success the profile stays. The error never contains the key.
-    pub async fn join_saved(&self, ssid: &str, psk: Option<&str>) -> io::Result<()> {
+    pub async fn join_saved(
+        &self,
+        ssid: &str,
+        security: SavedSecurity,
+        psk: Option<&str>,
+    ) -> io::Result<()> {
         let mut st = self.begin()?;
-        match self.join_saved_inner(&mut st, ssid, psk).await {
+        match self.join_saved_inner(&mut st, ssid, security, psk).await {
             Ok(()) => {
                 // Not ours to clean up any more: keep the profile and the connection.
                 *st = State::default();
@@ -3125,8 +3165,12 @@ mod tests {
             assert_eq!(o["persist"], Variant::from("volatile"));
             assert_eq!(o["bind-activation"], Variant::from("dbus-client"));
         }
-        for open in [false, true] {
-            let o = activation_options(Kind::Saved { open });
+        for security in [
+            SavedSecurity::Open,
+            SavedSecurity::WpaPsk,
+            SavedSecurity::Sae,
+        ] {
+            let o = activation_options(Kind::Saved { security });
             assert_eq!(o.len(), 1);
             assert_eq!(o["persist"], Variant::from("disk"));
         }
@@ -3447,7 +3491,13 @@ mod tests {
 
     #[test]
     fn saved_settings_autoconnect_with_normal_routing_and_are_kept_on_disk() {
-        let s = ConnSettings::saved("wlan0", "Home", Some("Passw0rdPassw0rd")).unwrap();
+        let s = ConnSettings::saved(
+            "wlan0",
+            "Home",
+            SavedSecurity::WpaPsk,
+            Some("Passw0rdPassw0rd"),
+        )
+        .unwrap();
         let d = wire::dict(&s);
         assert_eq!(d["connection"]["id"], Variant::from("Home"));
         assert_eq!(d["connection"]["autoconnect"], Variant::from(true));
@@ -3468,26 +3518,69 @@ mod tests {
     }
 
     #[test]
+    fn saved_wpa3_network_uses_sae() {
+        let s = ConnSettings::saved(
+            "wlan0",
+            "Home",
+            SavedSecurity::Sae,
+            Some("Passw0rdPassw0rd"),
+        )
+        .unwrap();
+        let d = wire::dict(&s);
+        let sec = "802-11-wireless-security";
+        assert_eq!(d[sec]["key-mgmt"], Variant::from("sae"));
+        assert_eq!(d[sec]["psk"], Variant::from("Passw0rdPassw0rd"));
+        assert_eq!(d["connection"]["autoconnect"], Variant::from(true));
+        assert!(!format!("{s:?}").contains("Passw0rdPassw0rd"));
+    }
+
+    #[test]
     fn saved_open_network_has_no_security_section() {
-        let s = ConnSettings::saved("wlan0", "Cafe", None).unwrap();
+        let s = ConnSettings::saved("wlan0", "Cafe", SavedSecurity::Open, None).unwrap();
         let d = wire::dict(&s);
         assert!(!d.contains_key("802-11-wireless-security"));
         assert_eq!(d["connection"]["autoconnect"], Variant::from(true));
-        assert!(ConnSettings::saved("wlan0", "", None).is_err());
-        for psk in [None, Some("Passw0rdPassw0rd")] {
-            let e = ConnSettings::saved("wlan0", "kuickshare-ap", psk).unwrap_err();
+        assert!(ConnSettings::saved("wlan0", "", SavedSecurity::Open, None).is_err());
+        for (security, psk) in [
+            (SavedSecurity::Open, None),
+            (SavedSecurity::WpaPsk, Some("Passw0rdPassw0rd")),
+            (SavedSecurity::Sae, Some("Passw0rdPassw0rd")),
+        ] {
+            let e = ConnSettings::saved("wlan0", "kuickshare-ap", security, psk).unwrap_err();
             assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
             assert!(!e.to_string().contains("Passw0rd"));
         }
         // A 64-hex PSK does not fit the 8..=63 passphrase rule and is refused.
-        assert!(ConnSettings::saved("wlan0", "Home", Some(&"a".repeat(64))).is_err());
-        assert!(ConnSettings::saved("wlan0", "Home", Some("short")).is_err());
+        assert!(
+            ConnSettings::saved(
+                "wlan0",
+                "Home",
+                SavedSecurity::WpaPsk,
+                Some(&"a".repeat(64))
+            )
+            .is_err()
+        );
+        assert!(
+            ConnSettings::saved("wlan0", "Home", SavedSecurity::WpaPsk, Some("short")).is_err()
+        );
+        // A key without a security type, or an open network with one, is refused too.
+        assert!(ConnSettings::saved("wlan0", "Home", SavedSecurity::WpaPsk, None).is_err());
+        assert!(ConnSettings::saved("wlan0", "Home", SavedSecurity::Sae, None).is_err());
+        assert!(
+            ConnSettings::saved(
+                "wlan0",
+                "Home",
+                SavedSecurity::Open,
+                Some("Passw0rdPassw0rd")
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]
     async fn join_saved_keeps_the_profile_and_frees_the_link() {
         let (link, log) = fake().build();
-        link.join_saved("Home", Some("Passw0rdPassw0rd"))
+        link.join_saved("Home", SavedSecurity::WpaPsk, Some("Passw0rdPassw0rd"))
             .await
             .unwrap();
         assert_eq!(count(&log, "add_and_activate"), 1);
@@ -3498,7 +3591,9 @@ mod tests {
         assert_eq!(live(&link), 1);
         assert_no_secret(&link, &log, "Passw0rdPassw0rd");
         // The link is free again.
-        link.join_saved("Cafe", None).await.unwrap();
+        link.join_saved("Cafe", SavedSecurity::Open, None)
+            .await
+            .unwrap();
         assert_eq!(live(&link), 2);
     }
 
@@ -3506,7 +3601,7 @@ mod tests {
     async fn join_saved_failure_removes_the_profile_restores_the_previous_one_and_hides_the_key() {
         let (link, log) = fake().fail(|op, _| op == "wait_activated").build();
         let e = link
-            .join_saved("Home", Some("Passw0rdPassw0rd"))
+            .join_saved("Home", SavedSecurity::WpaPsk, Some("Passw0rdPassw0rd"))
             .await
             .unwrap_err();
         assert!(!e.to_string().contains("Passw0rdPassw0rd"));
@@ -3521,7 +3616,9 @@ mod tests {
     async fn join_saved_is_refused_while_an_upgrade_holds_the_link() {
         let (link, log) = fake().build();
         let st = link.begin().unwrap();
-        let e = link.join_saved("Home", Some("Passw0rdPassw0rd")).await;
+        let e = link
+            .join_saved("Home", SavedSecurity::WpaPsk, Some("Passw0rdPassw0rd"))
+            .await;
         assert_eq!(e.unwrap_err().kind(), io::ErrorKind::WouldBlock);
         drop(st);
         assert_eq!(count(&log, "add_and_activate"), 0);
@@ -3530,7 +3627,10 @@ mod tests {
     #[tokio::test]
     async fn join_saved_rejects_a_bad_key_before_touching_anything() {
         let (link, log) = fake().build();
-        let e = link.join_saved("Home", Some("short")).await.unwrap_err();
+        let e = link
+            .join_saved("Home", SavedSecurity::WpaPsk, Some("short"))
+            .await
+            .unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(count(&log, "add_and_activate"), 0);
         assert_eq!(count(&log, "activate /prev"), 0);
