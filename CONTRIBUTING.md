@@ -150,10 +150,17 @@ The maintainer's [Claude Code](https://claude.com/claude-code) setup is in `.cla
 
 ### Making a release
 
-1. Set the new version with `build/release/version-bump.sh X.Y.Z NOTES`. It refuses a version that is not above the current one and the newest release tag of this clone (run `git fetch --tags` first) and uncommitted changes to the files it writes, writes nothing unless every check passed, and never commits. It writes `Cargo.toml` (and `Cargo.lock`), `src/shell/CMakeLists.txt` and a new first `<release>` of `data/io.github.the_beper.KuickShare.metainfo.xml`, dated today, with the notes of `NOTES`, a plain text file (no markup): the first line is the summary, every other line an item `- text`. In the metainfo the `<li>` items become the "What's Changed" list of the GitHub release (keep them short, one change each), followed by the "Full Changelog" link to the previous `<release>`'s tag. The introductory `<p>` is only for software centers.
-2. Push the commit to `main` and wait until the CI run on it is green (its `required` check).
-3. Tag that commit `vX.Y.Z`, matching the version, and push only the tag.
-4. Approve the `release-signing` environment when the run asks for it: it asks only after `check-flatpak` is green.
+1. Pick the version from the changes since the newest release tag `vX.Y.Z`. The largest bump that applies wins, so one new feature makes a minor release even if everything else is a fix.
+
+   | Changes | Version |
+   |---|---|
+   | Fixes only: no new feature or setting, new text only where a fix needs it | patch, `X.Y.Z+1` |
+   | At least one change a user notices: a feature, a setting, a package format, a changed behavior or default, a raised requirement (minimum Plasma or Qt) that drops no supported distribution, a D-Bus method, property or signal added | minor, `X.Y+1.0` |
+   | Something a user must act on, or that breaks a client: a feature, package format or supported distribution dropped, settings or history not migrated, an incompatible change to the D-Bus interface `io.github.the_beper.KuickShare1` ([docs/dbus-api.md](docs/dbus-api.md)), a new Flatpak signing key | major, `X+1.0.0` |
+2. Set the new version with `build/release/version-bump.sh X.Y.Z NOTES`. It refuses a version that is not above the current one and the newest release tag of this clone (run `git fetch --tags` first) and uncommitted changes to the files it writes, writes nothing unless every check passed, and never commits. It writes `Cargo.toml` (and `Cargo.lock`), `src/shell/CMakeLists.txt` and a new first `<release>` of `data/io.github.the_beper.KuickShare.metainfo.xml`, dated today, with the notes of `NOTES`, a plain text file (no markup): the first line is the summary, every other line an item `- text`. In the metainfo the `<li>` items become the "What's Changed" list of the GitHub release (keep them short, one change each), followed by the "Full Changelog" link to the previous `<release>`'s tag. The introductory `<p>` is only for software centers.
+3. Push the commit to `main` and wait until the CI run on it is green (its `required` check).
+4. Tag that commit `vX.Y.Z`, matching the version, and push only the tag.
+5. Approve the `release-signing` environment when the run asks for it: it asks only after `check-flatpak` is green.
 
 Do not create the release in the GitHub UI or with `gh release create`: the release workflow creates a draft, uploads the files and publishes it last. A release you publish by hand is public without its files (the AppImage update link would point at nothing); if one exists, the workflow only adds what is missing and warns.
 
