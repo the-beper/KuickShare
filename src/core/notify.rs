@@ -49,6 +49,7 @@ const PERSISTENT: i32 = 0;
 /// Icons: the app icon everywhere, and the warning one when a transfer failed.
 const APP_ICON: &str = "io.github.the_beper.KuickShare";
 const WARNING_ICON: &str = "dialog-warning";
+const WIFI_ICON: &str = "network-wireless";
 
 const APP_NAME: &str = "KuickShare";
 
@@ -120,6 +121,10 @@ pub enum Notice {
         /// The one file to open; `None` opens the folder only.
         path: Option<String>,
     },
+    /// A Wi-Fi network shared by a phone was joined automatically (opt-in).
+    WifiJoined { ssid: String },
+    /// The automatic join of a shared Wi-Fi network failed; `reason` never contains the password.
+    WifiJoinFailed { ssid: String, reason: String },
     /// The offer was refused before anything was accepted.
     Refusal { device: String, reason: String },
     /// Nothing moved yet and the transfer is over before it could start.
@@ -235,6 +240,20 @@ fn text_of(notice: &Notice) -> Text {
                 expire: NOTICE_TIMEOUT,
             }
         }
+        Notice::WifiJoined { ssid } => Text {
+            icon: WIFI_ICON,
+            summary: i18nc!("@title:notification", "Wi-Fi Network Joined"),
+            body: i18n!("Connected to %1", &plain(ssid)),
+            actions: Vec::new(),
+            expire: NOTICE_TIMEOUT,
+        },
+        Notice::WifiJoinFailed { ssid, reason } => Text {
+            icon: WARNING_ICON,
+            summary: i18nc!("@title:notification", "Could Not Join Wi-Fi"),
+            body: i18n!("Could not connect to %1\n%2", &plain(ssid), &plain(reason)),
+            actions: Vec::new(),
+            expire: NOTICE_TIMEOUT,
+        },
         Notice::Refusal { device, reason } => Text {
             icon: WARNING_ICON,
             summary: i18nc!("@title:notification", "Offer Refused"),
@@ -572,5 +591,26 @@ mod tests {
             plain_who("<Eve>", "Someone".to_owned()),
             "\u{2039}Eve\u{203A}"
         );
+    }
+
+    #[test]
+    fn wifi_join_results_name_the_network_and_escape_it() {
+        let joined = text_of(&Notice::WifiJoined {
+            ssid: "<Home>".to_owned(),
+        });
+        assert!(joined.body.contains("\u{2039}Home\u{203A}"));
+        assert!(!joined.body.contains("<Home>"));
+
+        let failed = text_of(&Notice::WifiJoinFailed {
+            ssid: "Home".to_owned(),
+            reason: "NetworkManager <failed>".to_owned(),
+        });
+        assert!(failed.body.contains("Home"));
+        assert!(
+            failed
+                .body
+                .contains("NetworkManager \u{2039}failed\u{203A}")
+        );
+        assert!(!failed.body.contains("<failed>"));
     }
 }

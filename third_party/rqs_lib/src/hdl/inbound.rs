@@ -825,49 +825,19 @@ impl InboundRequest {
                                     // FIXME: ChannelMessage's structure needs to be redone as well
                                     // It needs to have TextPayloadInfo instead of TextPayloadType
                                     TextPayloadInfo::Wifi((_, ssid, security_type)) => {
-                                        // ~~Payload seems to be within two DLE (0x10) characters
-                                        // At least for WpaPsk, not sure about Wep~~
-                                        //
-                                        // Nope, that's wrong, my Wi-Fi password just happened to have 16 characters
-                                        // which tripped up the previous logic.
-                                        //
-                                        // So, the password seems to start with 0x0A followed by a byte indicating
-                                        // the password or payload length. And, the payload ends with 0x10 0x??
-                                        // The last byte is sometimes 00 and other times 01
-                                        fn parse_password_payload(
-                                            buffer: &[u8],
-                                        ) -> anyhow::Result<String>
-                                        {
-                                            if buffer.len() < 4 {
-                                                anyhow::bail!("Wi-Fi payload too short");
-                                            }
-
-                                            if buffer[(buffer.len() - 1) - 1] != 0x10 {
-                                                anyhow::bail!(
-                                                    "Wi-Fi payload doesn't end with 0x10 0x?? as expected"
-                                                );
-                                            }
-
-                                            let len = *buffer
-                                                .get(1)
-                                                .expect("Validated for minimum length of 4")
-                                                as usize;
-
-                                            let payload_buffer = buffer.get(2..2 + len).with_context(|| anyhow!("Wi-Fi payload too short for its length {len}"))?;
-
-                                            Ok(String::from_utf8(payload_buffer.to_owned())?)
-                                        }
-
+                                        // The BYTE payload is the serialized `WifiCredentials`
+                                        // message (password = field 1, hidden_ssid = field 2). The
+                                        // sender may leave out `hidden_ssid`, order the fields
+                                        // differently or add fields in a later version, so decode
+                                        // the message instead of looking for the 0x10 tag by hand.
                                         let payload = match security_type {
-                                            kind @ SecurityType::UnknownSecurityType => {
-                                                kind.as_str_name().into()
-                                            }
-                                            SecurityType::Open => "".into(),
-                                            SecurityType::WpaPsk | SecurityType::Wep => {
-                                                parse_password_payload(&buffer)
-                                                    .inspect_err(|err| error!("{err:#}"))
-                                                    .unwrap_or_default()
-                                            }
+                                            SecurityType::Open => String::new(),
+                                            SecurityType::WpaPsk
+                                            | SecurityType::Wep
+                                            | SecurityType::Sae => wifi_password(&buffer)
+                                                .inspect_err(|err| error!("{err:#}"))
+                                                .unwrap_or_default(),
+                                            SecurityType::UnknownSecurityType => String::new(),
                                         };
 
                                         self.update_state(
@@ -2131,6 +2101,18 @@ fn idle_deadline_for(
     })
 }
 
+/// The password of the `WifiCredentials` message carried by the follow-up BYTE payload of a
+/// shared network. Decoding the protobuf accepts the fields in any order, an absent
+/// `hidden_ssid`, and fields added by a newer sender. The error never quotes the payload.
+fn wifi_password(buffer: &[u8]) -> anyhow::Result<String> {
+    let credentials = sharing_nearby::WifiCredentials::decode(buffer)
+        .context("the Wi-Fi credentials payload is not a WifiCredentials message")?;
+    credentials
+        .password
+        .filter(|password| !password.is_empty())
+        .context("the Wi-Fi credentials payload has no password")
+}
+
 /// Test-only capture of `log` output, per thread (each test runs on its own thread), so a
 /// test can check what a code path writes to the log at any level.
 #[cfg(test)]
@@ -2198,6 +2180,43 @@ mod tests {
 
     use super::*;
     use crate::upgrade::tests::FakeLink;
+
+    /// The password payload a current Android sender produces: `WifiCredentials` with only the
+    /// `password` field, so no `hidden_ssid` tag at the end.
+    #[test]
+    fn wifi_password_without_hidden_ssid() {
+        let mut payload = vec![0x0A, 14];
+        payload.extend_from_slice(b"hunter2-secret");
+        assert_eq!(wifi_password(&payload).unwrap(), "hunter2-secret");
+    }
+
+    /// Older senders append `hidden_ssid`, and field order is not guaranteed.
+    #[test]
+    fn wifi_password_with_any_field_order() {
+        let mut payload = vec![0x0A, 14];
+        payload.extend_from_slice(b"hunter2-secret");
+        payload.extend([0x10, 0x00]);
+        assert_eq!(wifi_password(&payload).unwrap(), "hunter2-secret");
+
+        let mut payload = vec![0x10, 0x01, 0x0A, 14];
+        payload.extend_from_slice(b"hunter2-secret");
+        assert_eq!(wifi_password(&payload).unwrap(), "hunter2-secret");
+
+        // A field added by a newer sender is skipped.
+        let mut payload = vec![0x18, 0x01, 0x0A, 14];
+        payload.extend_from_slice(b"hunter2-secret");
+        assert_eq!(wifi_password(&payload).unwrap(), "hunter2-secret");
+    }
+
+    #[test]
+    fn wifi_password_rejects_a_missing_or_broken_payload_without_quoting_it() {
+        for payload in [&[][..], &[0x10, 0x00][..]] {
+            assert!(wifi_password(payload).is_err());
+        }
+        let broken = [0x0A, 0x7F, b'h', b'u', b'n', b't', b'e', b'r'];
+        let shown = format!("{:#}", wifi_password(&broken).unwrap_err());
+        assert!(!shown.contains("hunter"));
+    }
 
     /// A file that is already there is never opened for writing: the new file gets a number.
     #[test]

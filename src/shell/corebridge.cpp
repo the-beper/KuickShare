@@ -548,6 +548,9 @@ void CoreBridge::refreshProperties()
         const bool wifiUpgrade = props.value(QStringLiteral("WifiUpgrade"), m_wifiUpgrade).toBool();
         const bool wifiChanged = wifiUpgrade != m_wifiUpgrade;
         m_wifiUpgrade = wifiUpgrade;
+        const bool wifiAutoJoin = props.value(QStringLiteral("WifiAutoJoin"), m_wifiAutoJoin).toBool();
+        const bool autoJoinDiffers = wifiAutoJoin != m_wifiAutoJoin;
+        m_wifiAutoJoin = wifiAutoJoin;
         const bool insecure = props.value(QStringLiteral("InsecureHotspotAllowed"), m_insecureHotspotAllowed).toBool();
         const bool insecureChanged = insecure != m_insecureHotspotAllowed;
         m_insecureHotspotAllowed = insecure;
@@ -600,6 +603,9 @@ void CoreBridge::refreshProperties()
         }
         if (wifiChanged) {
             emit wifiUpgradeChanged();
+        }
+        if (autoJoinDiffers) {
+            emit wifiAutoJoinChanged();
         }
         if (insecureChanged) {
             emit insecureHotspotAllowedChanged();
@@ -1331,6 +1337,16 @@ void CoreBridge::setWifiUpgrade(bool enabled)
 {
     // Not optimistic: `m_wifiUpgrade` only takes what the core reports, so a refusal leaves the setting as it was.
     requestWifiUpgrade(enabled, false);
+}
+
+void CoreBridge::setWifiAutoJoin(bool enabled)
+{
+    if (enabled == m_wifiAutoJoin) {
+        return;
+    }
+    m_wifiAutoJoin = enabled;
+    emit wifiAutoJoinChanged();
+    setRemoteProperty(QStringLiteral("WifiAutoJoin"), enabled);
 }
 
 void CoreBridge::requestWifiUpgrade(bool enabled, bool allowInsecure)

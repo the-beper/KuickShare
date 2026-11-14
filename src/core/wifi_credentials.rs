@@ -14,7 +14,7 @@ use std::{
 
 use rqs_lib::{TransferState, hdl::info::TransferPayload};
 
-use crate::link::Secret;
+use crate::link::{SavedSecurity, Secret};
 
 pub const TTL: Duration = Duration::from_secs(600);
 pub const MAX_ENTRIES: usize = 8;
@@ -24,6 +24,8 @@ pub const MAX_ENTRIES: usize = 8;
 pub enum Security {
     Open,
     WpaPsk,
+    /// WPA3-SAE; a newer Android may report a network this way.
+    Sae,
     Unsupported,
 }
 
@@ -35,9 +37,22 @@ pub struct Credentials {
 }
 
 impl Credentials {
-    /// The key to join with: `None` for an open network.
+    /// The key to join with: `None` for an open network. `Store::get` never returns a WPA or SAE
+    /// network without a key.
     pub fn psk(&self) -> Option<&str> {
-        (self.security == Security::WpaPsk).then_some(self.password.0.as_str())
+        matches!(self.security, Security::WpaPsk | Security::Sae)
+            .then_some(self.password.0.as_str())
+    }
+
+    /// The authentication to save the profile with; `None` for a type that cannot be joined
+    /// (`Store::get` never returns those).
+    pub fn saved_security(&self) -> Option<SavedSecurity> {
+        match self.security {
+            Security::Open => Some(SavedSecurity::Open),
+            Security::WpaPsk => Some(SavedSecurity::WpaPsk),
+            Security::Sae => Some(SavedSecurity::Sae),
+            Security::Unsupported => None,
+        }
     }
 }
 
@@ -57,6 +72,8 @@ impl fmt::Debug for Credentials {
 pub enum Error {
     /// No such transfer, or its credentials expired or were already used.
     Unknown,
+    /// A WPA/WPA2/WPA3 network arrived without a usable password (a broken or empty payload).
+    NoPassword,
     Unsupported,
 }
 
@@ -66,7 +83,10 @@ impl fmt::Display for Error {
             Self::Unknown => {
                 "These Wi-Fi details are no longer available; ask the phone to send them again"
             }
-            Self::Unsupported => "Only WPA/WPA2 and open networks can be joined from here",
+            Self::NoPassword => {
+                "These Wi-Fi details arrived without the password; ask the phone to send them again"
+            }
+            Self::Unsupported => "Only WPA/WPA2/WPA3 and open networks can be joined from here",
         })
     }
 }
@@ -95,6 +115,7 @@ impl Store {
         let (security, password) = match security_type {
             SecurityType::Open => (Security::Open, String::new()),
             SecurityType::WpaPsk => (Security::WpaPsk, password.clone()),
+            SecurityType::Sae => (Security::Sae, password.clone()),
             SecurityType::Wep | SecurityType::UnknownSecurityType => {
                 (Security::Unsupported, String::new())
             }
@@ -154,7 +175,10 @@ impl Store {
         let (_, credentials) = self.entries.get(id).ok_or(Error::Unknown)?;
         match credentials.security {
             Security::Unsupported => Err(Error::Unsupported),
-            Security::Open | Security::WpaPsk => Ok(credentials.clone()),
+            Security::WpaPsk | Security::Sae if credentials.password.0.is_empty() => {
+                Err(Error::NoPassword)
+            }
+            Security::Open | Security::WpaPsk | Security::Sae => Ok(credentials.clone()),
         }
     }
 
@@ -185,28 +209,53 @@ mod tests {
     use super::*;
 
     fn wifi(ssid: &str, security_type: SecurityType) -> TransferPayload {
+        wifi_with(ssid, "hunter2-secret", security_type)
+    }
+
+    fn wifi_with(ssid: &str, password: &str, security_type: SecurityType) -> TransferPayload {
         TransferPayload::Wifi {
             ssid: ssid.into(),
-            password: "hunter2-secret".into(),
+            password: password.into(),
             security_type,
         }
     }
 
     #[test]
-    fn stores_and_returns_wpa_and_open_networks() {
+    fn stores_and_returns_wpa_wpa3_and_open_networks() {
         let (mut store, now) = (Store::default(), Instant::now());
         assert!(store.insert("a", &wifi("Home", SecurityType::WpaPsk), now));
         assert!(store.insert("b", &wifi("Cafe", SecurityType::Open), now));
+        assert!(store.insert("c", &wifi("Wpa3", SecurityType::Sae), now));
         let home = store.get("a", now).unwrap();
         assert_eq!(
             (home.ssid.as_str(), home.psk()),
             ("Home", Some("hunter2-secret"))
         );
+        assert_eq!(home.saved_security(), Some(SavedSecurity::WpaPsk));
         let cafe = store.get("b", now).unwrap();
         assert_eq!((cafe.ssid.as_str(), cafe.psk()), ("Cafe", None));
+        assert_eq!(cafe.saved_security(), Some(SavedSecurity::Open));
+        let wpa3 = store.get("c", now).unwrap();
+        assert_eq!(
+            (wpa3.ssid.as_str(), wpa3.psk()),
+            ("Wpa3", Some("hunter2-secret"))
+        );
+        assert_eq!(wpa3.saved_security(), Some(SavedSecurity::Sae));
         // Reading does not consume.
         assert!(store.get("a", now).is_ok());
         assert_eq!(store.get("nope", now).unwrap_err(), Error::Unknown);
+    }
+
+    #[test]
+    fn a_missing_password_is_reported_clearly_and_never_joined() {
+        let (mut store, now) = (Store::default(), Instant::now());
+        for kind in [SecurityType::WpaPsk, SecurityType::Sae] {
+            store.insert("a", &wifi_with("Home", "", kind), now);
+            let e = store.get("a", now).unwrap_err();
+            assert_eq!(e, Error::NoPassword);
+            assert!(e.to_string().contains("password"), "{e}");
+            assert_eq!(store.entries["a"].1.password.0, "");
+        }
     }
 
     #[test]
@@ -225,6 +274,7 @@ mod tests {
             assert_eq!(e, Error::Unsupported);
             assert!(!e.to_string().contains("hunter2-secret"));
             assert_eq!(store.entries["a"].1.password.0, "");
+            assert_eq!(store.entries["a"].1.saved_security(), None);
         }
     }
 

@@ -37,6 +37,8 @@ pub struct Settings {
     pub trusted_devices: bool,
     /// Move transfers to a temporary Wi-Fi hotspot when the phone offers it.
     pub wifi_upgrade: bool,
+    /// Join a Wi-Fi network shared by a phone without asking first.
+    pub wifi_auto_join: bool,
     /// Set once the list of trusted devices of older versions (name and MAC address only, which
     /// another device on the network can copy) has been emptied. A file without it is from an older
     /// version, whatever the other defaults say: the field-level default is `false`.
@@ -63,6 +65,7 @@ impl Default for Settings {
             dolphin_integration: true,
             trusted_devices: true,
             wifi_upgrade: false,
+            wifi_auto_join: false,
             // A new install has nothing to reset.
             allowed_reset_v1: true,
             trusted_devices_reset_notice: false,
@@ -171,6 +174,7 @@ mod tests {
             dolphin_integration: false,
             trusted_devices: false,
             wifi_upgrade: true,
+            wifi_auto_join: true,
             allowed_reset_v1: true,
             trusted_devices_reset_notice: true,
         };
@@ -202,6 +206,7 @@ mod tests {
         assert_eq!(loaded.device_name.as_deref(), Some("x"));
         assert!(loaded.visible);
         assert!(loaded.hide_when_dnd);
+        assert!(!loaded.wifi_auto_join);
     }
 
     /// REPRO (decision D1): the name+MAC trust list is emptied exactly once on
