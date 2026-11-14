@@ -71,6 +71,17 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.9.0" date="2026-11-14">
+      <description>
+        <p>Join Wi-Fi networks that phones share without asking, and a fix for the window opening at login</p>
+        <ul>
+          <li>New setting to join a Wi-Fi network shared by a phone without asking, off by default, with a notification when it joins or fails</li>
+          <li>Wi-Fi networks protected by WPA3 can be joined</li>
+          <li>A shared Wi-Fi network that arrives without its password is reported instead of joined</li>
+          <li>An autostart entry added from Plasma's Autostart page no longer opens the window at login once KuickShare has run; a disabled entry stays disabled</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.8.2" date="2026-11-12">
       <description>
         <p>Better Bluetooth and Wi-Fi transfers with phones, and a history option</p>
