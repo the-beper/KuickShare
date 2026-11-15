@@ -80,4 +80,4 @@ done
 cp "$t/toml" Cargo.toml && cp "$t/lock" Cargo.lock && cp "$t/cml" "$cml" && cp "$t/meta" "$meta" || fail "could not write the files; undo with: git checkout -- Cargo.toml Cargo.lock $cml $meta"
 
 echo "$prog: $cur -> $new in Cargo.toml, Cargo.lock, $cml and $meta ($date)"
-echo "next: review git diff, commit (\"Release $new\"), push it to main, then tag v$new (CONTRIBUTING.md, Making a release)"
+echo "next: review git diff, commit (\"Release $new\") on a branch, merge it through a pull request, then tag the merge commit v$new (CONTRIBUTING.md, Making a release)"

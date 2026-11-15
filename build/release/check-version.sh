@@ -31,7 +31,7 @@ head=$(git -C "$root" rev-parse HEAD)
 [ "$head" = "$GITHUB_SHA" ] || fail "HEAD is $head, the run is for $GITHUB_SHA"
 tagged=$(git -C "$root" rev-parse --verify --quiet "refs/tags/$RELEASE_TAG^{commit}") || fail "the tag $RELEASE_TAG is not in the clone"
 [ "$tagged" = "$GITHUB_SHA" ] || fail "the tag $RELEASE_TAG points to $tagged, the run is for $GITHUB_SHA"
-git -C "$root" merge-base --is-ancestor "$GITHUB_SHA" "$main_ref" || fail "$GITHUB_SHA is not on main: push the release commit to main first"
+git -C "$root" merge-base --is-ancestor "$GITHUB_SHA" "$main_ref" || fail "$GITHUB_SHA is not on main: merge the release commit to main first"
 newest=$(git -C "$root" tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
 [ "$newest" = "$RELEASE_TAG" ] || fail "the newest release tag is $newest, not $RELEASE_TAG: a release is never made below an existing one (cut the next version instead)"
 
