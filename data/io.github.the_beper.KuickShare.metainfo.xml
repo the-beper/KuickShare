@@ -71,6 +71,17 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.9.1" date="2026-11-15">
+      <description>
+        <p>Better use of the network a phone shares with the computer, and a fix for the notification Copy button</p>
+        <ul>
+          <li>The computer shows one identity over the network and over Bluetooth, so a phone can treat both as one device and prefer the network</li>
+          <li>For a text or link received over Bluetooth, the network you are already on is offered before you accept, so it can arrive over the network</li>
+          <li>The Copy button of a received text or link notification works again on Plasma</li>
+          <li>Updated dependencies</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.9.0" date="2026-11-14">
       <description>
         <p>Join Wi-Fi networks that phones share without asking, and a fix for the window opening at login</p>
