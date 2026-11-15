@@ -83,22 +83,44 @@ pub fn gen_mdns_name(endpoint_id: [u8; 4]) -> String {
     URL_SAFE_NO_PAD.encode(&name_b)
 }
 
-pub fn gen_mdns_endpoint_info(device_type: u8, device_name: &str) -> String {
-    let mut record = Vec::new();
+/// Longest name an endpoint advertisement carries, so a BLE record stays small.
+pub(crate) const MAX_ENDPOINT_NAME: usize = 100;
+
+/// `name` cut to [`MAX_ENDPOINT_NAME`] bytes without splitting a character.
+pub(crate) fn endpoint_name(name: &str) -> &str {
+    if name.len() <= MAX_ENDPOINT_NAME {
+        return name;
+    }
+    let mut end = MAX_ENDPOINT_NAME;
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    &name[..end]
+}
+
+/// The endpoint info this computer advertises, over mDNS (`n`) and BLE alike: one byte of
+/// version 1, visibility off and the device type, one 16-byte identity (salt and metadata key
+/// hash), then the name's length and the name. Nearby Connections keeps only the latest medium
+/// when one endpoint id comes with different endpoint info, so both advertisements have to
+/// carry the very same bytes.
+pub fn gen_endpoint_info(device_type: u8, identity: &[u8; 16], device_name: &str) -> Vec<u8> {
+    let name = endpoint_name(device_name).as_bytes();
+    let mut record = Vec::with_capacity(18 + name.len());
 
     // 1 byte: Version(3 bits)|Visibility(1 bit)|Device Type(3 bits)|Reserved(1 bits)
     // Device types: unknown=0, phone=1, tablet=2, laptop=3
-    record.push(device_type << 1);
+    // Version 1 with the visibility bit clear is what a phone advertises.
+    record.push((1 << 5) | ((device_type & 0x7) << 1));
 
-    let unknown_bytes = rand::rng().random::<[u8; 16]>();
-    record.extend_from_slice(&unknown_bytes);
+    record.extend_from_slice(identity);
+    record.push(name.len() as u8);
+    record.extend_from_slice(name);
 
-    let device_name = device_name.as_bytes();
-    let length = device_name.len() as u8;
-    record.push(length);
-    record.extend_from_slice(device_name);
+    record
+}
 
-    URL_SAFE_NO_PAD.encode(&record)
+pub fn gen_mdns_endpoint_info(device_type: u8, identity: &[u8; 16], device_name: &str) -> String {
+    URL_SAFE_NO_PAD.encode(gen_endpoint_info(device_type, identity, device_name))
 }
 
 pub fn parse_mdns_endpoint_info(encoded_str: &str) -> Result<(DeviceType, String), anyhow::Error> {
@@ -466,15 +488,35 @@ mod tests {
     fn test_gen_and_parse_mdns_info() {
         let device_name = "a_device_name";
         let device_type = DeviceType::Laptop;
+        let identity = [7u8; 16];
 
         dbg!(&device_type);
         dbg!(device_type.clone() as u8);
 
-        let info = gen_mdns_endpoint_info(device_type.clone() as u8, device_name);
+        let info = gen_mdns_endpoint_info(device_type.clone() as u8, &identity, device_name);
         let parse_info = parse_mdns_endpoint_info(&info).unwrap();
 
         assert_eq!(parse_info.1, device_name);
         assert_eq!(parse_info.0, device_type);
+    }
+
+    /// The phone merges the mDNS and BLE advertisements of one endpoint id only when both carry
+    /// the same endpoint info; a difference makes it forget the other medium.
+    #[test]
+    fn mdns_and_ble_endpoint_info_are_the_same_bytes() {
+        let identity = [0xabu8; 16];
+        let device_type = DeviceType::Laptop as u8;
+        let mdns = gen_mdns_endpoint_info(device_type, &identity, "Desk");
+        let bytes = URL_SAFE_NO_PAD.decode(mdns).unwrap();
+
+        assert_eq!(bytes, gen_endpoint_info(device_type, &identity, "Desk"));
+        assert_eq!(&bytes[1..17], &identity);
+        assert_eq!(bytes[0], 0x26); // version 1, name in clear, laptop
+
+        // A long name is cut on the same boundary for both.
+        let long = "é".repeat(80);
+        let info = gen_endpoint_info(device_type, &identity, &long);
+        assert_eq!(&info[18..], "é".repeat(50).as_bytes());
     }
 }
 

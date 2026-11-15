@@ -161,6 +161,9 @@ impl RQS {
             .take(4)
             .map(u8::from)
             .collect();
+        // The same 16 bytes go into the mDNS record and the BLE advertisement; a phone
+        // merges the two mediums of an endpoint only when their endpoint info is identical.
+        let identity: [u8; 16] = rand::rng().random();
         let tcp_listener =
             TcpListener::bind(format!("0.0.0.0:{}", self.port_number.unwrap_or(0))).await?;
         let binded_addr = tcp_listener.local_addr()?;
@@ -187,6 +190,7 @@ impl RQS {
         let mut mdns = MDnsServer::new(
             endpoint_id[..4].try_into()?,
             binded_addr.port(),
+            identity,
             self.visibility_sender.clone(),
             self.visibility_receiver.clone(),
         )?;
@@ -203,7 +207,7 @@ impl RQS {
             &tracker,
             ctoken.clone(),
             endpoint_id[..4].try_into()?,
-            rand::rng().random(),
+            identity,
             self.message_sender.clone(),
             self.visibility_receiver.clone(),
             WIFI_LINK_SET.subscribe(),

@@ -354,6 +354,12 @@ impl InboundRequest {
                     self.upgrade
                         .set_peer_5ghz(cr.medium_metadata.as_ref().and_then(|m| m.supports_5_ghz));
                     self.upgrade.set_peer_endpoint_id(cr.endpoint_id());
+                    info!(
+                        "upgrade: peer lists LAN={}, hotspot={} (mediums {:?})",
+                        upgrade::peer_allows_lan(&cr.mediums),
+                        upgrade::peer_allows_hotspot(&cr.mediums),
+                        cr.mediums
+                    );
                 }
                 debug!(
                     "Peer is a {:?}, its name has {} bytes",
@@ -1254,6 +1260,12 @@ impl InboundRequest {
             return Err(anyhow!(crate::errors::AppError::NotAnError));
         }
 
+        // A text or link is sent as soon as the user accepts, too soon for an upgrade started
+        // then. Offer the existing LAN now, while the user is still reading the notice.
+        if introduction.file_metadata.is_empty() && !introduction.text_metadata.is_empty() {
+            self.start_lan_upgrade_early().await;
+        }
+
         Ok(())
     }
 
@@ -1536,6 +1548,27 @@ impl InboundRequest {
         Ok(())
     }
 
+    /// Offers the existing LAN while the user is still deciding. The payload of a text or link
+    /// follows the accept at once: an upgrade started then would come too late, while one
+    /// already offered can be in place. Only the LAN is prepared (it leaves the network alone);
+    /// a hotspot is not worth it for a payload this small.
+    async fn start_lan_upgrade_early(&mut self) {
+        let Some(link) = self.upgrade.link().filter(|_| self.upgrade.can_start()) else {
+            return;
+        };
+        if self.upgrade.peer_endpoint_id().is_none() {
+            return;
+        }
+        let (lan, _, peer_5ghz) = self.upgrade.peer_upgrade_options();
+        if !lan {
+            return;
+        }
+        info!("upgrade: preparing the LAN before the user decides");
+        self.upgrade.set_lan_only();
+        let task = tokio::spawn(upgrade::prepare_inbound(link, true, false, peer_5ghz));
+        self.upgrade.begin_preparing(task);
+    }
+
     /// Starts preparing the upgrade in the background: the existing LAN if the peer lists
     /// WIFI_LAN and a LAN can be offered, otherwise (or if that fails) a hotspot. The offer goes
     /// out once it is ready. Any failure leaves the session on the current channel.
@@ -1547,6 +1580,7 @@ impl InboundRequest {
             return;
         }
         let (lan, hotspot, peer_5ghz) = self.upgrade.peer_upgrade_options();
+        info!("upgrade: preparing (LAN allowed: {lan}, hotspot allowed: {hotspot})");
         let task = tokio::spawn(upgrade::prepare_inbound(link, lan, hotspot, peer_5ghz));
         self.upgrade.begin_preparing(task);
     }
@@ -2372,6 +2406,60 @@ mod tests {
         assert_eq!(ports.len(), 1);
         assert_eq!(socket.wifi_port(), i32::from(ports[0]));
         assert!(s.req.upgrade.is_waiting());
+        assert_eq!(link.hosts.load(Ordering::SeqCst), 0);
+    }
+
+    /// A text or link follows the accept at once, so the LAN is prepared while the user is
+    /// still reading the notice: an upgrade started after the accept would come too late.
+    #[tokio::test]
+    async fn a_text_offer_prepares_the_lan_before_consent() {
+        use crate::location_nearby_connections::connection_request_frame::Medium as M;
+        let tmp = TempDir::new("early-lan-text");
+        let link = Arc::new(FakeLink {
+            lan_address: Some(std::net::Ipv4Addr::LOCALHOST),
+            ..Default::default()
+        });
+        let mut s = Session::new(&tmp.0);
+        s.req.upgrade = UpgradeState::new(Some(link.clone()));
+        s.req.upgrade.set_peer_mediums(&[M::WifiLan as i32]);
+        s.req.upgrade.set_peer_endpoint_id("WXYZ");
+
+        s.offer(vec![], vec![text_meta(INTRO_ID, 4)]).await.unwrap();
+        assert_eq!(s.req.state.state, TransferState::WaitingForUserConsent);
+        assert!(s.req.upgrade.in_progress(), "no LAN preparation started");
+        assert!(matches!(
+            s.req.upgrade.next_event().await,
+            UpgradeEvent::Prepared(Ok(upgrade::Prepared::HostedLan(..)))
+        ));
+        assert_eq!(link.lan_hosts.load(Ordering::SeqCst), 1);
+    }
+
+    /// A text is too small to pay for a hotspot: when the early LAN offer fails, nothing else
+    /// is offered, even though the phone allows WIFI_HOTSPOT.
+    #[tokio::test]
+    async fn a_failed_early_lan_offer_is_not_followed_by_a_hotspot() {
+        use crate::location_nearby_connections::bandwidth_upgrade_negotiation_frame::upgrade_path_info::Medium;
+        use crate::location_nearby_connections::connection_request_frame::Medium as M;
+        let tmp = TempDir::new("early-lan-text-failure");
+        let link = Arc::new(FakeLink {
+            lan_address: Some(std::net::Ipv4Addr::LOCALHOST),
+            ..Default::default()
+        });
+        let mut s = Session::new(&tmp.0);
+        s.req.upgrade = UpgradeState::new(Some(link.clone()));
+        s.req
+            .upgrade
+            .set_peer_mediums(&[M::WifiLan as i32, M::WifiHotspot as i32]);
+        s.req.upgrade.set_peer_endpoint_id("WXYZ");
+
+        s.offer(vec![], vec![text_meta(INTRO_ID, 4)]).await.unwrap();
+        assert_eq!(next_offer(&mut s).await.medium(), Medium::WifiLan);
+
+        s.feed(&upgrade::upgrade_failure_frame(None)).await.unwrap();
+        assert!(
+            !s.req.upgrade.in_progress(),
+            "a hotspot was offered for a text"
+        );
         assert_eq!(link.hosts.load(Ordering::SeqCst), 0);
     }
 

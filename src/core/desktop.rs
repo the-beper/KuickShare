@@ -865,7 +865,7 @@ impl Desktop {
         let klipper = self
             .connection
             .call_method(
-                Some("org.kde.klipper.klipper"),
+                Some("org.kde.klipper"),
                 "/klipper",
                 Some("org.kde.klipper.klipper"),
                 "setClipboardContents",

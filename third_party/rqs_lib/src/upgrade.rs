@@ -682,6 +682,9 @@ pub struct UpgradeState {
     /// The offer in `Waiting` (or the last one made) is a LAN one: if it fails, the hotspot is
     /// offered once, if the peer allows it.
     lan_offered: bool,
+    /// A LAN offer was made only to save a tiny payload (a text or link): a hotspot costs more
+    /// than it can gain, so a failed LAN is not followed by one.
+    lan_only: bool,
     /// Sender: payload is held back until the upgrade is settled.
     holding: bool,
     /// `host` or `join` was called and `release` is still due.
@@ -715,6 +718,7 @@ impl UpgradeState {
             deadline: None,
             attempted: false,
             lan_offered: false,
+            lan_only: false,
             holding: false,
             link_used: false,
             hotspot_allowed: true,
@@ -829,6 +833,11 @@ impl UpgradeState {
         self.deadline = Some(Instant::now() + DRAIN_TIMEOUT);
     }
 
+    /// Marks the coming LAN offer as one not worth a hotspot fallback (a text or link).
+    pub fn set_lan_only(&mut self) {
+        self.lan_only = true;
+    }
+
     /// Sender: hold the payload until the offer was handled or `OFFER_WAIT` elapsed.
     pub fn hold_payload(&mut self) {
         self.holding = true;
@@ -897,6 +906,7 @@ impl UpgradeState {
         }
         self.link_used = false;
         if lan_failed
+            && !self.lan_only
             && self.hotspot_allowed
             && let Some(link) = self.link.clone()
         {

@@ -64,10 +64,12 @@ impl MDnsServer {
     pub fn new(
         endpoint_id: [u8; 4],
         service_port: u16,
+        identity: [u8; 16],
         visibility_sender: Arc<Mutex<watch::Sender<Visibility>>>,
         visibility_receiver: watch::Receiver<Visibility>,
     ) -> Result<Self, anyhow::Error> {
-        let service_info = Self::build_service(endpoint_id, service_port, DeviceType::Laptop)?;
+        let service_info =
+            Self::build_service(endpoint_id, service_port, identity, DeviceType::Laptop)?;
 
         let daemon = new_daemon()?;
         // Advertise IPv4 addresses only, as the fork's `AddrType::V4` did.
@@ -145,6 +147,7 @@ impl MDnsServer {
     fn build_service(
         endpoint_id: [u8; 4],
         service_port: u16,
+        identity: [u8; 16],
         device_type: DeviceType,
     ) -> Result<ServiceInfo, anyhow::Error> {
         // This `name` is going to be random every time RQS service restarts.
@@ -152,7 +155,7 @@ impl MDnsServer {
         let name = gen_mdns_name(endpoint_id);
         let device_name = DEVICE_NAME.read().unwrap().clone();
         info!("Broadcasting with: device_name={device_name}, host_name={name}");
-        let endpoint_info = gen_mdns_endpoint_info(device_type as u8, &device_name);
+        let endpoint_info = gen_mdns_endpoint_info(device_type as u8, &identity, &device_name);
 
         let properties = [("n", endpoint_info)];
         let mut si = ServiceInfo::new(
@@ -178,7 +181,8 @@ mod tests {
 
     #[test]
     fn service_is_accepted_by_register() {
-        let si = MDnsServer::build_service([1, 2, 3, 4], 4000, DeviceType::Laptop).unwrap();
+        let si =
+            MDnsServer::build_service([1, 2, 3, 4], 4000, [9; 16], DeviceType::Laptop).unwrap();
         assert!(si.get_hostname().ends_with(".local."));
         let daemon = ServiceDaemon::new().unwrap();
         daemon.register(si).unwrap();

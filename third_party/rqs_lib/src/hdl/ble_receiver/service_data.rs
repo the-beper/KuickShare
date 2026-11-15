@@ -12,8 +12,6 @@ use sha2::{Digest, Sha256};
 /// 16-bit service UUID of the receiver advertisement and the GATT service.
 pub const SERVICE_UUID: u16 = 0xFEF3;
 pub const DEVICE_TYPE_LAPTOP: u8 = 3;
-/// Display names are cut at this many bytes so the advertisement stays well under 251 bytes.
-pub const MAX_NAME_LEN: usize = 100;
 
 const HEADER: u8 = 0x48;
 const HEADER_FAST: u8 = 0x4a;
@@ -243,13 +241,7 @@ impl ReceiverAdvertisement {
 
     /// Nearby Share application advertisement (same layout as the mDNS `n` record).
     pub fn endpoint_info(&self) -> Vec<u8> {
-        let name = truncate_name(&self.name).as_bytes();
-        let mut info = Vec::with_capacity(18 + name.len());
-        info.push((1 << 5) | ((self.device_type & 0x7) << 1));
-        info.extend_from_slice(&self.identity);
-        info.push(name.len() as u8);
-        info.extend_from_slice(name);
-        info
+        crate::utils::gen_endpoint_info(self.device_type, &self.identity, &self.name)
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -393,14 +385,7 @@ fn array<const N: usize>(b: &[u8], from: usize) -> Result<[u8; N], ParseError> {
 }
 
 fn truncate_name(name: &str) -> &str {
-    if name.len() <= MAX_NAME_LEN {
-        return name;
-    }
-    let mut end = MAX_NAME_LEN;
-    while !name.is_char_boundary(end) {
-        end -= 1;
-    }
-    &name[..end]
+    crate::utils::endpoint_name(name)
 }
 
 #[cfg(test)]
@@ -509,6 +494,20 @@ mod tests {
         let parsed = ReceiverAdvertisement::parse(&adv.to_bytes()).unwrap();
         assert_eq!(parsed.name, adv.name);
         assert!(adv.to_bytes().len() < 251);
+    }
+
+    /// The mDNS `n` record and the BLE endpoint info must be the same bytes: the phone merges
+    /// the two mediums of an endpoint id only then.
+    #[test]
+    fn endpoint_info_matches_the_mdns_record() {
+        let identity = [0x5au8; 16];
+        let adv = ReceiverAdvertisement::new(*b"ABCD", DEVICE_TYPE_LAPTOP, identity, "Desk");
+        let n = crate::utils::gen_mdns_endpoint_info(DEVICE_TYPE_LAPTOP, &identity, "Desk");
+        assert_eq!(
+            adv.endpoint_info(),
+            URL_SAFE_NO_PAD.decode(n).unwrap(),
+            "mDNS and BLE advertise one endpoint info"
+        );
     }
 
     #[test]
