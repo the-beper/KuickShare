@@ -139,8 +139,8 @@ CoreBridge::CoreBridge(QObject *parent)
     connect(watcher, &QDBusServiceWatcher::serviceRegistered, this, &CoreBridge::onServiceRegistered);
     connect(watcher, &QDBusServiceWatcher::serviceUnregistered, this, &CoreBridge::onServiceUnregistered);
 
-    // Stopping discovery leaks an mDNS daemon in the library, and restarting it is slow: keep it
-    // running for a while after the user leaves the Send page.
+    // A restart of the discovery registers the Bluetooth advertisement again and stops a scan
+    // window in progress: keep it running for a while after the user leaves the Send page.
     m_discoveryStopTimer.setSingleShot(true);
     m_discoveryStopTimer.setInterval(30000);
     connect(&m_discoveryStopTimer, &QTimer::timeout, this, &CoreBridge::stopDiscoveryNow);
@@ -1692,10 +1692,12 @@ void CoreBridge::startDiscovery()
     m_discoveryStopTimer.stop();
     if (!m_discoveryRunning)
     {
-        m_discoveryRunning = true;
         m_devices.clear();
-        callAsync(methodCall(iface, QStringLiteral("StartDiscovery")), {}, [this] { m_discoveryRunning = false; });
     }
+    // Called again while the discovery runs, it makes the core search again (the devices stay
+    // listed; the stale ones are dropped as they stop answering).
+    m_discoveryRunning = true;
+    callAsync(methodCall(iface, QStringLiteral("StartDiscovery")), {}, [this] { m_discoveryRunning = false; });
 }
 
 void CoreBridge::scanBluetooth()

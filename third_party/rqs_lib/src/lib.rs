@@ -9,6 +9,7 @@ use channel::ChannelMessage;
 #[cfg(all(feature = "experimental", target_os = "linux"))]
 use hdl::BleAdvertiser;
 use hdl::MDnsDiscovery;
+use mdns_sd::ServiceDaemon;
 use once_cell::sync::Lazy;
 use rand::RngExt;
 use rand::distr::Alphanumeric;
@@ -59,6 +60,16 @@ static DEVICE_NAME: Lazy<RwLock<String>> = Lazy::new(|| RwLock::new(utils::hostn
 // None (the default) disables bandwidth upgrades entirely.
 static WIFI_LINK: Lazy<RwLock<Option<Arc<dyn WifiLink>>>> = Lazy::new(|| RwLock::new(None));
 
+/// A [`ServiceDaemon`] handle with a `Debug` of its own, so that the derive on `RQS` keeps working.
+#[derive(Clone)]
+struct MdnsDaemon(ServiceDaemon);
+
+impl std::fmt::Debug for MdnsDaemon {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ServiceDaemon")
+    }
+}
+
 // True while WIFI_LINK is set; lets the BLE receiver follow `set_wifi_link`.
 static WIFI_LINK_SET: Lazy<watch::Sender<bool>> = Lazy::new(|| watch::channel(false).0);
 
@@ -96,6 +107,9 @@ pub struct RQS {
     /// The mDNS search alone, a child of `discovery_ctk`: it can be restarted without touching the
     /// Bluetooth advertisement and scan of the same discovery.
     mdns_ctk: Option<CancellationToken>,
+    /// The daemon of the mDNS search, one per discovery and shared with its restarts: a dropped
+    /// mdns-sd daemon leaks its thread, so `stop_discovery` shuts it down explicitly.
+    mdns_daemon: Option<MdnsDaemon>,
 
     // Used to trigger a change in the mDNS visibility (and later on, BLE)
     pub visibility_sender: Arc<Mutex<watch::Sender<Visibility>>>,
@@ -141,6 +155,7 @@ impl RQS {
             ctoken: None,
             discovery_ctk: None,
             mdns_ctk: None,
+            mdns_daemon: None,
             visibility_sender: Arc::new(Mutex::new(visibility_sender)),
             visibility_receiver,
             port_number,
@@ -228,11 +243,11 @@ impl RQS {
         let tracker = self
             .tracker
             .as_ref()
-            .ok_or_else(|| anyhow!("The service wasn't first started"))?;
+            .ok_or_else(|| anyhow!("The service wasn't first started"))?
+            .clone();
 
         let ctk = CancellationToken::new();
         self.discovery_ctk = Some(ctk.clone());
-
         #[cfg(all(feature = "experimental", target_os = "linux"))]
         {
             let ctk_blea = ctk.clone();
@@ -251,14 +266,26 @@ impl RQS {
             });
         }
 
-        spawn_ble_scan(tracker, ctk.clone(), sender.clone());
+        spawn_ble_scan(&tracker, ctk.clone(), sender.clone());
 
-        let discovery = MDnsDiscovery::new(sender)?;
+        let discovery = MDnsDiscovery::new(self.mdns_daemon()?, sender);
         let mdns_ctk = ctk.child_token();
         self.mdns_ctk = Some(mdns_ctk.clone());
         tracker.spawn(async move { discovery.run(mdns_ctk).await });
 
         Ok(())
+    }
+
+    /// The daemon of the mDNS search, created at first use: one per discovery, shared with the
+    /// restarts of the search (a dropped mdns-sd daemon leaks its thread, so the restarts must not
+    /// create one; `stop_discovery` shuts the daemon down).
+    fn mdns_daemon(&mut self) -> Result<ServiceDaemon, anyhow::Error> {
+        if let Some(daemon) = &self.mdns_daemon {
+            return Ok(daemon.0.clone());
+        }
+        let daemon = hdl::new_daemon()?;
+        self.mdns_daemon = Some(MdnsDaemon(daemon.clone()));
+        Ok(daemon)
     }
 
     /// Starts the mDNS search over (its queries go out at once; the library would notice a new
@@ -271,16 +298,18 @@ impl RQS {
         let tracker = self
             .tracker
             .as_ref()
-            .ok_or_else(|| anyhow!("The service wasn't first started"))?;
+            .ok_or_else(|| anyhow!("The service wasn't first started"))?
+            .clone();
         let parent = self
             .discovery_ctk
             .as_ref()
-            .ok_or_else(|| anyhow!("The discovery is not running"))?;
+            .ok_or_else(|| anyhow!("The discovery is not running"))?
+            .clone();
 
         if let Some(old) = self.mdns_ctk.take() {
             old.cancel();
         }
-        let discovery = MDnsDiscovery::new(sender)?;
+        let discovery = MDnsDiscovery::new(self.mdns_daemon()?, sender);
         let mdns_ctk = parent.child_token();
         self.mdns_ctk = Some(mdns_ctk.clone());
         tracker.spawn(async move { discovery.run(mdns_ctk).await });
@@ -306,6 +335,22 @@ impl RQS {
         if let Some(discovert_ctk) = &self.discovery_ctk {
             discovert_ctk.cancel();
             self.discovery_ctk = None;
+        }
+        // An mdns-sd daemon thread ends only on an explicit shutdown: a dropped handle leaks the
+        // thread and its sockets for the rest of the process. `Again` means the command queue was
+        // full and the shutdown was not queued; that is rare, and one retry is enough.
+        if let Some(daemon) = self.mdns_daemon.take() {
+            for attempt in 0..2 {
+                match daemon.0.shutdown() {
+                    Ok(_) => break,
+                    Err(e) if attempt == 0 => {
+                        debug!("stop_discovery: retrying the mDNS shutdown: {e}");
+                    }
+                    Err(e) => {
+                        debug!("stop_discovery: could not shut the mDNS daemon down: {e}");
+                    }
+                }
+            }
         }
     }
 

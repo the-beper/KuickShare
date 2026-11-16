@@ -1,16 +1,21 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
+use tokio::time::{Instant, interval_at};
 use tokio_util::sync::CancellationToken;
 
 use crate::DeviceType;
-use crate::hdl::new_daemon;
 use crate::utils::{is_not_self_ip, parse_mdns_endpoint_info};
 
 /// How long the reachability probe of a resolved service may take.
-const RESOLVE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+const RESOLVE_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+/// Time between two searches of one discovery. A running search repeats its queries with an ever
+/// longer delay (up to an hour in mdns-sd 0.21), so a device that joined the LAN, or whose answer
+/// was missed, would be listed late or never until the search is started over.
+const SEARCH_AGAIN_EVERY: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Clone, Default)]
 pub struct EndpointInfo {
@@ -59,25 +64,27 @@ impl BleTarget {
 }
 
 pub struct MDnsDiscovery {
+    /// Shared with `RQS`, which shuts it down when the discovery stops: a dropped mdns-sd daemon
+    /// leaks its thread, so the restarts of the search reuse the same one.
     daemon: ServiceDaemon,
     sender: broadcast::Sender<EndpointInfo>,
 }
 
 impl MDnsDiscovery {
-    pub fn new(sender: broadcast::Sender<EndpointInfo>) -> Result<Self, anyhow::Error> {
-        let daemon = new_daemon()?;
-
-        Ok(Self { daemon, sender })
+    pub fn new(daemon: ServiceDaemon, sender: broadcast::Sender<EndpointInfo>) -> Self {
+        Self { daemon, sender }
     }
 
     pub async fn run(self, ctk: CancellationToken) -> Result<(), anyhow::Error> {
         info!("MDnsDiscovery: service starting");
 
         let service_type = "_FC9F5ED42C8A._tcp.local.";
-        let receiver = self.daemon.browse(service_type)?;
+        let mut receiver = self.daemon.browse(service_type)?;
 
         // Map with fullname as key and EndpointInfo as value
         let mut cache: HashMap<String, EndpointInfo> = HashMap::new();
+        // `interval_at`'s first tick is due at once, which would double the search `browse` just ran.
+        let mut search_again = interval_at(Instant::now() + SEARCH_AGAIN_EVERY, SEARCH_AGAIN_EVERY);
 
         loop {
             tokio::select! {
@@ -166,6 +173,15 @@ impl MDnsDiscovery {
                             }
                         },
                         Err(err) => error!("MDnsDiscovery: error: {}", err),
+                    }
+                }
+                _ = search_again.tick() => {
+                    // Browsing again replaces the listener of the service type: the queries go out
+                    // at once again, and what the daemon has in cache is replayed (its expired
+                    // records are not). The receiver of the replaced browse is dropped with it.
+                    match self.daemon.browse(service_type) {
+                        Ok(new) => receiver = new,
+                        Err(err) => error!("MDnsDiscovery: cannot search again: {}", err),
                     }
                 }
             }

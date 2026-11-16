@@ -141,6 +141,9 @@ impl MDnsServer {
             info!("MDnsServer: service unregistered: {:?}", &event);
         }
 
+        // An mdns-sd daemon thread ends only on an explicit shutdown: a dropped handle leaks it.
+        let _ = self.daemon.shutdown();
+
         Ok(())
     }
 

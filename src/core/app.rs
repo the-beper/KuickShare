@@ -987,10 +987,21 @@ impl Core {
 
     pub fn start_discovery(&mut self) -> Result<()> {
         let engine = self.engine.as_mut().context("service is not running")?;
-        if !engine.discovery_on {
-            engine.rqs.discovery(engine.discovery_tx.clone())?;
-            engine.discovery_on = true;
+        if engine.discovery_on {
+            // The shell calls this again whenever its window shows: search again instead of doing
+            // nothing (a running search repeats its queries with an ever longer delay, and no
+            // Bluetooth scan window runs in one), so a device that came up meanwhile is listed
+            // at once.
+            engine
+                .rqs
+                .restart_mdns_discovery(engine.discovery_tx.clone())?;
+            if let Err(e) = engine.rqs.scan_ble(engine.discovery_tx.clone()) {
+                tracing::debug!("no Bluetooth scan for the started-over discovery: {e:#}");
+            }
+            return Ok(());
         }
+        engine.rqs.discovery(engine.discovery_tx.clone())?;
+        engine.discovery_on = true;
         Ok(())
     }
 
@@ -1848,9 +1859,10 @@ fn lookup_due(last: Option<Instant>, now: Instant) -> bool {
 }
 
 /// Time between two restarts of the search for a phone seen only over Bluetooth, and how many
-/// there are per sighting.
+/// there are per sighting: together `LAN_RETRY_EVERY` × `LAN_RETRIES` should outlast the search's
+/// own repeat backoff plus the missed answers of a phone that answers its first queries late.
 const LAN_RETRY_EVERY: Duration = Duration::from_secs(5);
-const LAN_RETRIES: u32 = 4;
+const LAN_RETRIES: u32 = 8;
 
 /// True when `ble` is a named Bluetooth sighting and none of `endpoints` is a LAN entry with its
 /// name and device type.
