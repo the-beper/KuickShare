@@ -18,7 +18,6 @@ use rqs_lib::{
     channel::{ChannelMessage, Message, TransferAction},
 };
 use tokio::{
-    net::TcpStream,
     sync::{Mutex, broadcast, mpsc, watch},
     task::JoinHandle,
 };
@@ -1897,10 +1896,14 @@ async fn retry_lan(core: Weak<Mutex<Core>>, ble: EndpointInfo) {
     }
 }
 
-/// True when `addr` accepts a TCP connection within `PROBE_TIMEOUT`.
+/// True when `addr` accepts a TCP connection within `PROBE_TIMEOUT`, over the same
+/// interface the library's send will use.
 async fn probe(addr: &str) -> bool {
+    let Ok(addr) = addr.parse() else {
+        return false;
+    };
     matches!(
-        tokio::time::timeout(PROBE_TIMEOUT, TcpStream::connect(addr)).await,
+        tokio::time::timeout(PROBE_TIMEOUT, rqs_lib::net::lan_connect(addr)).await,
         Ok(Ok(_))
     )
 }

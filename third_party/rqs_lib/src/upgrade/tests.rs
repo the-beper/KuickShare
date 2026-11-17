@@ -93,6 +93,16 @@ fn plain_frames_have_the_expected_shape() {
 }
 
 #[test]
+fn the_prior_channel_disconnection_requests_no_safe_disconnect() {
+    let frame = OfflineFrame::decode(&*plain_disconnection_frame().encode_to_vec()).unwrap();
+    let v1 = frame.v1.unwrap();
+    assert_eq!(v1.r#type(), v1_frame::FrameType::Disconnection);
+    let disconnection = v1.disconnection.unwrap();
+    assert_eq!(disconnection.request_safe_to_disconnect, Some(false));
+    assert_eq!(disconnection.ack_safe_to_disconnect, Some(false));
+}
+
+#[test]
 fn offers_and_introductions_carry_the_encryption_flag() {
     let wire = |f: &OfflineFrame| parse_bwu(f).unwrap().clone();
     let default_offer = wire(&path_available_frame(&creds(), false));

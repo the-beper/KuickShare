@@ -165,8 +165,17 @@ pub fn scan_result(
     service_data: &[u8],
 ) -> Option<ScanResult> {
     let adv = ReceiverAdvertisement::parse(service_data)?;
+    // A DCT advertisement carries no endpoint id: stand in with a per-address one, like
+    // crQuickShare's `"dct:" + address` key (its DCT identity rule). Bytes 2..6 skip the
+    // OUI, so two phones of one maker still differ; the address rotates, and with it the id.
+    let endpoint_id = if adv.dct {
+        let bytes = address.0;
+        [bytes[2], bytes[3], bytes[4], bytes[5]]
+    } else {
+        adv.endpoint_id
+    };
     Some(ScanResult {
-        endpoint_id: adv.endpoint_id,
+        endpoint_id,
         name: adv.name,
         device_type: DeviceType::from_raw_value(adv.device_type),
         address,
@@ -1355,6 +1364,45 @@ mod tests {
             (r.device_type, r.psm, r.rssi),
             (DeviceType::Laptop, None, None)
         );
+    }
+
+    /// DCT service data: version byte, then the service hash, the PSM and the name.
+    fn dct(name: &[u8]) -> Vec<u8> {
+        let mut b = vec![0x20u8];
+        b.extend_from_slice(&[0x25, 0x6d, 0xfd]);
+        b.extend_from_slice(&[0x24, 0x00, 0x82]);
+        b.push(((1 + name.len() as u8) << 4) | 0x07);
+        b.push(0);
+        b.extend_from_slice(name);
+        b
+    }
+
+    #[test]
+    fn a_dct_advertisement_becomes_a_per_address_result() {
+        let r = scan_result(
+            Address::new([0xd0, 0x11, 0x22, 0x33, 0x44, 0x55]),
+            AddressType::LePublic,
+            Some(-60),
+            &dct(b"Pixel"),
+        )
+        .unwrap();
+        assert_eq!(
+            r.endpoint_id,
+            [0x22, 0x33, 0x44, 0x55],
+            "bytes 2..6 of the address: the DCT form carries no endpoint id"
+        );
+        assert_eq!(r.name, "Pixel");
+        assert_eq!(r.psm, Some(0x0082));
+        assert_eq!(r.device_type, DeviceType::Unknown);
+        // Another address of the same maker still gets its own id.
+        let other = scan_result(
+            Address::new([0xd0, 0x11, 0x22, 0x33, 0x44, 0x99]),
+            AddressType::LePublic,
+            None,
+            &dct(b"Pixel"),
+        )
+        .unwrap();
+        assert_ne!(other.endpoint_id, r.endpoint_id);
     }
 
     #[test]

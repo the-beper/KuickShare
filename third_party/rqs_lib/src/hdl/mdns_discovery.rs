@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use mdns_sd::{ServiceDaemon, ServiceEvent};
-use tokio::net::TcpStream;
 use tokio::sync::broadcast;
 use tokio::time::{Instant, interval_at};
 use tokio_util::sync::CancellationToken;
@@ -134,7 +133,12 @@ impl MDnsDiscovery {
                                             info!("MDnsDiscovery: tracker cancelled during a probe, breaking");
                                             break;
                                         }
-                                        probed = tokio::time::timeout(RESOLVE_PROBE_TIMEOUT, TcpStream::connect(&ip_port)) => {
+                                        probed = tokio::time::timeout(
+                                            RESOLVE_PROBE_TIMEOUT,
+                                            crate::net::lan_connect(std::net::SocketAddr::from((
+                                                *ip, port,
+                                            ))),
+                                        ) => {
                                             matches!(probed, Ok(Ok(_)))
                                         }
                                     };

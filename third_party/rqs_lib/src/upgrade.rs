@@ -278,7 +278,9 @@ pub fn client_introduction_ack_frame() -> OfflineFrame {
     })
 }
 
-/// Sent in plaintext on the prior channel so the peer stops waiting on it.
+/// Sent in plaintext on the prior channel so the peer stops waiting on it. Both flags stay false:
+/// a safe-disconnect request there would make an upstream Nearby peer remove the whole endpoint,
+/// the new channel included (crQuickShare sends false/false too).
 pub fn plain_disconnection_frame() -> OfflineFrame {
     OfflineFrame {
         version: Some(offline_frame::Version::V1.into()),

@@ -126,6 +126,10 @@ message ConnectionResponseFrame {
   // for the bit usages.
   optional int32 multiplex_socket_bitmask = 5;
   optional int32 nearby_connections_version = 6;
+  // Upstream (Chromium-pinned nearby-connections 0bad8b0c): "optional int32
+  // safe_to_disconnect_version = 7". The peer's safe-to-disconnect protocol
+  // level; a peer that answers 6 or more expects PAYLOAD_ACK for received files.
+  optional int32 safe_to_disconnect_version = 7;
 }
 
 message PayloadTransferFrame {
@@ -133,6 +137,9 @@ message PayloadTransferFrame {
     UNKNOWN_PACKET_TYPE = 0;
     DATA = 1;
     CONTROL = 2;
+    // Upstream: "PAYLOAD_ACK = 3", one per received payload, sent by the
+    // receiver when the payload is complete.
+    PAYLOAD_ACK = 3;
   }
 
   message PayloadHeader {
@@ -158,6 +165,10 @@ message PayloadTransferFrame {
     optional int32 flags = 1;
     optional int64 offset = 2;
     optional bytes body = 3;
+    // Upstream: "optional int32 index = 4". The chunk's position in its payload, counted from
+    // 0 with the last-chunk marker included. A peer at safe-to-disconnect level 4 or more
+    // (auto-resume) rejects a FILE chunk whose index is not above the previous one.
+    optional int32 index = 4;
   }
 
   // Accompanies CONTROL packets.

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use info::{InboundFiles, InternalFileInfo, TransferMetadata};
 use p256::{PublicKey, SecretKey};
 
+use crate::safety::Assembly;
 use crate::securegcm::ukey2_client_init::CipherCommitment;
 use crate::sharing_nearby::wifi_credentials_metadata::SecurityType;
 use crate::utils::RemoteDeviceInfo;
@@ -87,7 +88,12 @@ pub struct InnerState {
     // pub text_payload_id: i64,
     // pub text_is_url: bool,
     // pub wifi_ssid: Option<String>,
-    pub payload_buffers: HashMap<i64, Vec<u8>>,
+    pub payload_buffers: HashMap<i64, Assembly>,
+    /// The peer's safe-to-disconnect protocol level, from its ConnectionResponse. Six or
+    /// more means the peer expects one encrypted `PAYLOAD_ACK` per received FILE payload,
+    /// and (sending side) that a disconnect before those acks is a failed transfer
+    /// (crQuickShare `SupportsAck`; upstream field 7 of ConnectionResponseFrame).
+    pub peer_disconnect_version: i32,
 }
 
 #[derive(Debug, Clone)]

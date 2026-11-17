@@ -19,7 +19,7 @@ pub struct InternalFileInfo {
 }
 
 /// One file of an inbound offer. Its `partial` exists from the user's accept until the file
-/// is complete; dropping it removes the file.
+/// is complete; dropping it removes the staged file.
 #[derive(Debug)]
 pub struct InboundFile {
     pub payload_id: i64,
@@ -62,6 +62,11 @@ impl InboundFiles {
 
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
+    }
+
+    /// Where the file with this payload id is in the offer's order.
+    pub fn position(&self, payload_id: i64) -> Option<usize> {
+        self.index.get(&payload_id).copied()
     }
 
     pub fn get_mut(&mut self, payload_id: i64) -> Option<&mut InboundFile> {
@@ -187,8 +192,10 @@ pub struct TransferMetadata {
 
     pub total_bytes: u64,
     pub ack_bytes: u64,
-    /// Where the files of an inbound file transfer are saved (empty otherwise). Before the
-    /// accept these are the planned paths; from `ReceivingFiles` on, the real ones.
+    /// Where the files of an inbound file transfer are saved (empty otherwise). Until a file
+    /// is complete its entry is the planned path (a name taken since may still get a number);
+    /// a completed file's entry is the path it was published under, so `Finished` carries the
+    /// real ones. While receiving, the data is in a hidden folder next to them.
     pub saved_paths: Vec<String>,
     /// Why an inbound offer was refused (`Rejected` state), if the library refused it.
     pub refusal: Option<Refusal>,

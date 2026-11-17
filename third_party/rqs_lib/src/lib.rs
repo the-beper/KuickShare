@@ -25,6 +25,7 @@ pub mod channel;
 pub mod errors;
 pub mod hdl;
 pub mod manager;
+pub mod net;
 pub mod safety;
 pub mod upgrade;
 pub mod utils;

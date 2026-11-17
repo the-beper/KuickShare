@@ -51,18 +51,48 @@ const REFUSED_LAN_ZONES: &[&str] = &["public", "external", "dmz", "block", "drop
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LanEndpoint {
     ip: Ipv4Addr,
+    prefix: u8,
     iface: String,
 }
 
-/// The address to offer among the candidates (already limited to physical devices). The default
-/// route's source is preferred only if it is one of them: a full-tunnel VPN owns the default route,
-/// but its address is not a candidate.
+/// The address to offer among the candidates (already limited to physical devices). An address on
+/// a /31 or /32 has no neighbour that could be the phone, so it is never offered. The default
+/// route's source is preferred only if it is one of the rest: a full-tunnel VPN owns the default
+/// route, but its address is not a candidate. Without it, the first one is taken only if all of
+/// them are on one network; otherwise the phone may be on either and `None` leaves the offer to the
+/// hotspot rather than guessing.
 fn select_lan_endpoint(candidates: &[LanEndpoint], route: Option<Ipv4Addr>) -> Option<LanEndpoint> {
-    let private: Vec<_> = candidates.iter().filter(|e| e.ip.is_private()).collect();
-    route
-        .and_then(|ip| private.iter().copied().find(|e| e.ip == ip))
-        .or_else(|| private.first().copied())
-        .cloned()
+    let usable: Vec<_> = candidates
+        .iter()
+        .filter(|e| e.ip.is_private() && e.prefix <= 30)
+        .collect();
+    if let Some(found) = route.and_then(|ip| usable.iter().copied().find(|e| e.ip == ip)) {
+        return Some(found.clone());
+    }
+    let apart = usable.iter().enumerate().find_map(|(i, a)| {
+        usable[i + 1..]
+            .iter()
+            .find(|b| !on_one_network(a, b))
+            .map(|b| (a, b))
+    });
+    if let Some((a, b)) = apart {
+        tracing::warn!(
+            "LAN offer: {} and {} are on different networks and the default route uses neither; not guessing",
+            a.iface,
+            b.iface
+        );
+        return None;
+    }
+    usable.first().copied().cloned()
+}
+
+/// Whether each address is inside the other's subnet, by its own prefix.
+fn on_one_network(a: &LanEndpoint, b: &LanEndpoint) -> bool {
+    let inside = |of: &LanEndpoint, ip: Ipv4Addr| {
+        let mask = (u64::from(u32::MAX) << (32 - of.prefix)) as u32;
+        u32::from(of.ip) & mask == u32::from(ip) & mask
+    };
+    inside(a, b.ip) && inside(b, a.ip)
 }
 
 /// The source address the kernel picks for a public destination. Connecting a UDP socket sends
@@ -435,7 +465,9 @@ pub trait NmApi: Send + Sync {
     /// The firewalld zone of the interface (the default zone if it has none); `None` means
     /// firewalld is absent.
     fn lan_zone(&self, iface: &str) -> impl Future<Output = io::Result<Option<String>>> + Send;
-    /// Opens a TCP port in `zone` until `close_lan_port` (or a timeout).
+    /// Opens a TCP port in `zone` until `close_lan_port` (or a timeout). `AlreadyExists` when
+    /// the zone already lets the port in (a range, as Fedora Workstation's zone opens
+    /// 1025-65535): the port is reachable and there is nothing to close.
     fn open_lan_port(&self, zone: &str, port: u16) -> impl Future<Output = io::Result<()>> + Send;
     /// A port that is not open is not an error.
     fn close_lan_port(&self, zone: &str, port: u16) -> impl Future<Output = io::Result<()>> + Send;
@@ -632,6 +664,34 @@ fn is_lan_device(device_type: u32, state: u32) -> bool {
         && state == DEVICE_STATE_ACTIVATED
 }
 
+/// The address and prefix length of one NetworkManager `AddressData` entry. A missing prefix, or
+/// one above 32, counts as a host address (32).
+fn address_entry(mut entry: HashMap<String, zbus::OwnedVariant>) -> Option<(Ipv4Addr, u8)> {
+    let ip = entry
+        .remove("address")
+        .and_then(|v| String::try_from(v).ok())
+        .and_then(|s| s.parse().ok())?;
+    let prefix = entry
+        .remove("prefix")
+        .and_then(|v| u32::try_from(v).ok())
+        .and_then(|p| u8::try_from(p).ok())
+        .filter(|p| *p <= 32)
+        .unwrap_or(32);
+    Some((ip, prefix))
+}
+
+/// The first address with room for a neighbour (prefix 30 or shorter), else the first one: a
+/// /32 listed before the device's /24 must not hide the device from the LAN offer.
+fn preferred_address(
+    mut addresses: impl Iterator<Item = (Ipv4Addr, u8)>,
+) -> Option<(Ipv4Addr, u8)> {
+    let first = addresses.next()?;
+    if first.1 <= 30 {
+        return Some(first);
+    }
+    Some(addresses.find(|(_, prefix)| *prefix <= 30).unwrap_or(first))
+}
+
 /// `None` means NM did not report valid band information; keep legacy behavior then.
 fn supports_5ghz(flags: u32) -> Option<bool> {
     (flags & FREQ_VALID != 0).then_some(flags & FREQ_5GHZ != 0)
@@ -738,6 +798,11 @@ fn is_gone(e: &zbus::Error) -> bool {
             .any(|suffix| name.as_str().ends_with(suffix)),
         _ => false,
     }
+}
+
+/// firewalld's answer to `addPort` for a port the zone already lets in.
+fn is_port_already_enabled(e: &zbus::Error) -> bool {
+    matches!(e, zbus::Error::MethodError(_, Some(detail), _) if detail.contains("ALREADY_ENABLED"))
 }
 
 /// firewalld's answer to `removePort` for a port that is not open.
@@ -948,29 +1013,23 @@ impl DbusNm {
     }
 
     async fn ipv4_z(&self, dev: &WifiDevice) -> zbus::Result<Option<Ipv4Addr>> {
-        self.ipv4_at(&dev.path).await
+        Ok(self.ipv4_at(&dev.path).await?.map(|(ip, _)| ip))
     }
 
-    /// The first IPv4 address of the device at `device`.
-    async fn ipv4_at(&self, device: &str) -> zbus::Result<Option<Ipv4Addr>> {
+    /// The IPv4 address of the device at `device`, with its prefix length (see
+    /// `preferred_address`).
+    async fn ipv4_at(&self, device: &str) -> zbus::Result<Option<(Ipv4Addr, u8)>> {
         let c = self.conn().await?;
         let cfg = proxy_at!(DeviceProxy, c, device).ip4_config().await?;
         if cfg.as_str() == NO_OBJECT {
             return Ok(None);
         }
-        for mut entry in proxy_at!(Ip4ConfigProxy, c, cfg.as_str())
+        let entries = proxy_at!(Ip4ConfigProxy, c, cfg.as_str())
             .address_data()
-            .await?
-        {
-            let ip = entry
-                .remove("address")
-                .and_then(|v| String::try_from(v).ok())
-                .and_then(|s| s.parse().ok());
-            if ip.is_some() {
-                return Ok(ip);
-            }
-        }
-        Ok(None)
+            .await?;
+        Ok(preferred_address(
+            entries.into_iter().filter_map(address_entry),
+        ))
     }
 
     async fn lan_candidates_z(&self) -> zbus::Result<Vec<LanEndpoint>> {
@@ -986,10 +1045,10 @@ impl DbusNm {
             if !is_lan_device(kind, state) {
                 continue;
             }
-            if let (Ok(iface), Ok(Some(ip))) =
+            if let (Ok(iface), Ok(Some((ip, prefix)))) =
                 (device.interface().await, self.ipv4_at(p.as_str()).await)
             {
-                found.push(LanEndpoint { ip, iface });
+                found.push(LanEndpoint { ip, prefix, iface });
             }
         }
         Ok(found)
@@ -1151,7 +1210,13 @@ impl NmApi for DbusNm {
                 .map(drop)
         }
         .await
-        .map_err(firewall_err)
+        .map_err(|e| {
+            if is_port_already_enabled(&e) {
+                io::Error::new(io::ErrorKind::AlreadyExists, format!("firewalld: {e}"))
+            } else {
+                firewall_err(e)
+            }
+        })
     }
 
     async fn close_lan_port(&self, zone: &str, port: u16) -> io::Result<()> {
@@ -1755,7 +1820,15 @@ impl<A: NmApi> NmLink<A> {
             return Ok(false);
         }
         st.lan_port = Some((zone.clone(), port));
-        self.api.open_lan_port(&zone, port).await?;
+        match self.api.open_lan_port(&zone, port).await {
+            Ok(()) => {}
+            // Not our rule: it must stay when the offer ends.
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                tracing::info!("the {zone} zone already lets the LAN port in; nothing to open");
+                st.lan_port = None;
+            }
+            Err(e) => return Err(e),
+        }
         Ok(true)
     }
 
@@ -2093,9 +2166,10 @@ mod tests {
 
     const LAN_IP: Ipv4Addr = Ipv4Addr::new(192, 168, 1, 22);
 
-    fn lan_endpoint(iface: &str, ip: Ipv4Addr) -> LanEndpoint {
+    fn lan_endpoint(iface: &str, ip: Ipv4Addr, prefix: u8) -> LanEndpoint {
         LanEndpoint {
             ip,
+            prefix,
             iface: iface.into(),
         }
     }
@@ -2109,7 +2183,7 @@ mod tests {
             budget: Duration::from_secs(60),
             hang: None,
             capabilities: FREQ_VALID | FREQ_2GHZ | FREQ_5GHZ,
-            lan_devices: vec![lan_endpoint("wlan0", LAN_IP)],
+            lan_devices: vec![lan_endpoint("wlan0", LAN_IP, 24)],
             route: Some(LAN_IP),
             lan_zone: Some("home".into()),
         }
@@ -3019,8 +3093,8 @@ mod tests {
 
     #[test]
     fn the_default_route_is_preferred_only_among_the_candidates() {
-        let wlan = lan_endpoint("wlp2s0", LAN_IP);
-        let eth = lan_endpoint("enp3s0", Ipv4Addr::new(10, 2, 0, 15));
+        let wlan = lan_endpoint("wlp2s0", LAN_IP, 24);
+        let eth = lan_endpoint("enp3s0", Ipv4Addr::new(10, 2, 0, 15), 24);
         let wg_source = Ipv4Addr::new(10, 50, 0, 4);
 
         // Full-tunnel VPN: the route source is the tunnel's, which is not a candidate.
@@ -3031,17 +3105,85 @@ mod tests {
         // Only virtual devices: no candidate at all.
         assert_eq!(select_lan_endpoint(&[], Some(wg_source)), None);
         assert_eq!(select_lan_endpoint(&[], None), None);
-        // Two physical devices: the one of the default route, else the first.
+        // Two physical devices: the one of the default route, else (on different networks) none.
         let both = [eth.clone(), wlan.clone()];
         assert_eq!(
             select_lan_endpoint(&both, Some(wlan.ip)),
             Some(wlan.clone())
         );
         assert_eq!(select_lan_endpoint(&both, Some(eth.ip)), Some(eth.clone()));
-        assert_eq!(select_lan_endpoint(&both, None), Some(eth));
+        assert_eq!(select_lan_endpoint(&both, None), None);
         // A public address is never offered.
-        let public = lan_endpoint("enp3s0", Ipv4Addr::new(93, 184, 216, 34));
+        let public = lan_endpoint("enp3s0", Ipv4Addr::new(93, 184, 216, 34), 24);
         assert_eq!(select_lan_endpoint(&[public], None), None);
+    }
+
+    #[test]
+    fn networks_the_default_route_does_not_pick_are_not_guessed() {
+        let eth = lan_endpoint("enp3s0", Ipv4Addr::new(10, 2, 0, 15), 24);
+        let wlan = lan_endpoint("wlp2s0", LAN_IP, 24);
+        let both = [eth, wlan.clone()];
+        let wg_source = Ipv4Addr::new(10, 50, 0, 4);
+
+        assert_eq!(select_lan_endpoint(&both, None), None);
+        assert_eq!(select_lan_endpoint(&both, Some(wg_source)), None);
+        assert_eq!(select_lan_endpoint(&both, Some(wlan.ip)), Some(wlan));
+    }
+
+    #[test]
+    fn two_devices_on_one_network_are_not_ambiguous() {
+        let eth = lan_endpoint("enp3s0", Ipv4Addr::new(192, 168, 1, 10), 24);
+        let wlan = lan_endpoint("wlp2s0", LAN_IP, 24);
+        let both = [eth.clone(), wlan];
+        let wg_source = Ipv4Addr::new(10, 50, 0, 4);
+
+        assert_eq!(select_lan_endpoint(&both, None), Some(eth.clone()));
+        assert_eq!(select_lan_endpoint(&both, Some(wg_source)), Some(eth));
+    }
+
+    #[test]
+    fn an_address_without_neighbours_is_never_offered() {
+        let at = |prefix| lan_endpoint("enp3s0", LAN_IP, prefix);
+
+        assert_eq!(select_lan_endpoint(&[at(32)], Some(LAN_IP)), None);
+        assert_eq!(select_lan_endpoint(&[at(31)], None), None);
+        assert_eq!(select_lan_endpoint(&[at(30)], None), Some(at(30)));
+        // A /32 beside a /24: only the /24 is left, so nothing is ambiguous.
+        let wlan = lan_endpoint("wlp2s0", Ipv4Addr::new(10, 2, 0, 15), 24);
+        assert_eq!(
+            select_lan_endpoint(&[at(32), wlan.clone()], None),
+            Some(wlan)
+        );
+    }
+
+    #[test]
+    fn a_host_address_listed_first_does_not_hide_the_device() {
+        let host = (Ipv4Addr::new(10, 0, 0, 5), 32);
+        let lan = (Ipv4Addr::new(192, 168, 1, 22), 24);
+        assert_eq!(preferred_address([host, lan].into_iter()), Some(lan));
+        assert_eq!(preferred_address([lan, host].into_iter()), Some(lan));
+        assert_eq!(preferred_address([host].into_iter()), Some(host));
+        assert_eq!(preferred_address(std::iter::empty()), None);
+    }
+
+    #[test]
+    fn a_missing_prefix_counts_as_a_host_address() {
+        use zbus::{OwnedVariant, Variant};
+        let entry = |prefix: Option<u32>| {
+            let mut map = HashMap::from([(
+                "address".to_owned(),
+                OwnedVariant::try_from(Variant::from("192.168.1.22")).unwrap(),
+            )]);
+            if let Some(prefix) = prefix {
+                map.insert("prefix".to_owned(), OwnedVariant::from(prefix));
+            }
+            map
+        };
+
+        assert_eq!(address_entry(entry(Some(24))), Some((LAN_IP, 24)));
+        assert_eq!(address_entry(entry(None)), Some((LAN_IP, 32)));
+        assert_eq!(address_entry(entry(Some(33))), Some((LAN_IP, 32)));
+        assert_eq!(address_entry(HashMap::new()), None);
     }
 
     #[tokio::test]
@@ -3051,6 +3193,16 @@ mod tests {
         b.route = Some(Ipv4Addr::new(10, 50, 0, 4));
         let (link, _) = b.build();
         assert_eq!(link.lan_address().await, Some(LAN_IP));
+
+        // Two networks and the route on neither: no guess, the hotspot instead.
+        let mut b = fake();
+        b.lan_devices = vec![
+            lan_endpoint("enp3s0", Ipv4Addr::new(10, 2, 0, 15), 24),
+            lan_endpoint("wlan0", LAN_IP, 24),
+        ];
+        b.route = Some(Ipv4Addr::new(10, 50, 0, 4));
+        let (link, _) = b.build();
+        assert_eq!(link.lan_address().await, None);
 
         let mut b = fake();
         b.lan_devices = vec![];
@@ -3079,6 +3231,27 @@ mod tests {
             assert!(link.host_lan(LAN_IP, 4000).await.unwrap(), "{zone}");
             assert_eq!(count(&log, &format!("open_lan_port {zone} 4000")), 1);
         }
+    }
+
+    /// ALREADY_ENABLED: the LAN is offered, and the rule that is not ours is never removed.
+    #[tokio::test]
+    async fn a_port_the_zone_already_lets_in_is_offered_and_left_alone() {
+        let mut b = fake();
+        b.lan_zone = Some("FedoraWorkstation".into());
+        b.fail = Box::new(|op, _| {
+            (op == "open_lan_port").then(|| {
+                io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "ALREADY_ENABLED: '4000:tcp' already in 'FedoraWorkstation'",
+                )
+            })
+        });
+        let (link, log) = b.build();
+        assert!(link.host_lan(LAN_IP, 4000).await.unwrap());
+        link.close_lan().await;
+        link.release().await;
+        assert_eq!(count(&log, "close_lan_port"), 0);
+        assert!(link.begin().is_ok(), "the link must be free");
     }
 
     #[tokio::test]
@@ -3232,6 +3405,16 @@ mod tests {
         assert!(!is_port_not_enabled(&exception(Some("INVALID_ZONE: x"))));
         assert!(!is_port_not_enabled(&exception(None)));
         assert!(!is_port_not_enabled(&zbus::Error::Failure("x".into())));
+        // The answer to addPort in a zone that already lets the port in, as firewalld gave it
+        // in a hand test.
+        assert!(is_port_already_enabled(&exception(Some(
+            "ALREADY_ENABLED: '40105:tcp' already in 'FedoraWorkstation'"
+        ))));
+        assert!(!is_port_already_enabled(&exception(Some(
+            "NOT_AUTHORIZED: addPort()"
+        ))));
+        assert!(!is_port_already_enabled(&exception(None)));
+        assert!(!is_port_already_enabled(&zbus::Error::Failure("x".into())));
     }
 
     #[tokio::test]
