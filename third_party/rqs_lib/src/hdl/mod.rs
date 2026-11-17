@@ -88,6 +88,11 @@ pub struct InnerState {
     // pub text_is_url: bool,
     // pub wifi_ssid: Option<String>,
     pub payload_buffers: HashMap<i64, Vec<u8>>,
+    /// The peer's safe-to-disconnect protocol level, from its ConnectionResponse. Six or
+    /// more means the peer expects one encrypted `PAYLOAD_ACK` per received FILE payload,
+    /// and (sending side) that a disconnect before those acks is a failed transfer
+    /// (crQuickShare `SupportsAck`; upstream field 7 of ConnectionResponseFrame).
+    pub peer_disconnect_version: i32,
 }
 
 #[derive(Debug, Clone)]

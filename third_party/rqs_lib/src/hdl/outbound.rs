@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
@@ -114,6 +114,10 @@ pub struct OutboundRequest {
     /// The user cancelled and `cancel_peer` has closed the session: `send_payloads` ends it
     /// with `NotAnError` instead of leaving the cancel message to a second `handle()`.
     user_cancelled: bool,
+    /// FILE payloads whose bytes are fully on the wire but that the peer has not confirmed
+    /// with a PAYLOAD_ACK yet. Only filled for a peer at safe-to-disconnect level 6 or more;
+    /// while it is non empty a disconnect is a failed transfer (see `await_file_acks`).
+    unacked_files: HashSet<i64>,
     pub state: InnerState,
     sender: Sender<ChannelMessage>,
     receiver: Receiver<ChannelMessage>,
@@ -211,6 +215,7 @@ impl OutboundRequest {
             pending_frames: VecDeque::new(),
             peer_cancelled: false,
             user_cancelled: false,
+            unacked_files: HashSet::new(),
             state: InnerState {
                 id,
                 server_seq: 0,
@@ -541,6 +546,9 @@ impl OutboundRequest {
                 ),
                 connection_response: Some(location_nearby_connections::ConnectionResponseFrame {
 					response: Some(location_nearby_connections::connection_response_frame::ResponseStatus::Accept.into()),
+					// The level this sender answers at: it reads PAYLOAD_ACK for the files
+					// it sends, and a disconnect before them fails the transfer.
+					safe_to_disconnect_version: Some(6),
 					os_info: Some(location_nearby_connections::OsInfo {
 						r#type: Some(location_nearby_connections::os_info::OsType::Linux.into())
 					}),
@@ -579,6 +587,19 @@ impl OutboundRequest {
         if v1_frame.connection_response.as_ref().unwrap().response() != ResponseStatus::Accept {
             return Err(anyhow!(format!("Connection rejected by third party",)));
         }
+
+        // The peer's safe-to-disconnect level: six or more means it answers our sent FILE
+        // payloads with PAYLOAD_ACK, and a disconnect before them is a failed transfer.
+        self.state.peer_disconnect_version = v1_frame
+            .connection_response
+            .as_ref()
+            .and_then(|r| r.safe_to_disconnect_version)
+            .unwrap_or(0)
+            .max(0);
+        debug!(
+            "peer safe-to-disconnect version: {}",
+            self.state.peer_disconnect_version
+        );
 
         let paired_encryption = sharing_nearby::Frame {
             version: Some(sharing_nearby::frame::Version::V1.into()),
@@ -676,6 +697,14 @@ impl OutboundRequest {
                     .as_ref()
                     .ok_or_else(|| anyhow!("Missing required fields"))?;
 
+                if payload_transfer.packet_type() == PacketType::PayloadAck {
+                    match Self::payload_ack_id(offline) {
+                        Some(id) => self.note_payload_ack(id),
+                        None => debug!("payload ack without a payload header"),
+                    }
+                    return Ok(());
+                }
+
                 let header = payload_transfer
                     .payload_header
                     .as_ref()
@@ -724,12 +753,40 @@ impl OutboundRequest {
             location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeNegotiation => {
                 self.process_bwu_frame(offline).await?;
             }
+            location_nearby_connections::v1_frame::FrameType::Disconnection => {
+                if is_safe_disconnect_request(offline) {
+                    self.encrypt_and_send(&safe_disconnect_ack_frame()).await?;
+                }
+                debug!("The peer is disconnecting");
+            }
             other => {
                 error!("Unhandled offline frame encrypted: {:?}", other);
             }
         }
 
         Ok(())
+    }
+
+    /// The payload id of a `PAYLOAD_ACK`; `None` for any other frame, or an ack without a
+    /// header.
+    fn payload_ack_id(offline: &OfflineFrame) -> Option<i64> {
+        let v1 = offline.v1.as_ref()?;
+        let transfer = v1.payload_transfer.as_ref()?;
+        if v1.r#type() != location_nearby_connections::v1_frame::FrameType::PayloadTransfer
+            || transfer.packet_type() != PacketType::PayloadAck
+        {
+            return None;
+        }
+        transfer.payload_header.as_ref().map(|h| h.id())
+    }
+
+    /// One ack per sent FILE payload: the peer confirmed the delivery of those bytes
+    /// (crQuickShare `AckFile`). An id that is not owed (a repeat, a Bytes payload) changes
+    /// nothing.
+    fn note_payload_ack(&mut self, id: i64) {
+        if self.unacked_files.remove(&id) {
+            debug!("a file payload is acknowledged by the peer");
+        }
     }
 
     async fn process_transfer_setup(
@@ -1203,6 +1260,10 @@ impl OutboundRequest {
             let current = match ids_iter.next() {
                 Some(i) => i,
                 None => {
+                    // The delivery counts once every sent file is acknowledged: wait for the
+                    // peer's acks before reporting success. A disconnect before them is a
+                    // failed transfer, like crQuickShare treats it.
+                    self.await_file_acks(&mut cancel_rx).await?;
                     info!("All files have been transferred");
                     self.update_state(
                         |e| {
@@ -1393,6 +1454,14 @@ impl OutboundRequest {
                         }),
                     };
 
+                    // The delivery counts once the peer acks. A disconnect before that ack
+                    // fails the transfer (crQuickShare: "Peer disconnected before
+                    // acknowledging files"). Only a peer that answers with acks at all is
+                    // tracked, older peers end at the last chunk. Owed before the marker is
+                    // written: its ack can be read while the write is still running.
+                    if self.state.peer_disconnect_version >= 6 {
+                        self.unacked_files.insert(current);
+                    }
                     if !self
                         .send_unless_cancelled(
                             &wrapper,
@@ -1412,6 +1481,156 @@ impl OutboundRequest {
             // Like the Cancel frame handled in `process_transfer_setup`: end the session now
             // instead of waiting for a peer that may never close the socket.
             return Err(anyhow!(crate::errors::AppError::NotAnError));
+        }
+        Ok(())
+    }
+
+    /// Waits for the peer's PAYLOAD_ACK of every file whose bytes are already sent, before
+    /// the transfer is reported as finished. Keep-alives are answered meanwhile, other frames
+    /// kept for `handle()`. A peer that disconnects with files still
+    /// unacknowledged, or does not ack them within `ACK_WAIT`, fails the transfer: it may
+    /// otherwise show "sending" for ever (crQuickShare fails the same way).
+    async fn await_file_acks(
+        &mut self,
+        cancel_rx: &mut Receiver<ChannelMessage>,
+    ) -> Result<(), anyhow::Error> {
+        if self.unacked_files.is_empty() {
+            return Ok(());
+        }
+        debug!(
+            "waiting for {} file acks before finishing the transfer",
+            self.unacked_files.len()
+        );
+        let deadline = tokio::time::Instant::now() + ACK_WAIT;
+        // Taken out first: `ack_frame` queues again what it does not handle.
+        for offline in std::mem::take(&mut self.pending_frames) {
+            self.ack_frame(offline, deadline).await?;
+        }
+        let id = self.state.id.clone();
+        let mut cancel = std::pin::pin!(wait_for_cancel(cancel_rx, &id));
+        while !self.unacked_files.is_empty() {
+            tokio::select! {
+                () = &mut cancel => {
+                    self.update_state(
+                        |e| {
+                            e.state = TransferState::Cancelled;
+                        },
+                        true,
+                    )
+                    .await;
+                    self.cancel_peer(&[]).await;
+                    return Err(anyhow!(crate::errors::AppError::NotAnError));
+                }
+                h = tokio::time::timeout_at(
+                    deadline,
+                    read_frame(
+                        &mut self.socket,
+                        &mut self.length_buf,
+                        &mut self.length_filled,
+                        &mut self.frame_buf,
+                        &mut self.frame_filled,
+                        SANE_FRAME_LENGTH as usize,
+                    ),
+                ) => {
+                    match h {
+                        Ok(Ok(frame_data)) => {
+                            let offline =
+                                Self::decode_peer_frame(&mut self.state, self.plain_frames, &frame_data)?;
+                            self.ack_frame(offline, deadline).await?
+                        }
+                        Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
+                            return Err(anyhow!(e).context(
+                                "the peer sent an invalid frame before acknowledging the files",
+                            ));
+                        }
+                        Ok(Err(e)) => {
+                            return Err(anyhow!(e).context(
+                                "the peer disconnected before acknowledging the files",
+                            ));
+                        }
+                        Err(_) => {
+                            return Err(anyhow!(
+                                "the peer did not acknowledge the files within {} s",
+                                ACK_WAIT.as_secs()
+                            ));
+                        }
+                    }
+                }
+                ev = self.upgrade.next_event() => {
+                    self.on_upgrade_event(ev).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Handles one decoded peer frame while the file acks are awaited, without the full
+    /// state machine: only what can arrive here is acted on, anything else is kept for the
+    /// next `handle()` (the state is still `SendingFiles`, which takes no sending action
+    /// twice). This keeps `await_file_acks` out of the `process_offline_frame` call cycle,
+    /// which an `async fn` must not recurse through.
+    async fn ack_frame(
+        &mut self,
+        offline: OfflineFrame,
+        deadline: tokio::time::Instant,
+    ) -> Result<(), anyhow::Error> {
+        if let Some(id) = Self::payload_ack_id(&offline) {
+            self.note_payload_ack(id);
+            return Ok(());
+        }
+        let frame_type = offline.v1.as_ref().map(|v1| v1.r#type());
+        if frame_type == Some(location_nearby_connections::v1_frame::FrameType::Disconnection) {
+            // The peer ended the session without acknowledging the files still open.
+            return Err(anyhow!(
+                "the peer disconnected before acknowledging the files"
+            ));
+        }
+        if Self::is_cancel_frame(&offline) {
+            info!("Transfer canceled by the peer while its files were unacknowledged");
+            self.peer_cancelled = true;
+            self.update_state(
+                |e| {
+                    e.state = TransferState::Cancelled;
+                },
+                true,
+            )
+            .await;
+            return Err(anyhow!(crate::errors::AppError::NotAnError));
+        }
+        // A CONTROL frame for an owed file is the receiver cancelling or failing it: that
+        // ack will not come.
+        let refused = offline
+            .v1
+            .as_ref()
+            .and_then(|v1| v1.payload_transfer.as_ref())
+            .filter(|p| p.packet_type() == PacketType::Control)
+            .and_then(|p| p.payload_header.as_ref())
+            .is_some_and(|h| self.unacked_files.contains(&h.id()));
+        if refused {
+            return Err(anyhow!("the peer refused a file before acknowledging it"));
+        }
+        match frame_type {
+            Some(location_nearby_connections::v1_frame::FrameType::KeepAlive) => {
+                // Bounded by the wait: a peer that stopped reading must not hold the task.
+                tokio::time::timeout_at(deadline, self.send_keepalive(true))
+                    .await
+                    .map_err(|_| {
+                        anyhow!("the peer stopped reading before acknowledging the files")
+                    })??;
+            }
+            // Upgrade frames included: the payload is held until an upgrade has ended
+            // (`hold_payload`), so none is in flight here.
+            _ => {
+                // Kept for the next `handle()`, with the same bounds as during a send.
+                if self.pending_frames.len() < MAX_PENDING_FRAMES
+                    || (self.pending_frames.len() < MAX_PENDING_FRAMES_HARD
+                        && !Self::is_droppable_frame(&offline))
+                {
+                    self.pending_frames.push_back(offline);
+                } else {
+                    warn!("Too many peer frames while waiting for file acks, dropping one");
+                }
+            }
         }
         Ok(())
     }
@@ -1547,6 +1766,15 @@ impl OutboundRequest {
                         ) {
                             Ok(offline) if Self::is_cancel_frame(&offline) => {
                                 break Outcome::PeerCancel;
+                            }
+                            // Taken at once, never queued: a dropped ack would fail a
+                            // delivered file (`note_payload_ack`; `self` is split here).
+                            Ok(offline) if Self::payload_ack_id(&offline).is_some() => {
+                                if let Some(id) = Self::payload_ack_id(&offline)
+                                    && self.unacked_files.remove(&id)
+                                {
+                                    debug!("a file payload is acknowledged by the peer");
+                                }
                             }
                             Ok(offline)
                                 if self.pending_frames.len() < MAX_PENDING_FRAMES
@@ -2032,8 +2260,43 @@ pub(super) fn sharing_cancel_frame() -> sharing_nearby::Frame {
     }
 }
 
+/// Whether the peer asks for the safe-to-disconnect handshake: a Disconnection with
+/// `request_safe_to_disconnect` and no ack yet.
+pub(super) fn is_safe_disconnect_request(offline: &OfflineFrame) -> bool {
+    offline
+        .v1
+        .as_ref()
+        .filter(|v1| v1.r#type() == location_nearby_connections::v1_frame::FrameType::Disconnection)
+        .and_then(|v1| v1.disconnection.as_ref())
+        .is_some_and(|d| d.request_safe_to_disconnect() && !d.ack_safe_to_disconnect())
+}
+
+/// The answer to a safe-to-disconnect request. Level 6, declared in the connection
+/// response for the payload acks, includes the handshake of level 1, so a peer may wait for
+/// this before it closes (upstream `EndpointManager::ProcessDisconnectionFrame`, which
+/// answers with both flags set; crQuickShare does the same).
+pub(super) fn safe_disconnect_ack_frame() -> OfflineFrame {
+    OfflineFrame {
+        version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+        v1: Some(location_nearby_connections::V1Frame {
+            r#type: Some(location_nearby_connections::v1_frame::FrameType::Disconnection.into()),
+            disconnection: Some(location_nearby_connections::DisconnectionFrame {
+                request_safe_to_disconnect: Some(true),
+                ack_safe_to_disconnect: Some(true),
+            }),
+            ..Default::default()
+        }),
+    }
+}
+
 /// How long one write may make no progress before the peer is taken to have stopped reading.
 const SEND_STALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long, from the end of the last chunk, the peer has to acknowledge every sent file;
+/// keep-alives do not extend it. A receiver acks each file once it is synced, so the last
+/// ack waits for the sync of the last file (crQuickShare fails a send whose acks do not
+/// come; upstream's sender waits 1 s, `wait_payload_received_ack_millis`).
+const ACK_WAIT: Duration = Duration::from_secs(60);
 
 /// Resolves when a cancel of the transfer `id` arrives; never when the bus closes.
 pub(crate) async fn wait_for_cancel(rx: &mut Receiver<ChannelMessage>, id: &str) {
@@ -2696,5 +2959,452 @@ mod tests {
         assert!(err.contains("not valid UTF-8"), "{err}");
         assert_eq!(utf8_file_name(Path::new("/tmp/a.txt")).unwrap(), "a.txt");
         assert!(utf8_file_name(Path::new("/")).is_err());
+    }
+
+    // ---- PAYLOAD_ACK: the peer confirms the files it received ----
+
+    /// A directory under the system temp dir, removed on drop.
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let p = std::env::temp_dir().join(format!("rqs-outbound-{}-{tag}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&p);
+            std::fs::create_dir_all(&p).unwrap();
+            Self(p)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A files request in plain-frame mode, its files open and not yet sent, so that
+    /// `send_payloads` runs against it directly. The payload ids are 1.. in the order of
+    /// `sizes`.
+    fn plain_files_request(
+        dir: &std::path::Path,
+        sizes: &[i64],
+    ) -> (
+        OutboundRequest,
+        tokio::io::DuplexStream,
+        Sender<ChannelMessage>,
+    ) {
+        let paths: Vec<String> = sizes
+            .iter()
+            .enumerate()
+            .map(|(n, size)| {
+                let path = dir.join(format!("f{n}.bin"));
+                std::fs::write(&path, vec![7u8; usize::try_from(*size).unwrap()]).unwrap();
+                path.to_string_lossy().into_owned()
+            })
+            .collect();
+        let (peer, ours) = tokio::io::duplex(1 << 20);
+        let (bus, _rx) = tokio::sync::broadcast::channel(8);
+        let mut req = OutboundRequest::new_over(
+            *b"SEND",
+            MigratableStream::Duplex(ours),
+            "id".into(),
+            bus.clone(),
+            OutboundPayload::Files(paths.clone()),
+            RemoteDeviceInfo {
+                device_type: crate::DeviceType::Unknown,
+                name: "test".into(),
+            },
+        );
+        req.plain_frames = true;
+        req.state.state = TransferState::SendingFiles;
+        for (n, (path, size)) in paths.iter().zip(sizes).enumerate() {
+            let id = (n + 1) as i64;
+            req.state.transferred_files.insert(
+                id,
+                InternalFileInfo {
+                    payload_id: id,
+                    file_url: std::path::PathBuf::from(path),
+                    bytes_transferred: 0,
+                    total_size: *size,
+                    file: Some(File::open(path).unwrap()),
+                },
+            );
+        }
+        (req, peer, bus)
+    }
+
+    /// The ack a receiver sends for one completed FILE payload (crQuickShare `AckFile`).
+    fn payload_ack_frame(id: i64) -> OfflineFrame {
+        OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(
+                    location_nearby_connections::v1_frame::FrameType::PayloadTransfer.into(),
+                ),
+                payload_transfer: Some(PayloadTransferFrame {
+                    packet_type: Some(PacketType::PayloadAck.into()),
+                    payload_header: Some(PayloadHeader {
+                        id: Some(id),
+                        total_size: Some(-1),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        }
+    }
+
+    fn disconnection_frame() -> OfflineFrame {
+        OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(
+                    location_nearby_connections::v1_frame::FrameType::Disconnection.into(),
+                ),
+                disconnection: Some(location_nearby_connections::DisconnectionFrame {
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        }
+    }
+
+    /// One length-prefixed plain frame to the peer, like the session under test reads them.
+    async fn write_plain_frame(peer: &mut tokio::io::DuplexStream, frame: &OfflineFrame) {
+        let data = frame.encode_to_vec();
+        peer.write_all(&(data.len() as u32).to_be_bytes())
+            .await
+            .unwrap();
+        peer.write_all(&data).await.unwrap();
+        peer.flush().await.unwrap();
+    }
+
+    /// The new wire fields survive a roundtrip: the safe-to-disconnect level on the
+    /// connection response and the ack packet type. The ack tests exercise them end to end
+    /// as well.
+    #[test]
+    fn the_new_wire_fields_roundtrip() {
+        let response = location_nearby_connections::ConnectionResponseFrame {
+            response: Some(
+                location_nearby_connections::connection_response_frame::ResponseStatus::Accept
+                    .into(),
+            ),
+            safe_to_disconnect_version: Some(6),
+            ..Default::default()
+        };
+        let decoded = location_nearby_connections::ConnectionResponseFrame::decode(
+            response.encode_to_vec().as_slice(),
+        )
+        .unwrap();
+        assert_eq!(decoded.safe_to_disconnect_version, Some(6));
+
+        let decoded = OfflineFrame::decode(payload_ack_frame(17).encode_to_vec().as_slice())
+            .expect("an ack frame decodes");
+        let transfer = decoded.v1.unwrap().payload_transfer.unwrap();
+        assert_eq!(transfer.packet_type(), PacketType::PayloadAck);
+        let header = transfer.payload_header.unwrap();
+        assert_eq!(header.id(), 17);
+        assert_eq!(header.total_size(), -1);
+        assert!(transfer.payload_chunk.is_none(), "an ack carries no chunk");
+    }
+
+    /// A peer at safe-to-disconnect level 6 acks every file: the transfer is finished only
+    /// once they are all confirmed, and the close follows the last ack. A keep-alive while
+    /// acks are owed is answered, not dropped.
+    #[tokio::test]
+    async fn a_peer_that_acks_the_files_gets_a_finished_transfer() {
+        let tmp = TempDir::new("acks");
+        let (mut req, mut peer, _bus) = plain_files_request(&tmp.0, &[4, 6]);
+        req.state.peer_disconnect_version = 6;
+        let task = tokio::spawn(async move {
+            let result = req.send_payloads().await;
+            (result, req.state.state)
+        });
+        // File 1: the chunk, then the last-chunk marker, then the ack.
+        read_plain_frame(&mut peer).await.unwrap();
+        read_plain_frame(&mut peer).await.unwrap();
+        write_plain_frame(&mut peer, &payload_ack_frame(1)).await;
+        // File 2, and a keep-alive while its ack is still owed.
+        read_plain_frame(&mut peer).await.unwrap();
+        read_plain_frame(&mut peer).await.unwrap();
+        write_plain_frame(&mut peer, &keep_alive_frame()).await;
+        let ka = read_plain_frame(&mut peer).await.unwrap();
+        assert_eq!(
+            ka.v1.unwrap().keep_alive.unwrap().ack,
+            Some(true),
+            "the keep-alive was not answered"
+        );
+        write_plain_frame(&mut peer, &payload_ack_frame(2)).await;
+        let close = read_plain_frame(&mut peer).await.unwrap();
+        assert_eq!(
+            close.v1.unwrap().r#type(),
+            location_nearby_connections::v1_frame::FrameType::Disconnection
+        );
+        let (result, state) = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the ack wait never ended")
+            .unwrap();
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(state, TransferState::Finished);
+    }
+
+    /// A peer that vanishes with files unacknowledged: not a finished transfer.
+    #[tokio::test]
+    async fn a_peer_that_closes_before_acking_fails_the_transfer() {
+        let tmp = TempDir::new("acks-eof");
+        let (mut req, mut peer, _bus) = plain_files_request(&tmp.0, &[4]);
+        req.state.peer_disconnect_version = 6;
+        let task = tokio::spawn(async move {
+            let result = req.send_payloads().await;
+            (result, req.state.state)
+        });
+        read_plain_frame(&mut peer).await.unwrap();
+        read_plain_frame(&mut peer).await.unwrap();
+        drop(peer);
+        let (result, state) = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the lost peer was never given up")
+            .unwrap();
+        let err = result.expect_err("a peer gone before the acks ended as finished");
+        assert!(
+            err.to_string()
+                .contains("disconnected before acknowledging"),
+            "{err}"
+        );
+        assert_eq!(state, TransferState::SendingFiles);
+    }
+
+    /// A protocol Disconnection with files still unacknowledged is the same failure: the
+    /// peer ended the session without confirming the delivery.
+    #[tokio::test]
+    async fn a_disconnection_before_the_acks_fails_the_transfer() {
+        let tmp = TempDir::new("acks-disc");
+        let (mut req, mut peer, _bus) = plain_files_request(&tmp.0, &[4]);
+        req.state.peer_disconnect_version = 6;
+        let task = tokio::spawn(async move {
+            let result = req.send_payloads().await;
+            (result, req.state.state)
+        });
+        read_plain_frame(&mut peer).await.unwrap();
+        read_plain_frame(&mut peer).await.unwrap();
+        write_plain_frame(&mut peer, &disconnection_frame()).await;
+        let (result, state) = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the disconnection was never taken")
+            .unwrap();
+        let err = result.expect_err("a disconnection before the acks ended as finished");
+        assert!(
+            err.to_string()
+                .contains("disconnected before acknowledging"),
+            "{err}"
+        );
+        assert_eq!(state, TransferState::SendingFiles);
+    }
+
+    /// The receiver cancels while acks are owed: a cancelled transfer, not a failure.
+    #[tokio::test]
+    async fn a_peer_cancel_while_acks_are_owed_cancels_the_transfer() {
+        let tmp = TempDir::new("acks-cancel");
+        let (mut req, mut peer, _bus) = plain_files_request(&tmp.0, &[4]);
+        req.state.peer_disconnect_version = 6;
+        let task = tokio::spawn(async move {
+            let result = req.send_payloads().await;
+            (result, req.state.state)
+        });
+        read_plain_frame(&mut peer).await.unwrap();
+        read_plain_frame(&mut peer).await.unwrap();
+        write_plain_frame(&mut peer, &sharing_cancel()).await;
+        let (result, state) = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the cancel was never taken")
+            .unwrap();
+        assert!(matches!(
+            result.err().unwrap().downcast_ref(),
+            Some(crate::errors::AppError::NotAnError)
+        ));
+        assert_eq!(state, TransferState::Cancelled);
+    }
+
+    /// A CONTROL frame for a sent file, as a receiver that cancels or fails it sends.
+    fn payload_control_frame(id: i64) -> OfflineFrame {
+        let mut frame = payload_ack_frame(id);
+        if let Some(transfer) = frame
+            .v1
+            .as_mut()
+            .and_then(|v1| v1.payload_transfer.as_mut())
+        {
+            transfer.packet_type = Some(PacketType::Control.into());
+        }
+        frame
+    }
+
+    /// A frame the ack wait keeps for `handle()` (an upgrade offer read during a write) does
+    /// not keep the wait from reading the acks. Multi-threaded so that a spinning wait fails
+    /// the timeout instead of hanging the test.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_queued_frame_does_not_stall_the_ack_wait() {
+        let tmp = TempDir::new("acks-queued");
+        let (mut req, mut peer, _bus) = plain_files_request(&tmp.0, &[4]);
+        req.state.peer_disconnect_version = 6;
+        req.pending_frames
+            .push_back(upgrade::event_frame(EventType::UpgradePathAvailable));
+        let task = tokio::spawn(async move {
+            let result = req.send_payloads().await;
+            (result, req.state.state, req.pending_frames.len())
+        });
+        read_plain_frame(&mut peer).await.unwrap();
+        read_plain_frame(&mut peer).await.unwrap();
+        write_plain_frame(&mut peer, &payload_ack_frame(1)).await;
+        let close = read_plain_frame(&mut peer).await.unwrap();
+        assert_eq!(
+            close.v1.unwrap().r#type(),
+            location_nearby_connections::v1_frame::FrameType::Disconnection
+        );
+        let (result, state, queued) = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the ack wait spun on the queued frame")
+            .unwrap();
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(state, TransferState::Finished);
+        assert_eq!(queued, 1, "the offer is kept for handle()");
+    }
+
+    /// A CONTROL frame with the id of a sent file is the receiver giving up on it, not an
+    /// ack: the send fails at once instead of finishing or waiting out `ACK_WAIT`.
+    #[tokio::test]
+    async fn a_control_frame_is_not_an_ack() {
+        let tmp = TempDir::new("acks-control");
+        let (mut req, mut peer, _bus) = plain_files_request(&tmp.0, &[4]);
+        req.state.peer_disconnect_version = 6;
+        let task = tokio::spawn(async move { req.send_payloads().await });
+        read_plain_frame(&mut peer).await.unwrap();
+        read_plain_frame(&mut peer).await.unwrap();
+        write_plain_frame(&mut peer, &payload_control_frame(1)).await;
+        let err = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the refused file was waited for")
+            .unwrap()
+            .expect_err("a CONTROL frame finished the transfer");
+        assert!(err.to_string().contains("refused a file"), "{err}");
+        drop(peer);
+    }
+
+    /// The user cancels while acks are owed: a cancelled transfer, and the peer is told.
+    #[tokio::test]
+    async fn a_user_cancel_while_acks_are_owed_cancels_the_transfer() {
+        let tmp = TempDir::new("acks-user-cancel");
+        let (mut req, mut peer, bus) = plain_files_request(&tmp.0, &[4]);
+        req.state.peer_disconnect_version = 6;
+        let task = tokio::spawn(async move {
+            let result = req.send_payloads().await;
+            (result, req.state.state)
+        });
+        read_plain_frame(&mut peer).await.unwrap();
+        read_plain_frame(&mut peer).await.unwrap();
+        // Past the marker write: the session is in the ack wait.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        bus.send(ChannelMessage {
+            id: "id".into(),
+            msg: channel::Message::Lib {
+                action: TransferAction::TransferCancel,
+            },
+        })
+        .unwrap();
+        // The sharing Cancel goes to the peer before the session ends.
+        let cancel = read_plain_frame(&mut peer).await.expect("the cancel frame");
+        assert_eq!(
+            cancel.v1.unwrap().r#type(),
+            location_nearby_connections::v1_frame::FrameType::PayloadTransfer
+        );
+        drop(peer);
+        let (result, state) = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the cancel was never taken")
+            .unwrap();
+        assert!(matches!(
+            result.err().unwrap().downcast_ref(),
+            Some(crate::errors::AppError::NotAnError)
+        ));
+        assert_eq!(state, TransferState::Cancelled);
+    }
+
+    /// Keep-alives prove the peer is there but do not stand in for the acks: a peer that
+    /// answers keep-alives and never acks still fails the send at `ACK_WAIT`.
+    #[tokio::test(start_paused = true)]
+    async fn keep_alives_do_not_extend_the_ack_wait() {
+        let tmp = TempDir::new("acks-keepalive");
+        let (mut req, mut peer, _bus) = plain_files_request(&tmp.0, &[4]);
+        req.state.peer_disconnect_version = 6;
+        let start = tokio::time::Instant::now();
+        let task = tokio::spawn(async move { req.send_payloads().await });
+        read_plain_frame(&mut peer).await.unwrap();
+        read_plain_frame(&mut peer).await.unwrap();
+        let peer_task = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                write_plain_frame(&mut peer, &keep_alive_frame()).await;
+                if read_plain_frame(&mut peer).await.is_none() {
+                    break;
+                }
+            }
+        });
+        let err = tokio::time::timeout(ACK_WAIT * 2, task)
+            .await
+            .expect("keep-alives kept the ack wait open")
+            .unwrap()
+            .expect_err("a send without acks finished");
+        assert!(err.to_string().contains("did not acknowledge"), "{err}");
+        assert!(start.elapsed() < ACK_WAIT + Duration::from_secs(1));
+        peer_task.abort();
+    }
+
+    /// A safe-to-disconnect request (the peer read our level 6) gets the ack with both
+    /// flags, as upstream's EndpointManager answers it.
+    #[tokio::test]
+    async fn a_safe_to_disconnect_request_is_acknowledged() {
+        let tmp = TempDir::new("safe-disc");
+        let (mut req, mut peer, _bus) = plain_files_request(&tmp.0, &[]);
+        let mut request = disconnection_frame();
+        if let Some(d) = request.v1.as_mut().and_then(|v1| v1.disconnection.as_mut()) {
+            d.request_safe_to_disconnect = Some(true);
+        }
+        req.process_offline_frame(&request).await.unwrap();
+        let reply = read_plain_frame(&mut peer).await.unwrap();
+        let disconnection = reply.v1.unwrap().disconnection.unwrap();
+        assert_eq!(disconnection.request_safe_to_disconnect, Some(true));
+        assert_eq!(disconnection.ack_safe_to_disconnect, Some(true));
+        // A plain Disconnection (no request) gets no reply.
+        req.process_offline_frame(&disconnection_frame())
+            .await
+            .unwrap();
+        drop(req);
+        assert!(read_plain_frame(&mut peer).await.is_none());
+    }
+
+    /// A peer below level 6 never acks: the close follows the last chunk like before, and
+    /// nothing waits for acks that will not come.
+    #[tokio::test]
+    async fn an_old_peer_is_not_waited_for() {
+        let tmp = TempDir::new("acks-old");
+        let (mut req, mut peer, _bus) = plain_files_request(&tmp.0, &[4]);
+        // peer_disconnect_version stays 0.
+        let task = tokio::spawn(async move {
+            let result = req.send_payloads().await;
+            (result, req.state.state, req.unacked_files.is_empty())
+        });
+        read_plain_frame(&mut peer).await.unwrap();
+        read_plain_frame(&mut peer).await.unwrap();
+        let close = read_plain_frame(&mut peer).await.unwrap();
+        assert_eq!(
+            close.v1.unwrap().r#type(),
+            location_nearby_connections::v1_frame::FrameType::Disconnection
+        );
+        let (result, state, no_unacked) = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the transfer waited for acks no old peer sends")
+            .unwrap();
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(state, TransferState::Finished);
+        assert!(no_unacked);
     }
 }

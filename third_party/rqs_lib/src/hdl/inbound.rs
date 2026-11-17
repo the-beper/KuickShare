@@ -18,7 +18,9 @@ use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use super::outbound::{CANCEL_TIMEOUT, sharing_cancel_frame};
+use super::outbound::{
+    CANCEL_TIMEOUT, is_safe_disconnect_request, safe_disconnect_ack_frame, sharing_cancel_frame,
+};
 use super::{InnerState, TransferState};
 use crate::channel::{self, ChannelMessage, MessageClient, TransferAction, TransferKind};
 use crate::hdl::info::{TransferMetadata, TransferPayload, TransferPayloadKind};
@@ -656,12 +658,28 @@ impl InboundRequest {
             )));
         }
 
+        // The peer's safe-to-disconnect level, from its ConnectionResponse: six or more means
+        // it expects our encrypted PAYLOAD_ACK for each received FILE payload.
+        self.state.peer_disconnect_version = v1_frame
+            .connection_response
+            .as_ref()
+            .and_then(|r| r.safe_to_disconnect_version)
+            .unwrap_or(0)
+            .max(0);
+        debug!(
+            "peer safe-to-disconnect version: {}",
+            self.state.peer_disconnect_version
+        );
+
         let response = location_nearby_connections::OfflineFrame {
 			version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
 			v1: Some(location_nearby_connections::V1Frame {
 				r#type: Some(location_nearby_connections::v1_frame::FrameType::ConnectionResponse.into()),
 				connection_response: Some(location_nearby_connections::ConnectionResponseFrame {
 					response: Some(location_nearby_connections::connection_response_frame::ResponseStatus::Accept.into()),
+					// The level this receiver answers at: 6 means the peer may expect
+					// one encrypted PAYLOAD_ACK per received FILE payload.
+					safe_to_disconnect_version: Some(6),
 					os_info: Some(location_nearby_connections::OsInfo {
 						r#type: Some(location_nearby_connections::os_info::OsType::Linux.into())
 					}),
@@ -742,6 +760,15 @@ impl InboundRequest {
                     .payload_transfer
                     .as_ref()
                     .ok_or_else(|| anyhow!("Missing required fields"))?;
+
+                // We send no files from here, only Bytes, which our level 6 does not ask the
+                // peer to ack; an ack that comes anyway carries no chunk and is ignored.
+                if payload_transfer.packet_type()
+                    == location_nearby_connections::payload_transfer_frame::PacketType::PayloadAck
+                {
+                    debug!("Ignoring a payload ack from the sender");
+                    return Ok(());
+                }
 
                 let header = payload_transfer
                     .payload_header
@@ -936,6 +963,12 @@ impl InboundRequest {
             }
             location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeNegotiation => {
                 self.process_bwu_frame(offline).await?;
+            }
+            location_nearby_connections::v1_frame::FrameType::Disconnection => {
+                if is_safe_disconnect_request(offline) {
+                    self.encrypt_and_send(&safe_disconnect_ack_frame()).await?;
+                }
+                debug!("The peer is disconnecting");
             }
             other => {
                 error!("Unhandled offline frame encrypted: {:?}", other);
@@ -1347,20 +1380,59 @@ impl InboundRequest {
             file.finished = true;
         }
 
-        if self.state.inbound.all_finished() {
-            info!("Transfer finished");
-            self.update_state(
-                |e| {
-                    e.state = TransferState::Finished;
-                },
-                true,
-            )
-            .await;
-            self.disconnection().await?;
-            self.linger().await;
-            return Err(anyhow!(crate::errors::AppError::NotAnError));
+        if !self.state.inbound.all_finished() {
+            // One encrypted ACK per completed FILE payload (crQuickShare `AckFile`, matching
+            // Nearby PayloadManager), now that the file is durable. A failed ack is a failed
+            // transfer: the phone keeps "sending" until it knows the file is here.
+            return self.send_payload_ack(payload_id).await;
         }
-        Ok(())
+        // The last file of the batch: the ack goes out before the polite close, and its
+        // failure is only logged — the files are received either way (crQuickShare defers the
+        // final ACK until the batch is committed and does not fail the session on it).
+        if let Err(e) = self.send_payload_ack(payload_id).await {
+            debug!("the final payload ack could not be sent: {e:#}");
+        }
+        info!("Transfer finished");
+        self.update_state(
+            |e| {
+                e.state = TransferState::Finished;
+            },
+            true,
+        )
+        .await;
+        self.disconnection().await?;
+        self.linger().await;
+        Err(anyhow!(crate::errors::AppError::NotAnError))
+    }
+
+    /// One encrypted `PAYLOAD_ACK` per completed FILE payload (crQuickShare `AckFile`,
+    /// matching Nearby PayloadManager): a `PayloadTransfer` frame with the payload's id and
+    /// `total_size = -1`, no chunk. Only a peer at safe-to-disconnect level 6 or more reads
+    /// it, older peers keep their old behaviour without it.
+    async fn send_payload_ack(&mut self, payload_id: i64) -> Result<(), anyhow::Error> {
+        if self.state.peer_disconnect_version < 6 {
+            return Ok(());
+        }
+        debug!("Sending the payload ack of a completed file");
+        let frame = location_nearby_connections::OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(
+                    location_nearby_connections::v1_frame::FrameType::PayloadTransfer.into(),
+                ),
+                payload_transfer: Some(PayloadTransferFrame {
+                    packet_type: Some(PacketType::PayloadAck.into()),
+                    payload_header: Some(PayloadHeader {
+                        id: Some(payload_id),
+                        total_size: Some(-1),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        };
+        self.encrypt_and_send(&frame).await
     }
 
     /// Tells the peer that the user cancelled and closes our side, as the outbound side does:
@@ -3094,6 +3166,244 @@ mod tests {
             ["a.txt", "b.txt"],
             "a second accept renamed files"
         );
+        assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"AAAA");
+    }
+
+    /// The PAYLOAD_ACK the session sends for one completed FILE payload (crQuickShare
+    /// `AckFile`): the payload's id, `total_size = -1`, no chunk.
+    fn assert_payload_ack(frame: &OfflineFrame, id: i64) {
+        let v1 = frame.v1.as_ref().expect("no v1 frame");
+        assert_eq!(
+            v1.r#type(),
+            location_nearby_connections::v1_frame::FrameType::PayloadTransfer
+        );
+        let transfer = v1.payload_transfer.as_ref().expect("no payload transfer");
+        assert_eq!(
+            transfer.packet_type(),
+            crate::location_nearby_connections::payload_transfer_frame::PacketType::PayloadAck
+        );
+        let header = transfer.payload_header.as_ref().expect("no payload header");
+        assert_eq!(header.id(), id);
+        assert_eq!(header.total_size(), -1);
+        assert!(transfer.payload_chunk.is_none(), "an ack carries no chunk");
+    }
+
+    /// `Session::feed` without going through `Session.peer`: the test keeps the peer out to
+    /// read what the session sends. Only the body goes on the stream, `_handle` takes the
+    /// length prefix as its argument.
+    async fn write_and_handle(
+        peer: &mut DuplexStream,
+        req: &mut InboundRequest,
+        frame: &OfflineFrame,
+    ) -> Result<(), anyhow::Error> {
+        let data = frame.encode_to_vec();
+        peer.write_all(&data).await.unwrap();
+        req._handle((data.len() as u32).to_be_bytes()).await
+    }
+
+    /// A peer at safe-to-disconnect level 6: one ack per completed file, in order, and the
+    /// polite close only after the last one. The files are received as before.
+    #[tokio::test]
+    async fn a_v6_peer_is_acked_per_completed_file() {
+        let tmp = TempDir::new("ack");
+        let mut s = Session::new(&tmp.0);
+        s.req.state.peer_disconnect_version = 6;
+        s.offer(
+            vec![file_meta("a.txt", 1, 4), file_meta("b.txt", 2, 4)],
+            vec![],
+        )
+        .await
+        .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+
+        let mut peer = s.peer.take().expect("peer is closed");
+        // The reply to the accept is a status, not an ack.
+        let reply = upgrade::read_plain_frame(&mut peer)
+            .await
+            .expect("the accept reply");
+        let body = reply
+            .v1
+            .unwrap()
+            .payload_transfer
+            .unwrap()
+            .payload_chunk
+            .unwrap()
+            .body
+            .unwrap();
+        let inner = sharing_nearby::Frame::decode(&*body).unwrap();
+        assert_eq!(
+            inner.v1.unwrap().connection_response.unwrap().status(),
+            Status::Accept
+        );
+        // The reply's empty last-chunk marker follows, as with every Bytes payload.
+        let _marker = upgrade::read_plain_frame(&mut peer)
+            .await
+            .expect("the marker of the accept reply");
+
+        // a.txt: the bytes, then the empty last-chunk marker; its ack comes out at once.
+        write_and_handle(
+            &mut peer,
+            &mut s.req,
+            &payload_frame(payload_header::PayloadType::File, 1, 4, 0, 0, b"AA"),
+        )
+        .await
+        .unwrap();
+        write_and_handle(
+            &mut peer,
+            &mut s.req,
+            &payload_frame(payload_header::PayloadType::File, 1, 4, 2, 0, b"AA"),
+        )
+        .await
+        .unwrap();
+        write_and_handle(
+            &mut peer,
+            &mut s.req,
+            &payload_frame(payload_header::PayloadType::File, 1, 4, 4, 1, b""),
+        )
+        .await
+        .unwrap();
+        let ack = upgrade::read_plain_frame(&mut peer)
+            .await
+            .expect("the ack of a.txt");
+        assert_payload_ack(&ack, 1);
+
+        // b.txt completes the batch: its ack is followed by the polite close. The peer goes
+        // away once it has read both, so the session's wind-down does not wait for it.
+        write_and_handle(
+            &mut peer,
+            &mut s.req,
+            &payload_frame(payload_header::PayloadType::File, 2, 4, 0, 0, b"BB"),
+        )
+        .await
+        .unwrap();
+        write_and_handle(
+            &mut peer,
+            &mut s.req,
+            &payload_frame(payload_header::PayloadType::File, 2, 4, 2, 0, b"BB"),
+        )
+        .await
+        .unwrap();
+        let last = payload_frame(payload_header::PayloadType::File, 2, 4, 4, 1, b"");
+        let data = last.encode_to_vec();
+        peer.write_all(&data).await.unwrap();
+        let reader = async move {
+            let ack = upgrade::read_plain_frame(&mut peer)
+                .await
+                .expect("the ack of b.txt");
+            assert_payload_ack(&ack, 2);
+            let close = upgrade::read_plain_frame(&mut peer)
+                .await
+                .expect("the close after the last ack");
+            assert_eq!(
+                close.v1.unwrap().r#type(),
+                location_nearby_connections::v1_frame::FrameType::Disconnection
+            );
+            // Dropping the peer at the end of the block lets the wind-down see EOF at once.
+        };
+        let (feed, ()) = tokio::join!(s.req._handle((data.len() as u32).to_be_bytes()), reader);
+        assert!(is_end_of_session(&feed), "{feed:?}");
+        assert!(s.finished(), "both files were received");
+        assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"AAAA");
+        assert_eq!(std::fs::read(tmp.0.join("b.txt")).unwrap(), b"BBBB");
+    }
+
+    /// A safe-to-disconnect request from the sender gets the ack with both flags; the session
+    /// goes on until the peer closes, as before.
+    #[tokio::test]
+    async fn a_safe_to_disconnect_request_is_acknowledged() {
+        let tmp = TempDir::new("safe-disc");
+        let mut s = Session::new(&tmp.0);
+        let request = location_nearby_connections::OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(
+                    location_nearby_connections::v1_frame::FrameType::Disconnection.into(),
+                ),
+                disconnection: Some(location_nearby_connections::DisconnectionFrame {
+                    request_safe_to_disconnect: Some(true),
+                    ack_safe_to_disconnect: Some(false),
+                }),
+                ..Default::default()
+            }),
+        };
+        s.feed(&request).await.unwrap();
+        let reply = upgrade::read_plain_frame(s.peer.as_mut().expect("peer is closed"))
+            .await
+            .expect("the ack of the request");
+        let disconnection = reply.v1.unwrap().disconnection.unwrap();
+        assert_eq!(disconnection.request_safe_to_disconnect, Some(true));
+        assert_eq!(disconnection.ack_safe_to_disconnect, Some(true));
+    }
+
+    /// A payload ack from the sender (it read our level 6) has no chunk: it is ignored, not
+    /// an error that ends the session.
+    #[tokio::test]
+    async fn a_payload_ack_from_the_sender_is_ignored() {
+        let tmp = TempDir::new("ack-in");
+        let mut s = Session::new(&tmp.0);
+        let ack = location_nearby_connections::OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(
+                    location_nearby_connections::v1_frame::FrameType::PayloadTransfer.into(),
+                ),
+                payload_transfer: Some(PayloadTransferFrame {
+                    packet_type: Some(PacketType::PayloadAck.into()),
+                    payload_header: Some(PayloadHeader {
+                        id: Some(7),
+                        total_size: Some(-1),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        };
+        s.feed(&ack).await.expect("an ack ended the session");
+    }
+
+    /// A peer below level 6 is not acked: the close follows the last chunk as before.
+    #[tokio::test]
+    async fn an_old_peer_is_not_acked() {
+        let tmp = TempDir::new("noack");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+
+        let mut peer = s.peer.take().expect("peer is closed");
+        // The reply to the accept: the status and its empty last-chunk marker.
+        let _reply = upgrade::read_plain_frame(&mut peer)
+            .await
+            .expect("the accept reply");
+        let _marker = upgrade::read_plain_frame(&mut peer)
+            .await
+            .expect("the marker of the accept reply");
+
+        write_and_handle(
+            &mut peer,
+            &mut s.req,
+            &payload_frame(payload_header::PayloadType::File, 1, 4, 0, 0, b"AAAA"),
+        )
+        .await
+        .unwrap();
+        let marker = payload_frame(payload_header::PayloadType::File, 1, 4, 4, 1, b"");
+        let data = marker.encode_to_vec();
+        peer.write_all(&data).await.unwrap();
+        let reader = async move {
+            let close = upgrade::read_plain_frame(&mut peer)
+                .await
+                .expect("the close");
+            assert_eq!(
+                close.v1.unwrap().r#type(),
+                location_nearby_connections::v1_frame::FrameType::Disconnection,
+                "no ack is sent to a peer below level 6"
+            );
+        };
+        let (feed, ()) = tokio::join!(s.req._handle((data.len() as u32).to_be_bytes()), reader);
+        assert!(is_end_of_session(&feed), "{feed:?}");
+        assert!(s.finished());
         assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"AAAA");
     }
 

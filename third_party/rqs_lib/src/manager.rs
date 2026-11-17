@@ -364,7 +364,19 @@ async fn connect_lan(
             report(sender, &id, TransferState::Cancelled);
             return Ok(());
         }
-        r = tokio::time::timeout(timeouts.connect, TcpStream::connect(si.addr.clone())) => match r {
+        r = tokio::time::timeout(
+            timeouts.connect,
+            async {
+                // The address is the `id` the discovery published: `ip:port`.
+                let peer: SocketAddr = si.addr.parse().map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "the LAN address of the peer is not an address",
+                    )
+                })?;
+                crate::net::lan_connect(peer).await
+            },
+        ) => match r {
             Ok(r) => r?,
             Err(_) => anyhow::bail!(
                 "connecting to {} timed out after {} s",

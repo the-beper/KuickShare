@@ -1,8 +1,18 @@
 //! The 0xFEF3 receiver advertisement (BLE service data, also served from GATT slot 0).
 //!
-//! Layout (reverse-engineered from a Pixel 9 Pro capture, see docs):
-//! `48 | fc9f5e | u32 BE len | DATA | token(2) | mask | [psm(2)] | [len | rx_instant]`
-//! with `DATA = 23 | fc9f5e | endpoint_id(4) | info_len | endpoint_info | mac(6) | 00 00`.
+//! Three encodings of the same receive-mode beacon reach the scanner (port of
+//! crQuickShare's `advertisement_codec.cc`, BSD-3-Clause, The Chromium Authors):
+//!
+//! - Regular PCP (reverse-engineered from a Pixel 9 Pro capture, see docs):
+//!   `48 | fc9f5e | u32 BE len | DATA | token(2) | mask | [psm(2)] | [len | rx_instant]`
+//!   with `DATA = 23 | fc9f5e | endpoint_id(4) | info_len | endpoint_info | mac(6) | 00 00`.
+//! - Fast/compact (`0x4a`): the same envelope with a 1-byte length, no service hash, and
+//!   `DATA = 23 | endpoint_id(4) | info_len | endpoint_info` — no classic Bluetooth address
+//!   and no trailing `00 00`. Upstream caps the endpoint info at 17 bytes; phones send
+//!   longer (crQuickShare normalises them for upstream), so no cap is applied here. Bytes
+//!   after the endpoint info can only be a UWB address (`uwb_len(1)` then that many bytes).
+//! - DCT (`0x20`): `20 | DataElement TLVs` with no endpoint id at all — type 5 the Sharing
+//!   service hash, type 4 the PSM, type 7 the device name. See [`ReceiverAdvertisement::dct`].
 
 use super::socket::SERVICE_HASH;
 use base64::Engine;
@@ -15,6 +25,19 @@ pub const DEVICE_TYPE_LAPTOP: u8 = 3;
 
 const HEADER: u8 = 0x48;
 const HEADER_FAST: u8 = 0x4a;
+/// DCT form: version 1, and nothing else in the byte (upstream `dct_advertisement.cc`).
+const HEADER_DCT: u8 = 0x20;
+/// DCT data-element types (upstream `dct_advertisement.cc`).
+const DCT_SERVICE_HASH_TYPE: u8 = 0x05;
+const DCT_PSM_TYPE: u8 = 0x04;
+const DCT_DEVICE_INFO_TYPE: u8 = 0x07;
+/// HKDF-SHA256(ikm="NearbySharing", salt="DCT Protocol", info="Service ID Hash")[:2];
+/// a test recomputes it from the crate's own `hkdf`.
+const DCT_SERVICE_HASH: [u8; 2] = [0x6d, 0xfd];
+/// Most distinct data elements any legal DCT advertisement carries.
+const MAX_DCT_FIELDS: usize = 32;
+/// DCT device information: 1 byte (truncation bit, dedup counter) plus 1..=7 name bytes.
+const MAX_DCT_NAME_LEN: usize = 7;
 /// Bit of the endpoint info header that is set when the name is hidden.
 const INFO_HIDDEN: u8 = 0x10;
 /// Service data is at most 255 bytes on the air; anything larger is not ours.
@@ -223,6 +246,11 @@ pub struct ReceiverAdvertisement {
     /// bytes seen in a Pixel capture are opaque and possibly tied to that device's account,
     /// so they are not reused. A Pixel 7 listed the receiver without them (one hardware run).
     pub rx_instant: Option<Vec<u8>>,
+    /// Parsed from the DCT form: the phone sent no endpoint id, no identity and no classic
+    /// Bluetooth address, so `endpoint_id`, `identity` and `bt_mac` carry zeros and the
+    /// scanner stands in with a per-address id (see `ble_scan::scan_result`). The name and
+    /// the PSM are present, so the phone is listed and reachable like any other.
+    pub dct: bool,
 }
 
 impl ReceiverAdvertisement {
@@ -236,6 +264,7 @@ impl ReceiverAdvertisement {
             psm: None,
             token: rand::random(),
             rx_instant: None,
+            dct: false,
         }
     }
 
@@ -283,18 +312,23 @@ impl ReceiverAdvertisement {
         Self::try_parse(bytes).ok()
     }
 
-    /// Parses the advertisement of a receiver that is visible to everyone (name in clear).
-    /// The "fast" form (`0x4a`, no name and no PSM) is rejected on purpose.
+    /// Parses the advertisement of a receiver that is visible to everyone (name in clear),
+    /// in any of the three encodings of the module docs.
     pub fn try_parse(bytes: &[u8]) -> Result<Self, ParseError> {
         if bytes.len() > MAX_PARSE_LEN {
             return Err(ParseError::TooLong);
         }
         let (&header, rest) = bytes.split_first().ok_or(ParseError::Truncated)?;
         match header {
-            HEADER => {}
-            HEADER_FAST => return Err(ParseError::FastForm),
-            _ => return Err(ParseError::BadHeader),
+            HEADER => Self::parse_regular(rest),
+            HEADER_FAST => Self::parse_fast(rest),
+            HEADER_DCT => Self::parse_dct(rest),
+            _ => Err(ParseError::BadHeader),
         }
+    }
+
+    /// The regular form: see the module docs.
+    fn parse_regular(rest: &[u8]) -> Result<Self, ParseError> {
         if slice(rest, 0, 3)? != SERVICE_HASH {
             return Err(ParseError::BadHeader);
         }
@@ -313,34 +347,8 @@ impl ReceiverAdvertisement {
         let info_len = usize::from(*data.get(8).ok_or(ParseError::Truncated)?);
         let info = slice(data, 9, info_len)?;
         let bt_mac = array(data, 9 + info_len)?;
-
-        let info_header = *info.first().ok_or(ParseError::Truncated)?;
-        if info_header & INFO_HIDDEN != 0 {
-            return Err(ParseError::NotEveryone);
-        }
-        let device_type = (info_header >> 1) & 0x7;
-        let identity = array(info, 1)?;
-        let name_len = usize::from(*info.get(17).ok_or(ParseError::Truncated)?);
-        let name = std::str::from_utf8(slice(info, 18, name_len)?)
-            .map_err(|_| ParseError::BadName)?
-            .to_owned();
-
-        let token = array(tail, 0)?;
-        // Samsung's Quick Share ends the advertisement after the token: no mask, no PSM.
-        let mask = tail.get(2).copied().unwrap_or(0);
-        let mut at = 3;
-        let psm = if mask & MASK_PSM != 0 {
-            at += 2;
-            Some(u16::from_be_bytes(array(tail, at - 2)?))
-        } else {
-            None
-        };
-        let rx_instant = if mask & MASK_RX_INSTANT != 0 {
-            let len = usize::from(*tail.get(at).ok_or(ParseError::Truncated)?);
-            Some(slice(tail, at + 1, len)?.to_vec())
-        } else {
-            None
-        };
+        let (device_type, identity, name) = parse_endpoint_info(info)?;
+        let (token, psm, rx_instant) = parse_tail(tail)?;
 
         Ok(Self {
             endpoint_id,
@@ -351,8 +359,186 @@ impl ReceiverAdvertisement {
             psm,
             token,
             rx_instant,
+            dct: false,
         })
     }
+
+    /// The fast/compact form: see the module docs.
+    fn parse_fast(rest: &[u8]) -> Result<Self, ParseError> {
+        let len = usize::from(*rest.first().ok_or(ParseError::Truncated)?);
+        let data_end = 1usize.checked_add(len).ok_or(ParseError::Truncated)?;
+        let data = rest.get(1..data_end).ok_or(ParseError::Truncated)?;
+        let tail = rest.get(data_end..).ok_or(ParseError::Truncated)?;
+
+        if *data.first().ok_or(ParseError::Truncated)? != DATA_VERSION_PCP {
+            return Err(ParseError::BadHeader);
+        }
+        let endpoint_id = array(data, 1)?;
+        let info_len = usize::from(*data.get(5).ok_or(ParseError::Truncated)?);
+        let info = slice(data, 6, info_len)?;
+        // Bytes after the endpoint info can only be a UWB address: a length byte and that
+        // many bytes, exactly (crQuickShare's "connection_extensions" bound). A short one is
+        // junk; a long one means the info length was misread.
+        let after = data
+            .len()
+            .checked_sub(6 + info_len)
+            .ok_or(ParseError::Truncated)?;
+        if after != 0 {
+            let uwb_len = usize::from(*data.get(6 + info_len).ok_or(ParseError::Truncated)?);
+            if after != 1 + uwb_len {
+                return Err(ParseError::BadHeader);
+            }
+        }
+        let (device_type, identity, name) = parse_endpoint_info(info)?;
+        let (token, psm, rx_instant) = parse_tail(tail)?;
+
+        Ok(Self {
+            endpoint_id,
+            device_type,
+            identity,
+            name,
+            bt_mac: [0; 6],
+            psm,
+            token,
+            rx_instant,
+            dct: false,
+        })
+    }
+
+    /// The DCT form: see the module docs. Upstream reads the elements in one fixed order;
+    /// crQuickShare accepts any order and skips unknown types, and so does this.
+    fn parse_dct(rest: &[u8]) -> Result<Self, ParseError> {
+        let mut seen = [false; 256];
+        let mut fields = 0usize;
+        let mut psm = None;
+        let mut name = None;
+        let mut at = 0usize;
+        while at < rest.len() {
+            let header = rest[at];
+            at += 1;
+            // Every element header is exactly 8 or 16 bits and every value a whole number of
+            // bytes, so the element stream never straddles a byte boundary (upstream
+            // `data_element.cc` reads the same bits through a bit reader).
+            let (type_, len) = if header & 0x80 == 0 {
+                // One-byte header `0b0_LLL_TTTT`: 3-bit length, 4-bit type.
+                (header & 0x0f, (header >> 4) & 0x07)
+            } else {
+                // Two-byte header: 7-bit length, then the full type byte.
+                let type_ = *rest.get(at).ok_or(ParseError::Truncated)?;
+                at += 1;
+                (type_, header & 0x7f)
+            };
+            if type_ == 0 {
+                return Err(ParseError::BadHeader);
+            }
+            let value = slice(rest, at, usize::from(len))?;
+            at += usize::from(len);
+            if seen[usize::from(type_)] {
+                return Err(ParseError::DuplicateField);
+            }
+            seen[usize::from(type_)] = true;
+            fields += 1;
+            if fields > MAX_DCT_FIELDS {
+                // More distinct fields than any legal DCT advertisement: junk that must not
+                // keep the loop growing.
+                return Err(ParseError::TooLong);
+            }
+            match type_ {
+                DCT_SERVICE_HASH_TYPE => {
+                    if value != DCT_SERVICE_HASH {
+                        return Err(ParseError::BadServiceHash);
+                    }
+                }
+                DCT_PSM_TYPE => {
+                    if len != 2 {
+                        return Err(ParseError::BadPsm);
+                    }
+                    let bytes: [u8; 2] = array(value, 0)?;
+                    let value = u16::from_be_bytes(bytes);
+                    if value == 0 {
+                        return Err(ParseError::BadPsm);
+                    }
+                    psm = Some(value);
+                }
+                DCT_DEVICE_INFO_TYPE => {
+                    if usize::from(len) < 2 || usize::from(len) > 1 + MAX_DCT_NAME_LEN {
+                        return Err(ParseError::BadHeader);
+                    }
+                    // Byte 0: bit 7 the name is truncated upstream, bits 0-6 a dedup counter
+                    // for two phones of the same name. Neither is used here: the raw name is
+                    // kept as sent, and the id comes from the address (see `dct`).
+                    let text = std::str::from_utf8(&value[1..]).map_err(|_| ParseError::BadName)?;
+                    if text.chars().any(|c| matches!(c, '\0'..='\x1f' | '\x7f')) {
+                        return Err(ParseError::BadName);
+                    }
+                    name = Some(text.to_owned());
+                }
+                // Unknown types carry their own length: skipped and counted, like upstream.
+                _ => {}
+            }
+        }
+        if !(seen[usize::from(DCT_SERVICE_HASH_TYPE)]
+            && seen[usize::from(DCT_PSM_TYPE)]
+            && seen[usize::from(DCT_DEVICE_INFO_TYPE)])
+        {
+            return Err(ParseError::MissingField);
+        }
+        // The checks above guarantee both: a seen PSM element always set it, same for the name.
+        let psm = psm.ok_or(ParseError::MissingField)?;
+        let name = name.ok_or(ParseError::MissingField)?;
+        Ok(Self {
+            endpoint_id: [0; 4],
+            device_type: 0,
+            identity: [0; 16],
+            name,
+            bt_mac: [0; 6],
+            psm: Some(psm),
+            token: [0; 2],
+            rx_instant: None,
+            dct: true,
+        })
+    }
+}
+
+/// The Nearby Share application advertisement inside any form: the endpoint info the
+/// mDNS `n` record carries too (`device_type | hidden bit`, identity, name).
+fn parse_endpoint_info(info: &[u8]) -> Result<(u8, [u8; 16], String), ParseError> {
+    let info_header = *info.first().ok_or(ParseError::Truncated)?;
+    if info_header & INFO_HIDDEN != 0 {
+        return Err(ParseError::NotEveryone);
+    }
+    let device_type = (info_header >> 1) & 0x7;
+    let identity = array(info, 1)?;
+    let name_len = usize::from(*info.get(17).ok_or(ParseError::Truncated)?);
+    let name = std::str::from_utf8(slice(info, 18, name_len)?)
+        .map_err(|_| ParseError::BadName)?
+        .to_owned();
+    Ok((device_type, identity, name))
+}
+
+/// The token, the PSM and the `rx_instant` bytes of an advertisement's tail.
+type Tail = ([u8; 2], Option<u16>, Option<Vec<u8>>);
+
+/// The bytes after the declared payload of a regular or fast form: the token, then the
+/// extension mask and what it asks for.
+fn parse_tail(tail: &[u8]) -> Result<Tail, ParseError> {
+    let token = array(tail, 0)?;
+    // Samsung's Quick Share ends the advertisement after the token: no mask, no PSM.
+    let mask = tail.get(2).copied().unwrap_or(0);
+    let mut at = 3;
+    let psm = if mask & MASK_PSM != 0 {
+        at += 2;
+        Some(u16::from_be_bytes(array(tail, at - 2)?))
+    } else {
+        None
+    };
+    let rx_instant = if mask & MASK_RX_INSTANT != 0 {
+        let len = usize::from(*tail.get(at).ok_or(ParseError::Truncated)?);
+        Some(slice(tail, at + 1, len)?.to_vec())
+    } else {
+        None
+    };
+    Ok((token, psm, rx_instant))
 }
 
 /// Why [`ReceiverAdvertisement::try_parse`] rejected its input.
@@ -362,14 +548,20 @@ pub enum ParseError {
     TooLong,
     /// A length field points past the end of the input.
     Truncated,
-    /// Not a `0x48 | fc9f5e` advertisement.
+    /// Not a `0x48`/`0x4a`/`0x20` advertisement, or a DCT element of an unknown shape.
     BadHeader,
-    /// The `0x4a` form that carries neither name nor PSM.
-    FastForm,
     /// The receiver is not visible to everyone: its name is not in clear.
     NotEveryone,
-    /// The display name is not UTF-8.
+    /// The display name is not UTF-8 (or, in the DCT form, carries control characters).
     BadName,
+    /// A DCT data element repeats a type.
+    DuplicateField,
+    /// A DCT service hash element does not carry the Sharing hash.
+    BadServiceHash,
+    /// A DCT PSM element is not two bytes or is zero.
+    BadPsm,
+    /// A DCT advertisement without the required service hash, PSM or device name.
+    MissingField,
 }
 
 /// `len` bytes of `b` from `from`, or `Truncated`.
@@ -419,6 +611,7 @@ mod tests {
             psm: Some(0x0082),
             token: [0x62, 0xf1],
             rx_instant: Some(CAPTURE[CAPTURE.len() - 63..].to_vec()),
+            dct: false,
         }
     }
 
@@ -599,13 +792,247 @@ mod tests {
         b
     }
 
+    /// A hand-built fast-form advertisement: no service hash, 1-byte length, no classic
+    /// Bluetooth address, and an endpoint info far past upstream's 17-byte fast cap.
+    fn fast_bytes() -> Vec<u8> {
+        fast_bytes_with(0)
+    }
+
+    /// `extra_uwb`: bytes of a UWB address appended inside the declared payload.
+    fn fast_bytes_with(extra_uwb: usize) -> Vec<u8> {
+        let info = crate::utils::gen_endpoint_info(1, &[7; 16], "Packet Linux Test 01");
+        let mut data = vec![DATA_VERSION_PCP];
+        data.extend_from_slice(b"PKT1");
+        data.push(info.len() as u8);
+        data.extend_from_slice(&info);
+        if extra_uwb > 0 {
+            data.push(extra_uwb as u8);
+            data.extend(vec![0xa5; extra_uwb]);
+        }
+        let mut out = vec![HEADER_FAST, data.len() as u8];
+        out.extend_from_slice(&data);
+        out.extend_from_slice(&[0x62, 0xf1]);
+        out.push(MASK_PSM);
+        out.extend_from_slice(&0x0082u16.to_be_bytes());
+        out
+    }
+
     #[test]
-    fn rejects_the_fast_form() {
-        let fast = [0x4a, 0x05, 1, 2, 3, 4, 5, 0x62, 0xf1];
+    fn parses_the_fast_form() {
+        let adv = ReceiverAdvertisement::parse(&fast_bytes()).expect("fast form parsed");
+        assert_eq!(adv.endpoint_id, *b"PKT1");
+        assert_eq!(adv.name, "Packet Linux Test 01");
+        assert_eq!(adv.device_type, 1);
+        assert_eq!(adv.psm, Some(0x0082));
+        assert_eq!(adv.token, [0x62, 0xf1]);
+        assert_eq!(adv.bt_mac, [0; 6], "the fast form carries no address");
+        assert_eq!(adv.identity, [7; 16]);
+        assert!(!adv.dct);
+        assert!(adv.rx_instant.is_none());
+    }
+
+    #[test]
+    fn the_fast_form_takes_a_uwb_address_after_the_endpoint_info() {
+        assert!(ReceiverAdvertisement::parse(&fast_bytes_with(6)).is_some());
+        // A length byte that does not match the bytes that follow it is junk. The uwb length
+        // byte sits right before the 6 address bytes at the end of the declared data.
+        let mut bad = fast_bytes_with(6);
+        let uwb_len_at = 2 + usize::from(bad[1]) - 1 - 6;
+        bad[uwb_len_at] = 5;
         assert_eq!(
-            ReceiverAdvertisement::try_parse(&fast),
-            Err(ParseError::FastForm)
+            ReceiverAdvertisement::try_parse(&bad),
+            Err(ParseError::BadHeader)
         );
+    }
+
+    #[test]
+    fn every_truncation_of_the_fast_form_fails_cleanly() {
+        let fast = fast_bytes();
+        for n in 0..fast.len() {
+            let _ = ReceiverAdvertisement::try_parse(&fast[..n]);
+        }
+        assert_eq!(
+            ReceiverAdvertisement::try_parse(&fast[..8]),
+            Err(ParseError::Truncated)
+        );
+    }
+
+    /// A hand-built DCT advertisement: version byte, then the three required data elements.
+    /// `order`: the upstream order (hash, PSM, name); a reordered variant is tested below.
+    fn dct_bytes(name: &[u8], order: u8, dedup_byte: u8) -> Vec<u8> {
+        let psm = |out: &mut Vec<u8>| {
+            out.push((2 << 4) | DCT_PSM_TYPE);
+            out.extend_from_slice(&0x0082u16.to_be_bytes());
+        };
+        let hash = |out: &mut Vec<u8>| {
+            out.push((2 << 4) | DCT_SERVICE_HASH_TYPE);
+            out.extend_from_slice(&DCT_SERVICE_HASH);
+        };
+        let device = |out: &mut Vec<u8>| {
+            out.push(((1 + name.len() as u8) << 4) | DCT_DEVICE_INFO_TYPE);
+            out.push(dedup_byte);
+            out.extend_from_slice(name);
+        };
+        let mut out = vec![HEADER_DCT];
+        match order {
+            0 => {
+                hash(&mut out);
+                psm(&mut out);
+                device(&mut out);
+            }
+            _ => {
+                device(&mut out);
+                psm(&mut out);
+                hash(&mut out);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn parses_the_dct_form() {
+        let adv = ReceiverAdvertisement::parse(&dct_bytes(b"Pixel", 0, 0)).expect("DCT parsed");
+        assert_eq!(adv.name, "Pixel");
+        assert_eq!(adv.psm, Some(0x0082));
+        assert!(adv.dct);
+        assert_eq!(
+            adv.endpoint_id, [0; 4],
+            "the DCT form carries no endpoint id"
+        );
+        assert_eq!(adv.device_type, 0);
+        assert_eq!(adv.identity, [0; 16]);
+        assert_eq!(adv.bt_mac, [0; 6]);
+        assert_eq!(adv.token, [0; 2]);
+        assert!(adv.rx_instant.is_none());
+    }
+
+    #[test]
+    fn the_dct_form_takes_the_elements_in_any_order_and_skips_unknown_ones() {
+        // Device information first, then PSM, then the hash: not the upstream order.
+        let reordered = dct_bytes(b"Pixel", 1, 0x42);
+        let adv = ReceiverAdvertisement::parse(&reordered).expect("reordered elements parsed");
+        assert_eq!(adv.name, "Pixel");
+        // An unknown element (type 9, one byte: header 0b0001_1001) is skipped, not a reason
+        // to refuse the phone.
+        let mut with_unknown = dct_bytes(b"Pixel", 0, 0);
+        with_unknown.insert(1, 0x19);
+        with_unknown.insert(2, b'x');
+        let adv = ReceiverAdvertisement::parse(&with_unknown).expect("unknown element skipped");
+        assert_eq!(adv.name, "Pixel");
+        // A one-byte element header whose type is 0 (0b0000_0000) is malformed.
+        let mut zero_type = dct_bytes(b"Pixel", 0, 0);
+        zero_type.insert(1, 0x00);
+        assert_eq!(
+            ReceiverAdvertisement::try_parse(&zero_type),
+            Err(ParseError::BadHeader)
+        );
+    }
+
+    #[test]
+    fn the_dct_form_caps_the_distinct_fields() {
+        let mut full = dct_bytes(b"Pixel", 0, 0);
+        // 3 required + 29 unknown = 32 distinct fields, the most a legal DCT advertisement
+        // carries. Each unknown element: two-byte header (length 1), type, value.
+        for n in 0..29u8 {
+            full.extend_from_slice(&[0x80 | 1, 8 + n, b'x']);
+        }
+        assert!(ReceiverAdvertisement::parse(&full).is_some());
+        // One more field is junk, however small it is.
+        full.extend_from_slice(&[0x80 | 1, 200, b'x']);
+        assert_eq!(
+            ReceiverAdvertisement::try_parse(&full),
+            Err(ParseError::TooLong)
+        );
+    }
+
+    #[test]
+    fn the_dct_form_rejects_the_documented_cases() {
+        // Bad version byte: not a DCT advertisement at all.
+        assert_eq!(
+            ReceiverAdvertisement::try_parse(&[0x21, 0x25, 0x6d, 0xfd]),
+            Err(ParseError::BadHeader)
+        );
+        // A repeated type: the PSM element again, well-formed.
+        let mut dup = dct_bytes(b"Pixel", 0, 0);
+        dup.extend_from_slice(&[(2 << 4) | DCT_PSM_TYPE, 0x00, 0x82]);
+        assert_eq!(
+            ReceiverAdvertisement::try_parse(&dup),
+            Err(ParseError::DuplicateField)
+        );
+        // A missing required field: the service hash element cut out whole.
+        let mut missing = dct_bytes(b"Pixel", 0, 0);
+        missing.drain(1..4);
+        assert_eq!(
+            ReceiverAdvertisement::try_parse(&missing),
+            Err(ParseError::MissingField)
+        );
+        // A wrong service hash: the hash value sits at bytes 2..4.
+        let mut hash = dct_bytes(b"Pixel", 0, 0);
+        hash[2] ^= 1;
+        assert_eq!(
+            ReceiverAdvertisement::try_parse(&hash),
+            Err(ParseError::BadServiceHash)
+        );
+        // A zero PSM: the PSM value sits at bytes 5..7.
+        let mut zero = dct_bytes(b"Pixel", 0, 0);
+        zero[5] = 0;
+        zero[6] = 0;
+        assert_eq!(
+            ReceiverAdvertisement::try_parse(&zero),
+            Err(ParseError::BadPsm)
+        );
+        // A PSM that is not two bytes.
+        let mut short = vec![HEADER_DCT];
+        short.push((1 << 4) | DCT_PSM_TYPE);
+        short.push(0x82);
+        short.extend_from_slice(&[(2 << 4) | DCT_SERVICE_HASH_TYPE, 0x6d, 0xfd]);
+        short.extend_from_slice(&[(6 << 4) | DCT_DEVICE_INFO_TYPE, 0]);
+        short.extend_from_slice(b"Pixel");
+        assert_eq!(
+            ReceiverAdvertisement::try_parse(&short),
+            Err(ParseError::BadPsm)
+        );
+        // A name with a control character, and a name that is not UTF-8.
+        assert_eq!(
+            ReceiverAdvertisement::try_parse(&dct_bytes(b"Pi\x01xel", 0, 0)),
+            Err(ParseError::BadName)
+        );
+        assert!(ReceiverAdvertisement::parse(&dct_bytes(&[0xff, 0xfe], 0, 0)).is_none());
+        // A name element without a name byte: the device element header sits at byte 7.
+        let mut no_name = dct_bytes(b"Pixel", 0, 0);
+        no_name[7] = (1 << 4) | DCT_DEVICE_INFO_TYPE;
+        no_name.truncate(9);
+        assert_eq!(
+            ReceiverAdvertisement::try_parse(&no_name),
+            Err(ParseError::BadHeader)
+        );
+        // Eight name bytes, one over the cap: a length 9 element needs the two-byte header.
+        let mut long = vec![HEADER_DCT];
+        long.extend_from_slice(&[(2 << 4) | DCT_SERVICE_HASH_TYPE, 0x6d, 0xfd]);
+        long.extend_from_slice(&[(2 << 4) | DCT_PSM_TYPE, 0x00, 0x82]);
+        long.extend_from_slice(&[0x80 | 9, DCT_DEVICE_INFO_TYPE, 0]);
+        long.extend_from_slice(&[b'x'; 8]);
+        assert_eq!(
+            ReceiverAdvertisement::try_parse(&long),
+            Err(ParseError::BadHeader)
+        );
+        // An element value that runs past the end.
+        assert_eq!(
+            ReceiverAdvertisement::try_parse(&[HEADER_DCT, 0x25, 0x6d]),
+            Err(ParseError::Truncated)
+        );
+    }
+
+    /// The DCT service hash, recomputed from the HKDF the constant is documented with.
+    #[test]
+    fn dct_service_hash_matches_its_hkdf_definition() {
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+        let hk = Hkdf::<Sha256>::new(Some(b"DCT Protocol"), b"NearbySharing");
+        let mut okm = [0u8; 2];
+        hk.expand(b"Service ID Hash", &mut okm)
+            .expect("2 bytes always fit");
+        assert_eq!(okm, DCT_SERVICE_HASH);
     }
 
     #[test]
@@ -685,12 +1112,39 @@ mod tests {
             let _ = ReceiverAdvertisement::try_parse(&b);
         }
 
+        // 1b. The same behind the fast and the DCT header.
+        for round in 0..100_000 {
+            let len = rng.random_range(0..=64usize);
+            let mut b = vec![0u8; len];
+            rng.fill_bytes(&mut b);
+            if !b.is_empty() {
+                b[0] = if round % 2 == 0 {
+                    HEADER_FAST
+                } else {
+                    HEADER_DCT
+                };
+            }
+            if b.len() > 1 && round % 3 == 0 {
+                // A small length, so the inner structure is often reached.
+                b[1] = rng.random_range(0..=32u8);
+            }
+            let _ = ReceiverAdvertisement::try_parse(&b);
+        }
+
         // 2. Mutations of valid advertisements: flipped bytes, cuts and appended bytes.
-        let valid = [CAPTURE.to_vec(), captured().to_bytes(), {
-            let mut adv = ReceiverAdvertisement::new(*b"ABCD", 3, [7; 16], "Desk");
-            adv.psm = Some(0x00a1);
-            adv.to_bytes()
-        }];
+        let valid = [
+            CAPTURE.to_vec(),
+            captured().to_bytes(),
+            {
+                let mut adv = ReceiverAdvertisement::new(*b"ABCD", 3, [7; 16], "Desk");
+                adv.psm = Some(0x00a1);
+                adv.to_bytes()
+            },
+            fast_bytes(),
+            fast_bytes_with(6),
+            dct_bytes(b"Pixel", 0, 0),
+            dct_bytes(b"Pixel", 1, 0x42),
+        ];
         for round in 0..50_000 {
             let mut b = valid[round % valid.len()].clone();
             for _ in 0..rng.random_range(1..=3usize) {
