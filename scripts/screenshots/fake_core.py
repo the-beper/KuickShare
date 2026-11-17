@@ -28,6 +28,15 @@ XML = """<node><interface name="@IFACE@">
 <method name="ForgetAllowed"><arg type="s" direction="in"/><arg type="s" direction="in"/></method>
 <method name="AllowedDevices"><arg type="s" direction="out"/></method>
 <method name="ResetSettings"/>
+<method name="AnswerTransfer"><arg type="s" direction="in"/><arg type="t" direction="in"/><arg type="s" direction="in"/></method>
+<method name="MakeVisibleFor"><arg type="u" direction="in"/></method>
+<method name="ScanBluetooth"/>
+<method name="RequestWifiUpgrade"><arg type="b" direction="in"/><arg type="b" direction="in"/></method>
+<method name="WifiRequirements"><arg type="b" direction="in"/><arg type="s" direction="out"/></method>
+<method name="FirewallManaged"><arg type="b" direction="out"/></method>
+<method name="JoinNetwork"><arg type="s" direction="in"/></method>
+<method name="AcknowledgeTrustedDevicesReset"/>
+<method name="Quit"/>
 <property name="DeviceName" type="s" access="readwrite"/>
 <property name="DownloadDir" type="s" access="readwrite"/>
 <property name="StaticPort" type="u" access="readwrite"/>
@@ -40,12 +49,21 @@ XML = """<node><interface name="@IFACE@">
 <property name="DolphinIntegration" type="b" access="readwrite"/>
 <property name="HideWhenDnd" type="b" access="readwrite"/>
 <property name="Suspended" type="b" access="readwrite"/>
+<property name="WindowOpen" type="b" access="readwrite"/>
+<property name="TransferBusy" type="b" access="read"/>
+<property name="VisibleUntil" type="x" access="read"/>
+<property name="WifiUpgrade" type="b" access="readwrite"/>
+<property name="WifiAutoJoin" type="b" access="readwrite"/>
+<property name="InsecureHotspotAllowed" type="b" access="read"/>
+<property name="TrustedDevicesReset" type="b" access="read"/>
 <signal name="TransferUpdated"><arg type="s"/><arg type="a{sv}"/></signal>
 <signal name="DeviceFound"><arg type="s"/><arg type="a{sv}"/></signal>
 <signal name="DeviceLost"><arg type="s"/></signal>
 <signal name="PairingCode"><arg type="s"/><arg type="s"/></signal>
 <signal name="PairingFinished"><arg type="b"/><arg type="s"/><arg type="s"/></signal>
 <signal name="TrustedChanged"/>
+<signal name="WifiUpgradeBlocked"><arg type="s"/></signal>
+<signal name="WifiRequirementsChanged"><arg type="s"/></signal>
 </interface></node>""".replace("@IFACE@", IFACE)
 
 V = GLib.Variant
@@ -54,7 +72,9 @@ props = {
     "StaticPort": V("u", 0), "Visible": V("b", True), "HistoryEnabled": V("b", True),
     "HistoryKeepDays": V("u", 30), "TrustedDevicesEnabled": V("b", True), "TrayIcon": V("b", True),
     "DolphinIntegration": V("b", True), "HideWhenDnd": V("b", True), "Suspended": V("b", False),
-    "HideHistoryFilters": V("b", False),
+    "HideHistoryFilters": V("b", False), "WindowOpen": V("b", False), "TransferBusy": V("b", False),
+    "VisibleUntil": V("x", 0), "WifiUpgrade": V("b", True), "WifiAutoJoin": V("b", False),
+    "InsecureHotspotAllowed": V("b", False), "TrustedDevicesReset": V("b", False),
 }
 
 DEVICES = [
@@ -77,6 +97,17 @@ HISTORY = [
     dict(uid=(now - 200000) * 1000, time=now - 200000, kind="inbound", state="Finished", device="Tux Phone",
          payload_kind="Text", files=[], text="Meet me at the station at 6, platform 2", total_bytes=0, trusted=True),
 ]
+# Every requirement met: the Settings page shows the upgrade as available both ways.
+REQUIREMENT_IDS = ["bluez.service", "bluez.adapter", "bluez.powered", "bluez.le", "bluez.advertising",
+                   "bluez.scanning", "bluez.transport", "nm.service", "nm.networking", "nm.wifi_enabled",
+                   "nm.hardware_enabled", "nm.device", "nm.managed", "nm.firmware", "nm.driver",
+                   "nm.permissions", "wifi.client", "wifi.ap", "wifi.dhcp", "firewall.integration"]
+REQUIREMENTS = dict(
+    schema_version=1, generated_at_ms=now * 1000, ttl_ms=30000, packaging="native", core_version="demo",
+    capabilities=dict(sending="available", receiving="available", join_network="available"),
+    requirements=[dict(id=i, status="ready", category="critical", reason_code="ok", details="", device=None,
+                       verification="demo", affects=["sending", "receiving"]) for i in REQUIREMENT_IDS],
+)
 PEERS = [dict(name="Tux Phone", fingerprint="ab12" * 16, public_key="00" * 32, paired_at=now - 86400 * 20)]
 ALLOWED = [dict(name="Tux Chromebook in the living room with a very long name", mac="aa:bb:cc:dd:ee:ff")]
 
@@ -127,7 +158,9 @@ def on_call(c, sender, path, iface, method, params, inv):
     if method == "StartDiscovery":
         GLib.timeout_add(300, lambda: send_devices() or False)
     out = {"HistorySize": V("(t)", (4_200_000,)), "TrustedDevices": V("(s)", (json.dumps(PEERS),)),
-           "AllowedDevices": V("(s)", (json.dumps(ALLOWED),))}.get(method)
+           "AllowedDevices": V("(s)", (json.dumps(ALLOWED),)),
+           "WifiRequirements": V("(s)", (json.dumps(REQUIREMENTS),)),
+           "FirewallManaged": V("(b)", (True,))}.get(method)
     inv.return_value(out)
 
 

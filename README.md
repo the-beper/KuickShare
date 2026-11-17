@@ -17,7 +17,7 @@
 </p>
 
 > [!IMPORTANT]
-> KuickShare began as a project for my own personal use, and is shared as is. Generative AI (Claude Code) assisted me in writing the code (almost all of the C++ and QML and a large part of the Rust core) and drafted the documentation and diagrams.
+> KuickShare began as a project for my own personal use, and is shared as is. Generative AI was use to assist me in writing the code and drafting the documentation.
 
 <table>
   <tr>

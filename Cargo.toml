@@ -5,7 +5,6 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 description = "Quick Share client for KDE Plasma: the background service"
 repository = "https://github.com/the-beper/KuickShare"
-homepage = "https://github.com/the-beper/KuickShare"
 readme = "README.md"
 publish = false
 

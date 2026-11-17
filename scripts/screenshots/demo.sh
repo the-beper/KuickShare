@@ -47,6 +47,8 @@ if gdbus call --session -d org.freedesktop.DBus -o /org/freedesktop/DBus \
     shell=$!
     trap 'kill $shell' TERM INT
     wait $shell
+    # A signal ends that wait at once; the shell still tells the core its window closed.
+    wait $shell
 else
     echo "the fake core did not come up" >&2
 fi
