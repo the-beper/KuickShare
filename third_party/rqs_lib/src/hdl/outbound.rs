@@ -1145,6 +1145,9 @@ impl OutboundRequest {
         // Let the peer read everything before the socket goes away.
         upgrade::close_gracefully(&mut self.socket).await;
         self.socket = MigratableStream::Tcp(new);
+        // A frame half read on the prior channel does not continue on the new one.
+        self.length_filled = 0;
+        self.frame_filled = 0;
         self.plain_frames = self.upgrade.disable_encryption();
         if self.plain_frames {
             info!("upgrade: now on the hotspot, plain frames");
@@ -3360,6 +3363,24 @@ mod tests {
 
     /// A safe-to-disconnect request (the peer read our level 6) gets the ack with both
     /// flags, as upstream's EndpointManager answers it.
+    /// A frame half read on the prior channel must not be completed with the new channel's
+    /// bytes: the switch starts the read state over.
+    #[tokio::test]
+    async fn the_switch_to_the_new_channel_starts_the_read_state_over() {
+        let tmp = TempDir::new("switch");
+        let (mut req, _peer, _bus) = plain_files_request(&tmp.0, &[]);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let new = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        req.length_filled = 2;
+        req.frame_filled = 3;
+        req.upgrade.begin_draining(new);
+        req.finish_upgrade().await;
+        assert!(matches!(req.socket, MigratableStream::Tcp(_)));
+        assert_eq!((req.length_filled, req.frame_filled), (0, 0));
+    }
+
     #[tokio::test]
     async fn a_safe_to_disconnect_request_is_acknowledged() {
         let tmp = TempDir::new("safe-disc");

@@ -783,6 +783,11 @@ impl InboundRequest {
                     payload_header::PayloadType::Bytes => {
                         trace!("Processing PayloadType::Bytes");
                         let payload_id = header.id();
+                        // The id of an offered file is for its FILE payload, not for bytes
+                        // that would be decoded as a sharing frame.
+                        if self.state.inbound.position(payload_id).is_some() {
+                            return Err(anyhow!("a bytes payload with the id of an offered file"));
+                        }
                         let is_text = self
                             .state
                             .text_payload
@@ -928,7 +933,7 @@ impl InboundRequest {
                         })?;
 
                         let body = chunk.body();
-                        partial.write_at(chunk.offset(), body)?;
+                        partial.write_at(header.total_size(), chunk.offset(), body)?;
 
                         if !body.is_empty() {
                             let chunk_size = body.len() as u64;
@@ -1113,6 +1118,7 @@ impl InboundRequest {
             // Where the files would go and whether they fit, without creating anything yet.
             let dir = self.dest_dir();
             let names: Vec<String> = offered.iter().map(|o| o.name.clone()).collect();
+            let need = total_bytes.saturating_add(self.limits.space_reserve);
             // Only looks: the folder is not created before the user accepted.
             let task = {
                 let dir = dir.clone();
@@ -1123,11 +1129,22 @@ impl InboundRequest {
                         Err(e) => return Err(e),
                     };
                     // A file system that does not report its size is not a reason to refuse.
-                    let free = match &dest {
-                        Some(d) => d.free_bytes(),
-                        None => DestDir::free_bytes_near(&dir),
+                    let free_now = |dest: &Option<std::sync::Arc<DestDir>>| {
+                        match dest {
+                            Some(d) => d.free_bytes(),
+                            None => DestDir::free_bytes_near(&dir),
+                        }
+                        .unwrap_or(u64::MAX)
+                    };
+                    let mut free = free_now(&dest);
+                    // A crashed session's staging folder must not make every offer too big:
+                    // the only thing an offer removes, and only when space is short.
+                    if free < need
+                        && let Some(d) = &dest
+                    {
+                        d.sweep_stale();
+                        free = free_now(&dest);
                     }
-                    .unwrap_or(u64::MAX);
                     let planned = match &dest {
                         Some(d) => d.predict(&names),
                         None => names,
@@ -1150,7 +1167,6 @@ impl InboundRequest {
             // The core starts its own consent timer when it sees the offer, after this probe:
             // count the library's ceiling from here so it stays well above the core's.
             self.consent_since = Instant::now();
-            let need = total_bytes.saturating_add(self.limits.space_reserve);
             if free < need {
                 return self.refuse(Refusal::NotEnoughSpace { need, free }).await;
             }
@@ -1370,14 +1386,25 @@ impl InboundRequest {
             .get_mut(payload_id)
             .and_then(|f| f.partial.take())
             .ok_or_else(|| anyhow!("File payload ID ({}) is not receiving", payload_id))?;
-        // Blocking: fsync. If it fails the file is removed when `partial` is dropped there.
-        tokio::task::spawn_blocking(move || partial.finish())
+        // Blocking: fsync and the rename into the download folder. If it fails the staged file
+        // is removed when `partial` is dropped there.
+        let published = tokio::task::spawn_blocking(move || partial.finish())
             .await
             .context("finishing a received file")?
             .context("the received file is not complete")?;
         debug!("A received file is complete");
         if let Some(file) = self.state.inbound.get_mut(payload_id) {
             file.finished = true;
+        }
+        // The real path, before the ack and before `Finished` carry it to the app.
+        if let Some(slot) = self
+            .state
+            .inbound
+            .position(payload_id)
+            .zip(self.state.transfer_metadata.as_mut())
+            .and_then(|(i, tmd)| tmd.saved_paths.get_mut(i))
+        {
+            *slot = published.to_string_lossy().into_owned();
         }
 
         if !self.state.inbound.all_finished() {
@@ -1526,8 +1553,8 @@ impl InboundRequest {
         }
     }
 
-    /// The user accepted: the files are created now, never before. Only taken once, and only
-    /// while the user is being asked.
+    /// The user accepted: the staging folder and the files in it are created now, never before.
+    /// Only taken once, and only while the user is being asked.
     async fn accept_transfer(&mut self) -> Result<(), anyhow::Error> {
         if self.state.state != TransferState::WaitingForUserConsent {
             debug!("Ignoring an accept in state {:?}", self.state.state);
@@ -1543,8 +1570,9 @@ impl InboundRequest {
                 .inbound
                 .total_bytes()
                 .saturating_add(self.limits.space_reserve);
-            // Blocking calls. The names are reserved here, one by one, each with an exclusive
-            // create; if one fails, the ones before it are removed again as `created` drops.
+            // Blocking calls. The files are reserved here in the hidden staging folder, one by
+            // one, each with an exclusive create; if one fails, the ones before it and the
+            // folder are removed again as `created` drops.
             let created = tokio::task::spawn_blocking(move || {
                 // The folder looked at when the offer came, if it is still the one set and
                 // still where it was. A changed setting opens the new folder (created if need be).
@@ -1555,32 +1583,53 @@ impl InboundRequest {
                         }
                         d
                     }
-                    _ => DestDir::open(&dir).map_err(|_| Refusal::Destination)?,
+                    _ => DestDir::open(&dir).map_err(|e| {
+                        warn!("The download folder cannot be opened: {e}");
+                        Refusal::Destination
+                    })?,
                 };
                 if let Ok(free) = dest.free_bytes()
                     && free < need
                 {
                     return Err(Refusal::NotEnoughSpace { need, free });
                 }
+                // What the files are called when they are complete, if no name is taken
+                // meanwhile; a completed file reports its real path.
+                let names: Vec<String> = plan.iter().map(|(name, _)| name.clone()).collect();
+                let planned = dest.predict(&names);
+                let saved_paths: Vec<String> = planned
+                    .iter()
+                    .map(|name| dest.path().join(name).to_string_lossy().into_owned())
+                    .collect();
+                let staging = dest.staging().map_err(|e| {
+                    warn!("The staging folder cannot be made: {e}");
+                    Refusal::Destination
+                })?;
                 let mut created = Vec::with_capacity(plan.len());
-                for (name, size) in &plan {
-                    created.push(dest.create(name, *size).map_err(|_| Refusal::Destination)?);
+                for ((name, size), planned) in plan.iter().zip(planned) {
+                    let mut partial = staging.create(name, *size).map_err(|e| {
+                        warn!("A received file cannot be reserved: {e}");
+                        Refusal::Destination
+                    })?;
+                    partial.plan(planned);
+                    created.push(partial);
                 }
-                Ok(created)
+                Ok((created, saved_paths))
             })
             .await
             .context("creating the files")?;
-            let created = match created {
+            let (created, saved_paths) = match created {
                 Ok(created) => created,
                 Err(refusal) => return self.refuse(refusal).await,
             };
-            debug!("Created {} file(s)", created.len());
+            // The service may have stopped while the folder was prepared: no Accept, and no
+            // upgrade, for a session that is ending.
+            if self.stop.is_cancelled() {
+                return Err(self.on_stop().await);
+            }
+            debug!("Reserved {} file(s)", created.len());
 
             // The names may differ from the preview (a name taken since the offer).
-            let saved_paths: Vec<String> = created
-                .iter()
-                .map(|p| p.path().to_string_lossy().into_owned())
-                .collect();
             for (file, partial) in self.state.inbound.iter_mut().zip(created) {
                 file.partial = Some(partial);
             }
@@ -2324,16 +2373,20 @@ mod tests {
         assert!(!shown.contains("hunter"));
     }
 
-    /// A file that is already there is never opened for writing: the new file gets a number.
+    /// A file that is already there is never opened for writing nor replaced: the new file
+    /// gets a number.
     #[test]
-    fn create_does_not_truncate_existing_file() {
+    fn publish_does_not_truncate_existing_file() {
         let tmp = TempDir::new("keep");
         let f = tmp.0.join("x.txt");
         std::fs::write(&f, b"keep").unwrap();
         let dest = DestDir::open(&tmp.0).unwrap();
-        let partial = dest.create("x.txt", 4).unwrap();
-        assert_eq!(partial.path(), tmp.0.join("x (1).txt"));
+        let staging = dest.staging().unwrap();
+        let mut partial = staging.create("x.txt", 4).unwrap();
+        partial.write_at(4, 0, b"new!").unwrap();
+        assert_eq!(partial.finish().unwrap(), tmp.0.join("x (1).txt"));
         assert_eq!(std::fs::read(&f).unwrap(), b"keep");
+        assert_eq!(std::fs::read(tmp.0.join("x (1).txt")).unwrap(), b"new!");
     }
 
     /// While the hotspot is being brought up in the background, the old channel is still read.
@@ -2769,6 +2822,27 @@ mod tests {
             self.feed(&frame).await
         }
 
+        /// The peer sends the empty last chunk of a file and closes once the session has shut
+        /// down its side, so the end of the session does not wait for it.
+        async fn last_chunk_and_close(
+            &mut self,
+            id: i64,
+            total: i64,
+            offset: i64,
+        ) -> Result<(), anyhow::Error> {
+            let data = payload_frame(payload_header::PayloadType::File, id, total, offset, 1, b"")
+                .encode_to_vec();
+            let mut peer = self.peer.take().expect("peer is closed");
+            peer.write_all(&data).await.unwrap();
+            let closer = async move {
+                let mut sink = Vec::new();
+                let _ = peer.read_to_end(&mut sink).await;
+            };
+            let (result, ()) =
+                tokio::join!(self.req._handle((data.len() as u32).to_be_bytes()), closer);
+            result
+        }
+
         /// What the core would send on the bus; handles every message queued for the session.
         async fn deliver(&mut self, action: TransferAction) -> Result<(), anyhow::Error> {
             let _ = self.bus.send(ChannelMessage {
@@ -2908,6 +2982,22 @@ mod tests {
         names
     }
 
+    /// The hidden folders receiving sessions keep their files in, inside `dir`.
+    fn staging_dirs(dir: &Path) -> Vec<PathBuf> {
+        dir_names(dir)
+            .into_iter()
+            .filter(|name| name.starts_with(".kuickshare-incoming-"))
+            .map(|name| dir.join(name))
+            .collect()
+    }
+
+    /// The one hidden folder of the session receiving into `dir`.
+    fn staging_dir(dir: &Path) -> PathBuf {
+        let mut all = staging_dirs(dir);
+        assert_eq!(all.len(), 1, "{all:?}");
+        all.remove(0)
+    }
+
     /// A stopping session closes (frames, FIN, the peer's close) within the wind-down that
     /// `RQS::stop` waits for.
     #[test]
@@ -2991,7 +3081,7 @@ mod tests {
             .unwrap();
         s.deliver(TransferAction::ConsentAccept).await.unwrap();
         s.file_chunk(1, 10, 0, 0, b"12345").await.unwrap();
-        assert!(tmp.0.join("a.txt").exists(), "precondition");
+        assert!(staging_dir(&tmp.0).join("a.txt").exists(), "precondition");
         let (err, events) = stop_session(&mut s).await;
         assert!(is_end_of_session(&Err(err)));
         assert_eq!(events.last().unwrap().state, Some(TransferState::Cancelled));
@@ -3025,13 +3115,17 @@ mod tests {
             .unwrap();
         s.deliver(TransferAction::ConsentAccept).await.unwrap();
         s.file_chunk(1, 10, 0, 0, b"12345").await.unwrap();
-        let path = tmp.0.join("a.txt");
+        let path = staging_dir(&tmp.0).join("a.txt");
         assert_eq!(std::fs::read(&path).unwrap(), b"12345", "precondition");
 
         assert!(s.cancel().await.is_err(), "a cancel ends the session");
         assert!(
             !path.exists(),
             "the partial file is still there after a cancel"
+        );
+        assert!(
+            dir_names(&tmp.0).is_empty(),
+            "the staging folder is still there after a cancel"
         );
     }
 
@@ -3045,13 +3139,17 @@ mod tests {
             .unwrap();
         s.deliver(TransferAction::ConsentAccept).await.unwrap();
         s.file_chunk(1, 10, 0, 0, b"12345").await.unwrap();
-        let path = tmp.0.join("a.txt");
+        let path = staging_dir(&tmp.0).join("a.txt");
         assert!(path.exists(), "precondition");
 
         let _ = s.disconnect().await;
         assert!(
             !path.exists(),
             "the partial file is still there after an EOF"
+        );
+        assert!(
+            dir_names(&tmp.0).is_empty(),
+            "the staging folder is still there after an EOF"
         );
     }
 
@@ -3085,8 +3183,57 @@ mod tests {
         let refused = s.file_chunk(1, 4, 2, 0, b"cdefgh").await;
         assert!(refused.is_err(), "a chunk past the declared size was taken");
         assert!(
-            !tmp.0.join("a.txt").exists(),
+            dir_names(&tmp.0).is_empty(),
             "the partial file is still there after the refusal"
+        );
+    }
+
+    /// A chunk whose header declares another total than the offer did is refused like any
+    /// bad chunk: the session ends and what was received goes.
+    #[tokio::test]
+    async fn file_chunk_with_a_changed_total_size_is_refused_and_removed() {
+        let tmp = TempDir::new("total-changed");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        s.file_chunk(1, 4, 0, 0, b"ab").await.unwrap();
+        let err = s
+            .file_chunk(1, 8, 2, 0, b"cd")
+            .await
+            .expect_err("a chunk with another total was taken");
+        assert!(
+            matches!(
+                err.downcast_ref::<safety::ChunkError>(),
+                Some(safety::ChunkError::SizeChanged {
+                    got: 8,
+                    declared: 4
+                })
+            ),
+            "{err:#}"
+        );
+        assert!(
+            dir_names(&tmp.0).is_empty(),
+            "the partial file is still there after the refusal"
+        );
+    }
+
+    /// The id of an offered file is not for a `Bytes` payload, which would be decoded as a
+    /// sharing frame.
+    #[tokio::test]
+    async fn bytes_payload_with_an_offered_file_id_is_refused() {
+        let tmp = TempDir::new("bytes-file-id");
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        let frame = payload_frame(payload_header::PayloadType::Bytes, 1, 2, 0, 0, b"ab");
+        assert!(s.feed(&frame).await.is_err());
+        assert!(
+            s.req.state.payload_buffers.is_empty(),
+            "the bytes were buffered"
         );
     }
 
@@ -3136,7 +3283,12 @@ mod tests {
         s.feed(&first).await.unwrap();
         let second = payload_frame(payload_header::PayloadType::Bytes, 5, 10, 8, 0, &[2; 8]);
         let refused = s.feed(&second).await;
-        let held = s.req.state.payload_buffers.get(&5).map_or(0, Vec::len);
+        let held = s
+            .req
+            .state
+            .payload_buffers
+            .get(&5)
+            .map_or(0, |open| open.buffered());
         assert!(refused.is_err(), "16 bytes were taken for a payload of 10");
         assert!(
             held <= 10,
@@ -3161,12 +3313,13 @@ mod tests {
         let _ = s.deliver(TransferAction::ConsentAccept).await;
         let _ = s.file_chunk(1, 4, 2, 0, b"AA").await;
 
+        let staging = staging_dir(&tmp.0);
         assert_eq!(
-            dir_names(&tmp.0),
+            dir_names(&staging),
             ["a.txt", "b.txt"],
             "a second accept renamed files"
         );
-        assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"AAAA");
+        assert_eq!(std::fs::read(staging.join("a.txt")).unwrap(), b"AAAA");
     }
 
     /// The PAYLOAD_ACK the session sends for one completed FILE payload (crQuickShare
@@ -3255,6 +3408,10 @@ mod tests {
         )
         .await
         .unwrap();
+        assert!(
+            !tmp.0.join("a.txt").exists(),
+            "an incomplete file is published"
+        );
         write_and_handle(
             &mut peer,
             &mut s.req,
@@ -3266,6 +3423,9 @@ mod tests {
             .await
             .expect("the ack of a.txt");
         assert_payload_ack(&ack, 1);
+        // The ack is sent after the file was published, and b.txt is still staged.
+        assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"AAAA");
+        assert!(!tmp.0.join("b.txt").exists());
 
         // b.txt completes the batch: its ack is followed by the polite close. The peer goes
         // away once it has read both, so the session's wind-down does not wait for it.
@@ -3429,6 +3589,160 @@ mod tests {
             .saved_paths;
         let expected = tmp.0.join("a (1).txt").to_string_lossy().into_owned();
         assert_eq!(saved, [expected]);
+    }
+
+    /// A file has its final name only when it is complete; until then it is in the hidden
+    /// folder, and the path the app is told about is the real one from then on.
+    #[tokio::test]
+    async fn a_file_appears_only_when_complete() {
+        let tmp = TempDir::new("appears");
+        let mut s = Session::new(&tmp.0);
+        s.offer(
+            vec![file_meta("a.txt", 1, 4), file_meta("b.txt", 2, 4)],
+            vec![],
+        )
+        .await
+        .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        let staging = staging_dir(&tmp.0);
+        assert_eq!(dir_names(&staging), ["a.txt", "b.txt"]);
+        assert_eq!(dir_names(&tmp.0).len(), 1, "a file has its name early");
+
+        s.file_chunk(1, 4, 0, 0, b"ab").await.unwrap();
+        s.file_chunk(1, 4, 2, 0, b"cd").await.unwrap();
+        assert!(!tmp.0.join("a.txt").exists(), "an unfinished file is there");
+        s.file_chunk(1, 4, 4, 1, b"").await.unwrap();
+        assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"abcd");
+        assert_eq!(dir_names(&staging), ["b.txt"]);
+        assert!(!tmp.0.join("b.txt").exists());
+
+        let saved = s
+            .req
+            .state
+            .transfer_metadata
+            .as_ref()
+            .expect("no metadata")
+            .saved_paths
+            .clone();
+        let expected = ["a.txt", "b.txt"].map(|n| tmp.0.join(n).to_string_lossy().into_owned());
+        assert_eq!(saved, expected);
+    }
+
+    /// A name taken while the transfer runs is not replaced: the file is numbered when it is
+    /// published, and `Finished` carries the paths really written.
+    #[tokio::test]
+    async fn a_name_taken_during_the_transfer_gets_a_number() {
+        let tmp = TempDir::new("taken-meanwhile");
+        let mut s = Session::new(&tmp.0);
+        s.offer(
+            vec![file_meta("a.txt", 1, 2), file_meta("b.txt", 2, 2)],
+            vec![],
+        )
+        .await
+        .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        std::fs::write(tmp.0.join("a.txt"), b"other").unwrap();
+
+        s.file_chunk(1, 2, 0, 0, b"hi").await.unwrap();
+        s.file_chunk(1, 2, 2, 1, b"").await.unwrap();
+        s.file_chunk(2, 2, 0, 0, b"yo").await.unwrap();
+        let ended = s.last_chunk_and_close(2, 2, 2).await;
+        assert!(is_end_of_session(&ended), "{ended:?}");
+
+        assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"other");
+        assert_eq!(std::fs::read(tmp.0.join("a (1).txt")).unwrap(), b"hi");
+        assert_eq!(std::fs::read(tmp.0.join("b.txt")).unwrap(), b"yo");
+        assert_eq!(dir_names(&tmp.0), ["a (1).txt", "a.txt", "b.txt"]);
+        let saved = s
+            .events()
+            .into_iter()
+            .rev()
+            .find(|e| e.state == Some(TransferState::Finished))
+            .and_then(|e| e.metadata)
+            .expect("no Finished event with metadata")
+            .saved_paths;
+        let expected = ["a (1).txt", "b.txt"].map(|n| tmp.0.join(n).to_string_lossy().into_owned());
+        assert_eq!(saved, expected);
+    }
+
+    /// Two sessions into one folder, offered one name: each has its own hidden folder, and
+    /// the files are numbered as they complete.
+    #[tokio::test]
+    async fn two_sessions_with_one_name_do_not_collide() {
+        let tmp = TempDir::new("two-sessions");
+        let mut first = Session::new(&tmp.0);
+        let mut second = Session::new(&tmp.0);
+        for s in [&mut first, &mut second] {
+            s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+                .await
+                .unwrap();
+        }
+        for s in [&mut first, &mut second] {
+            s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        }
+        assert_eq!(staging_dirs(&tmp.0).len(), 2, "a session swept the other");
+
+        first.file_chunk(1, 4, 0, 0, b"1111").await.unwrap();
+        second.file_chunk(1, 4, 0, 0, b"2222").await.unwrap();
+        let ended = second.last_chunk_and_close(1, 4, 4).await;
+        assert!(is_end_of_session(&ended), "{ended:?}");
+        let ended = first.last_chunk_and_close(1, 4, 4).await;
+        assert!(is_end_of_session(&ended), "{ended:?}");
+
+        assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"2222");
+        assert_eq!(std::fs::read(tmp.0.join("a (1).txt")).unwrap(), b"1111");
+        assert_eq!(dir_names(&tmp.0), ["a (1).txt", "a.txt"]);
+    }
+
+    /// A staging folder a dead session left (nothing holds its lock) is removed when the next
+    /// transfer is accepted into the folder, not at the offer.
+    #[tokio::test]
+    async fn stale_staging_is_swept_at_accept() {
+        let tmp = TempDir::new("stale");
+        let outside = TempDir::new("stale-outside");
+        let target = outside.0.join("target.txt");
+        std::fs::write(&target, b"keep").unwrap();
+        let stale = tmp.0.join(".kuickshare-incoming-0123456789abcdef");
+        std::fs::create_dir(&stale).unwrap();
+        std::fs::write(stale.join("half.bin"), b"half").unwrap();
+        std::os::unix::fs::symlink(&target, stale.join("link")).unwrap();
+        crate::safety::backdate(&stale.join("half.bin"));
+        crate::safety::backdate(&stale.join("link"));
+        crate::safety::backdate(&stale);
+
+        let mut s = Session::new(&tmp.0);
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        assert!(stale.exists(), "the offer swept");
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        assert!(!stale.exists(), "the stale folder is still there");
+        assert_eq!(staging_dirs(&tmp.0).len(), 1);
+        assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+    }
+
+    /// An offer that does not fit sweeps a dead session's staging folder before it is
+    /// refused, so a crash's leftovers cannot make every later offer too big.
+    #[tokio::test]
+    async fn an_offer_short_of_space_sweeps_stale_staging_first() {
+        let tmp = TempDir::new("stale-space");
+        let stale = tmp.0.join(".kuickshare-incoming-0123456789abcdef");
+        std::fs::create_dir(&stale).unwrap();
+        std::fs::write(stale.join("half.bin"), b"half").unwrap();
+        crate::safety::backdate(&stale.join("half.bin"));
+        crate::safety::backdate(&stale);
+
+        let mut s = Session::new(&tmp.0);
+        // No disk is this big: the offer is short of space whatever the sweep frees.
+        let files = vec![file_meta("big.bin", 1, i64::MAX / 2)];
+        let (result, status) = s.offer_and_read_reply(files).await;
+        assert!(is_end_of_session(&result), "{result:?}");
+        assert_eq!(status, Status::NotEnoughSpace);
+        assert!(matches!(
+            rejected_with(&s.events()),
+            Some(Refusal::NotEnoughSpace { .. })
+        ));
+        assert!(!stale.exists(), "the offer short of space did not sweep");
     }
 
     /// D9: two dangling symlinks used to make `accept_transfer` spin forever. It runs in a
@@ -3736,7 +4050,8 @@ mod tests {
             .unwrap();
         assert!(!target.exists(), "the offer created the folder");
         s.deliver(TransferAction::ConsentAccept).await.unwrap();
-        assert!(target.join("a.txt").exists());
+        assert!(staging_dir(&target).join("a.txt").exists());
+        assert!(!target.join("a.txt").exists());
     }
 
     /// A folder swapped between the offer and the accept is refused, not followed.
@@ -3907,12 +4222,16 @@ mod tests {
             },
         });
         let second = second.to_vec();
-        let file = tmp.0.join("a.txt");
+        let dir = tmp.0.clone();
         let rest = async move {
             // The rest of the frame comes only after the accept was served.
-            while !file.exists() {
-                tokio::task::yield_now().await;
-            }
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !staging_dirs(&dir).iter().any(|d| d.join("a.txt").exists()) {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("the accept never reserved the file");
             peer.write_all(&second).await.unwrap();
             peer
         };
@@ -3954,8 +4273,9 @@ mod tests {
         assert_eq!(open(&mut s), 1);
         s.file_chunk(2, 4, 2, 0, b"CD").await.unwrap();
         assert_eq!(open(&mut s), 1);
-        assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"abcd");
-        assert_eq!(std::fs::read(tmp.0.join("b.txt")).unwrap(), b"ABCD");
+        let staging = staging_dir(&tmp.0);
+        assert_eq!(std::fs::read(staging.join("a.txt")).unwrap(), b"abcd");
+        assert_eq!(std::fs::read(staging.join("b.txt")).unwrap(), b"ABCD");
     }
 
     /// A user who never answers is declined by the library when the core misses the event.

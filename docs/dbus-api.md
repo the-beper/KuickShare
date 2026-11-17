@@ -186,7 +186,7 @@ A restart of sharing (name, port, reset) forgets the discovered devices without 
 | `ack_bytes` | `t` | Bytes transferred so far |
 | `payload_kind` | `s` | `Files`, `Text`, `Url` or `WiFi`; empty if not known yet |
 | `files` | `s` | File names (inbound) or paths, one per line; empty for text |
-| `saved_paths` | `s` | Inbound files: where each one was saved (after any `name (1).ext` renaming), one path per line; empty otherwise |
+| `saved_paths` | `s` | Inbound files, one path per line; empty otherwise. While receiving, the planned final paths (a name taken meanwhile still gets a number); a file that is complete has its real path, so `Finished` carries the real ones. The data of a file in progress is in a hidden folder next to them |
 | `text` | `s` | Text or link; for `WiFi`, only the network name, never the password |
 | `trusted` | `s` | Set when the transfer was accepted without asking: the paired computer's name, or the device name for an always-accepted device. Empty otherwise |
 | `always_accepted` | `s` | Device name when the sender is on the always-accepted list; empty for a paired computer |

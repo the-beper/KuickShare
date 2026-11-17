@@ -5,9 +5,14 @@
 //! unreachable — the send then fails in a way that looks like "the device is not
 //! reachable" and nothing in the logs says why. After crQuickShare's
 //! `ConnectTcpChannel` (BSD-3-Clause, The Chromium Authors): pick the interface
-//! whose subnet contains the peer, pin the egress device with `IP_UNICAST_IF` and
-//! bind the source address on it. Point-to-point interfaces (WireGuard, OpenVPN
-//! `tun`, Tailscale) never win the pick, and a physical interface (a backing
+//! whose subnet contains the peer, pin the socket to that device with
+//! `SO_BINDTODEVICE` and bind the source address on it. crQuickShare pins with
+//! `IP_UNICAST_IF`, which Linux TCP ignores (read in the kernel source:
+//! `tcp_v4_connect` routes with `sk_bound_dev_if`, and only UDP, raw and ping sockets
+//! read `uc_index`), so that pin would do nothing here. `SO_BINDTODEVICE` needs no
+//! privilege on a socket not yet bound to a device since Linux 5.7; where it is
+//! refused, the connect falls back to the default route. Point-to-point interfaces (WireGuard,
+//! OpenVPN `tun`, Tailscale) never win the pick, and a physical interface (a backing
 //! device under `/sys/class/net`) wins over a bridge, bond or VLAN on the same
 //! subnet. Unlike crQuickShare, a peer that no interface holds (a routed subnet)
 //! takes the default route instead of being refused: that is the only route to
@@ -32,8 +37,9 @@ use tokio::net::{TcpSocket, TcpStream};
 struct Route {
     /// The interface's own address: the connect's source.
     local_ip: Ipv4Addr,
-    /// Egress device for `IP_UNICAST_IF`.
+    /// Tells a second address of one interface from another interface.
     ifindex: u32,
+    /// Device for `SO_BINDTODEVICE`.
     name: String,
 }
 
@@ -52,7 +58,7 @@ pub async fn lan_connect(peer: SocketAddr) -> io::Result<TcpStream> {
     };
     debug!("LAN connect over interface {}", route.name);
     let socket = TcpSocket::new_v4()?;
-    let pinned = pin_egress_interface(socket.as_fd(), route.ifindex)
+    let pinned = bind_to_device(socket.as_fd(), device_name(&route.name))
         .and_then(|()| socket.bind(SocketAddr::new(IpAddr::V4(route.local_ip), 0)));
     if let Err(e) = pinned {
         // A sandbox that refuses the option must not cost the LAN: the plain connect
@@ -143,20 +149,26 @@ fn physical_interface(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// `IP_UNICAST_IF`: egress device of the unicast connects, regardless of what the
-/// routing table would pick. The index goes in network byte order (ip(7)), as
-/// crQuickShare's `htonl` does.
-fn pin_egress_interface(fd: BorrowedFd<'_>, ifindex: u32) -> io::Result<()> {
-    let value = ifindex.to_be();
+/// `SO_BINDTODEVICE`: the socket's traffic uses this device regardless of what the
+/// routing table would pick. Linux allows it without `CAP_NET_RAW` on a socket that
+/// is not bound to a device yet.
+/// The device of an interface name: an IPv4 alias is listed as `eth0:1`, and
+/// `SO_BINDTODEVICE` takes the device, not the label.
+fn device_name(name: &str) -> &str {
+    name.split_once(':').map_or(name, |(device, _)| device)
+}
+
+fn bind_to_device(fd: BorrowedFd<'_>, name: &str) -> io::Result<()> {
     // SAFETY: `fd` is a socket borrowed for the duration of the call, and the option
-    // value points to a live local `u32` whose size is the length passed.
+    // value points to `name`'s bytes, which outlive the call, with their length
+    // passed; the kernel only reads them.
     let outcome = unsafe {
         libc::setsockopt(
             fd.as_raw_fd(),
-            libc::IPPROTO_IP,
-            libc::IP_UNICAST_IF,
-            std::ptr::addr_of!(value).cast::<libc::c_void>(),
-            std::mem::size_of::<u32>() as libc::socklen_t,
+            libc::SOL_SOCKET,
+            libc::SO_BINDTODEVICE,
+            name.as_ptr().cast::<libc::c_void>(),
+            name.len() as libc::socklen_t,
         )
     };
     if outcome == 0 {
@@ -290,5 +302,43 @@ mod tests {
         lan_connect(addr)
             .await
             .expect("a loopback peer needs no interface");
+    }
+
+    /// The option is set (read back from the socket) and the connect goes through it. The
+    /// check runs as a normal user, so it also shows the option needs no privilege there.
+    #[tokio::test]
+    async fn a_socket_is_bound_to_its_device() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let socket = TcpSocket::new_v4().unwrap();
+        bind_to_device(socket.as_fd(), "lo").expect("SO_BINDTODEVICE refused");
+        assert_eq!(bound_device(socket.as_fd()), "lo");
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        socket.connect(addr).await.expect("connect over lo");
+    }
+
+    #[test]
+    fn an_alias_label_is_not_a_device() {
+        assert_eq!(device_name("eth0:1"), "eth0");
+        assert_eq!(device_name("wlp4s0"), "wlp4s0");
+    }
+
+    fn bound_device(fd: BorrowedFd<'_>) -> String {
+        let mut name = [0u8; libc::IFNAMSIZ];
+        let mut len = name.len() as libc::socklen_t;
+        // SAFETY: `fd` is a live socket; the buffer and its length are local and the kernel
+        // writes at most `len` bytes into it.
+        let outcome = unsafe {
+            libc::getsockopt(
+                fd.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_BINDTODEVICE,
+                name.as_mut_ptr().cast::<libc::c_void>(),
+                &mut len,
+            )
+        };
+        assert_eq!(outcome, 0, "{}", io::Error::last_os_error());
+        let end = name.iter().position(|&b| b == 0).unwrap_or(len as usize);
+        String::from_utf8_lossy(&name[..end]).into_owned()
     }
 }
