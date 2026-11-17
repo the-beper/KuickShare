@@ -19,7 +19,8 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use super::outbound::{
-    CANCEL_TIMEOUT, is_safe_disconnect_request, safe_disconnect_ack_frame, sharing_cancel_frame,
+    CANCEL_TIMEOUT, HandshakeStep, disconnection_frame, handshake_step, is_safe_disconnect_request,
+    safe_disconnect_ack_frame, sharing_cancel_frame,
 };
 use super::{InnerState, TransferState};
 use crate::channel::{self, ChannelMessage, MessageClient, TransferAction, TransferKind};
@@ -85,6 +86,10 @@ pub struct InboundRequest {
     /// A write failed or timed out: a half frame may be on the wire, so nothing more is
     /// written and the session ends.
     poisoned: bool,
+    /// A frame body is being read: the stream is not at a frame boundary.
+    in_body: bool,
+    /// Our Disconnection asked for the safe-to-disconnect handshake: its ack is awaited.
+    disconnect_requested: bool,
     /// Ids of the last `Bytes` payloads completed, to ignore a repeated empty last chunk.
     completed: VecDeque<i64>,
     /// Cancelled when the service stops: the session then ends like a user cancel (see
@@ -130,6 +135,8 @@ impl InboundRequest {
             last_rx: Instant::now(),
             consent_since: Instant::now(),
             poisoned: false,
+            in_body: false,
+            disconnect_requested: false,
             completed: VecDeque::new(),
             stop: CancellationToken::new(),
             #[cfg(test)]
@@ -338,7 +345,10 @@ impl InboundRequest {
             return Err(anyhow!("value"));
         }
 
-        let frame_data = self.read_body(msg_length).await?;
+        self.in_body = true;
+        let frame_data = self.read_body(msg_length).await;
+        self.in_body = false;
+        let frame_data = frame_data?;
 
         let current_state = &self.state;
         // Now determine what will be the request type based on current state
@@ -713,6 +723,15 @@ impl InboundRequest {
         &mut self,
         smsg: &SecureMessage,
     ) -> Result<(), anyhow::Error> {
+        let offline = self.decrypt_secure_message(smsg).await?;
+        self.process_offline_frame(&offline).await
+    }
+
+    /// The offline frame inside a secure message, with its signature and sequence checked.
+    async fn decrypt_secure_message(
+        &mut self,
+        smsg: &SecureMessage,
+    ) -> Result<OfflineFrame, anyhow::Error> {
         let mut hmac = HmacSha256::new_from_slice(self.state.recv_hmac_key.as_ref().unwrap())?;
         hmac.update(&smsg.header_and_body);
         if !hmac
@@ -744,8 +763,9 @@ impl InboundRequest {
             ));
         }
 
-        let offline = location_nearby_connections::OfflineFrame::decode(d2d_msg.message())?;
-        self.process_offline_frame(&offline).await
+        Ok(location_nearby_connections::OfflineFrame::decode(
+            d2d_msg.message(),
+        )?)
     }
 
     async fn process_offline_frame(&mut self, offline: &OfflineFrame) -> Result<(), anyhow::Error> {
@@ -1086,6 +1106,13 @@ impl InboundRequest {
         &mut self,
         v1_frame: &sharing_nearby::V1Frame,
     ) -> Result<(), anyhow::Error> {
+        // A Pixel 7 sends its own Response next to the Introduction, as two payloads written
+        // at the same time, so it can come first (seen in a hand test): it says nothing about
+        // the offer, which is still to come.
+        if v1_frame.r#type() == sharing_nearby::v1_frame::FrameType::Response {
+            debug!("A Response from the sender before its Introduction is ignored");
+            return Ok(());
+        }
         let introduction = v1_frame.introduction.as_ref().ok_or_else(|| {
             anyhow!(
                 "Missing required fields: expected an Introduction, got a {:?} frame (response status: {:?})",
@@ -1338,6 +1365,10 @@ impl InboundRequest {
     /// After a reject frame or the closing frames: closes our side and gives the peer a moment to read the frame
     /// and close, so the socket going away does not turn into a reset that drops it.
     async fn linger(&mut self) {
+        let deadline = tokio::time::Instant::now() + CANCEL_TIMEOUT;
+        if self.disconnect_requested {
+            self.finish_safe_disconnect(deadline).await;
+        }
         let closing = async {
             if let Err(e) = self.socket.shutdown().await {
                 debug!("Closing the write half failed: {e}");
@@ -1345,7 +1376,88 @@ impl InboundRequest {
             let mut sink = [0u8; 4096];
             while matches!(self.socket.read(&mut sink).await, Ok(n) if n > 0) {}
         };
-        let _ = tokio::time::timeout(CANCEL_TIMEOUT, closing).await;
+        let _ = tokio::time::timeout_at(deadline, closing).await;
+    }
+
+    /// Whether this session ends with the safe-to-disconnect handshake: the peer reads it from
+    /// level 1 on, and a phone that is not answered takes the end for a lost link (it logs
+    /// "unsafe disconnection" and tries to reconnect, for seconds on a cancel).
+    fn asks_safe_disconnect(&self) -> bool {
+        self.state.peer_disconnect_version >= 1 && !self.poisoned
+    }
+
+    /// The rest of the handshake after our request (upstream `EndpointManager`): reads the
+    /// peer's frames until `deadline` (see `handshake_step`). Not in the middle of a frame body
+    /// (a cancel while one is read): the rest of it cannot be told from the next frame, and the
+    /// peer has our request anyway.
+    async fn finish_safe_disconnect(&mut self, deadline: tokio::time::Instant) {
+        if self.in_body {
+            return;
+        }
+        loop {
+            let Ok(Ok(length)) = tokio::time::timeout_at(
+                deadline,
+                read_length_prefix(
+                    &mut self.socket,
+                    &mut self.length_buf,
+                    &mut self.length_filled,
+                ),
+            )
+            .await
+            else {
+                return;
+            };
+            let len = u32::from_be_bytes(length) as usize;
+            if len > SANE_FRAME_LENGTH as usize {
+                return;
+            }
+            let mut body = vec![0u8; len];
+            let Ok(Ok(_)) =
+                tokio::time::timeout_at(deadline, self.socket.read_exact(&mut body)).await
+            else {
+                return;
+            };
+            let offline = if self.plain_frames {
+                OfflineFrame::decode(&*body).map_err(anyhow::Error::from)
+            } else {
+                match SecureMessage::decode(&*body) {
+                    Ok(smsg) => self.decrypt_secure_message(&smsg).await,
+                    Err(e) => Err(e.into()),
+                }
+            };
+            let Ok(offline) = offline else {
+                return;
+            };
+            match handshake_step(&offline) {
+                // The peer's own request crossed ours: answered, and the ack to ours is still to
+                // be read, or it stays unread at a peer that waits to hand it over.
+                HandshakeStep::Request => {
+                    if tokio::time::timeout_at(
+                        deadline,
+                        self.encrypt_and_send(&safe_disconnect_ack_frame()),
+                    )
+                    .await
+                    .is_err()
+                    {
+                        return;
+                    }
+                }
+                HandshakeStep::Done => {
+                    debug!("Safe-to-disconnect handshake done");
+                    return;
+                }
+                // A reply cut by the deadline may be half on the wire: nothing more is written.
+                HandshakeStep::KeepAlive => {
+                    if tokio::time::timeout_at(deadline, self.send_keepalive(true))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                HandshakeStep::Other => {}
+            }
+        }
     }
 
     /// Declines an offer the library cannot take: the app is told (`Rejected`, with the
@@ -1511,7 +1623,11 @@ impl InboundRequest {
         })
         .await;
         match sent {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => {
+                if self.disconnect_requested {
+                    self.finish_safe_disconnect(deadline).await;
+                }
+            }
             Ok(Err(e)) => debug!("Cancel frames not sent: {e}"),
             Err(_) => debug!("Cancel frames not sent in time"),
         }
@@ -1532,19 +1648,12 @@ impl InboundRequest {
         }
     }
 
+    /// Our Disconnection: a safe-to-disconnect request to a peer that reads one (level 1 or
+    /// more), answered in `finish_safe_disconnect`; a plain one otherwise.
     async fn disconnection(&mut self) -> Result<(), anyhow::Error> {
-        let frame = location_nearby_connections::OfflineFrame {
-            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
-            v1: Some(location_nearby_connections::V1Frame {
-                r#type: Some(
-                    location_nearby_connections::v1_frame::FrameType::Disconnection.into(),
-                ),
-                disconnection: Some(location_nearby_connections::DisconnectionFrame {
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-        };
+        let request = self.asks_safe_disconnect();
+        let frame = disconnection_frame(request);
+        self.disconnect_requested = request;
 
         if self.state.encryption_done {
             self.encrypt_and_send(&frame).await
@@ -2006,6 +2115,7 @@ impl InboundRequest {
                 offset: Some(0),
                 flags: Some(0),
                 body: Some(frame_data),
+                index: Some(0),
             }),
             payload_header: Some(payload_header.clone()),
             ..Default::default()
@@ -2032,6 +2142,7 @@ impl InboundRequest {
                 offset: Some(body_size as i64),
                 flags: Some(1), // lastChunk
                 body: Some(vec![]),
+                index: Some(1),
             }),
             payload_header: Some(payload_header),
             ..Default::default()
@@ -2926,6 +3037,7 @@ mod tests {
                         offset: Some(offset),
                         flags: Some(flags),
                         body: Some(body.to_vec()),
+                        index: None,
                     }),
                     ..Default::default()
                 }),
@@ -3467,6 +3579,106 @@ mod tests {
         assert_eq!(std::fs::read(tmp.0.join("b.txt")).unwrap(), b"BBBB");
     }
 
+    /// The Pixel 7 can send its own Response before the Introduction (two payloads written at
+    /// once): the session waits for the offer instead of ending.
+    #[tokio::test]
+    async fn a_response_before_the_introduction_is_ignored() {
+        let tmp = TempDir::new("early-response");
+        let mut s = Session::new(&tmp.0);
+        let response = sharing_nearby::Frame {
+            version: Some(sharing_nearby::frame::Version::V1.into()),
+            v1: Some(sharing_nearby::V1Frame {
+                r#type: Some(sharing_nearby::v1_frame::FrameType::Response.into()),
+                connection_response: Some(sharing_nearby::ConnectionResponseFrame {
+                    status: Some(Status::Accept.into()),
+                }),
+                ..Default::default()
+            }),
+        }
+        .encode_to_vec();
+        let frame = payload_frame(
+            payload_header::PayloadType::Bytes,
+            INTRO_ID + 1,
+            response.len() as i64,
+            0,
+            1,
+            &response,
+        );
+        s.feed(&frame)
+            .await
+            .expect("an early Response ended the session");
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .expect("the offer after it");
+        assert_eq!(s.req.state.state, TransferState::WaitingForUserConsent);
+    }
+
+    /// The sender cancels (a Pixel 7 at level 4): our close asks for the handshake and the
+    /// phone's own request gets our ack before the FIN, so the phone does not take the end for
+    /// a lost link (it used to try to reconnect for about 5 s before showing the cancel).
+    #[tokio::test]
+    async fn a_peer_cancel_ends_with_the_safe_disconnect_handshake() {
+        let tmp = TempDir::new("peer-cancel-safe");
+        let mut s = Session::new(&tmp.0);
+        s.req.state.peer_disconnect_version = 4;
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        let mut peer = s.peer.take().expect("peer is closed");
+        let _reply = upgrade::read_plain_frame(&mut peer).await.unwrap();
+        let _marker = upgrade::read_plain_frame(&mut peer).await.unwrap();
+
+        let cancel = sharing_nearby::Frame {
+            version: Some(sharing_nearby::frame::Version::V1.into()),
+            v1: Some(sharing_nearby::V1Frame {
+                r#type: Some(sharing_nearby::v1_frame::FrameType::Cancel.into()),
+                ..Default::default()
+            }),
+        }
+        .encode_to_vec();
+        let frame = payload_frame(
+            payload_header::PayloadType::Bytes,
+            INTRO_ID + 2,
+            cancel.len() as i64,
+            0,
+            1,
+            &cancel,
+        );
+        let data = frame.encode_to_vec();
+        peer.write_all(&data).await.unwrap();
+        let reader = async move {
+            let ours = upgrade::read_plain_frame(&mut peer)
+                .await
+                .expect("our close");
+            let ours = ours.v1.unwrap().disconnection.unwrap();
+            assert_eq!(ours.request_safe_to_disconnect, Some(true));
+            // The phone asks too: the requests cross.
+            let request = disconnection_frame(true).encode_to_vec();
+            peer.write_all(&(request.len() as u32).to_be_bytes())
+                .await
+                .unwrap();
+            peer.write_all(&request).await.unwrap();
+            let ack = upgrade::read_plain_frame(&mut peer).await.expect("our ack");
+            let ack = ack.v1.unwrap().disconnection.unwrap();
+            assert_eq!(
+                (ack.request_safe_to_disconnect, ack.ack_safe_to_disconnect),
+                (Some(true), Some(true))
+            );
+            assert!(
+                upgrade::read_plain_frame(&mut peer).await.is_err(),
+                "the FIN comes after the ack"
+            );
+        };
+        let (fed, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(s.req._handle((data.len() as u32).to_be_bytes()), reader)
+        })
+        .await
+        .expect("the handshake never ended");
+        assert!(is_end_of_session(&fed), "{fed:?}");
+        assert_eq!(s.req.state.state, TransferState::Cancelled);
+    }
+
     /// A safe-to-disconnect request from the sender gets the ack with both flags; the session
     /// goes on until the peer closes, as before.
     #[tokio::test]
@@ -3565,6 +3777,91 @@ mod tests {
         assert!(is_end_of_session(&feed), "{feed:?}");
         assert!(s.finished());
         assert_eq!(std::fs::read(tmp.0.join("a.txt")).unwrap(), b"AAAA");
+    }
+
+    /// A finished receive from a sender at level 1 or more (a Pixel 7 is at 4): our close asks
+    /// for the handshake and the sender's ack ends it at once, well inside the 2 s wait.
+    #[tokio::test]
+    async fn a_finished_receive_ends_with_the_safe_disconnect_handshake() {
+        let tmp = TempDir::new("finish-safe");
+        let mut s = Session::new(&tmp.0);
+        s.req.state.peer_disconnect_version = 4;
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        let mut peer = s.peer.take().expect("peer is closed");
+        let _reply = upgrade::read_plain_frame(&mut peer).await.unwrap();
+        let _marker = upgrade::read_plain_frame(&mut peer).await.unwrap();
+        write_and_handle(
+            &mut peer,
+            &mut s.req,
+            &payload_frame(payload_header::PayloadType::File, 1, 4, 0, 0, b"AAAA"),
+        )
+        .await
+        .unwrap();
+        let last = payload_frame(payload_header::PayloadType::File, 1, 4, 4, 1, b"");
+        let data = last.encode_to_vec();
+        peer.write_all(&data).await.unwrap();
+        let reader = async move {
+            let close = upgrade::read_plain_frame(&mut peer)
+                .await
+                .expect("our close");
+            let close = close.v1.unwrap().disconnection.unwrap();
+            assert_eq!(close.request_safe_to_disconnect, Some(true));
+            let ack = safe_disconnect_ack_frame().encode_to_vec();
+            peer.write_all(&(ack.len() as u32).to_be_bytes())
+                .await
+                .unwrap();
+            peer.write_all(&ack).await.unwrap();
+            assert!(
+                upgrade::read_plain_frame(&mut peer).await.is_err(),
+                "the FIN comes after the ack"
+            );
+        };
+        let started = std::time::Instant::now();
+        let (fed, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(s.req._handle((data.len() as u32).to_be_bytes()), reader)
+        })
+        .await
+        .expect("the handshake never ended");
+        assert!(is_end_of_session(&fed), "{fed:?}");
+        assert!(s.finished());
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "the session waited out the handshake bound instead of ending at the ack"
+        );
+    }
+
+    /// A decline sends no request, so nothing is awaited: the FIN follows the refusal at once,
+    /// as before the handshake.
+    #[tokio::test]
+    async fn a_decline_does_not_wait_for_a_handshake() {
+        let tmp = TempDir::new("decline-fast");
+        let mut s = Session::new(&tmp.0);
+        s.req.state.peer_disconnect_version = 4;
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        let mut peer = s.peer.take().expect("peer is closed");
+        let reader = async move {
+            assert_eq!(read_reject_status(&mut peer).await, Status::Reject);
+            assert!(
+                upgrade::read_plain_frame(&mut peer).await.is_err(),
+                "the FIN follows the refusal"
+            );
+        };
+        let started = std::time::Instant::now();
+        let (declined, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(s.deliver(TransferAction::ConsentDecline), reader)
+        })
+        .await
+        .expect("the decline never ended");
+        assert!(is_end_of_session(&declined), "{declined:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "the decline waited"
+        );
     }
 
     /// D11: when the name is taken between the offer and the accept, the paths reported to the
@@ -4127,6 +4424,59 @@ mod tests {
         );
         let result = result.expect("the decline waited for the slow frame");
         assert!(is_end_of_session(&result), "{result:?}");
+    }
+
+    /// A cancel from the app while a frame body is half read (the common case: chunks are
+    /// 512 KiB): our request still goes out, but the rest of the stream cannot be told apart
+    /// from the next frame, so nothing is read as a frame and the FIN follows at once.
+    #[tokio::test]
+    async fn a_cancel_in_the_middle_of_a_frame_does_not_read_past_it() {
+        let tmp = TempDir::new("cancel-mid");
+        let mut s = Session::new(&tmp.0);
+        s.req.state.peer_disconnect_version = 4;
+        s.offer(vec![file_meta("a.txt", 1, 4)], vec![])
+            .await
+            .unwrap();
+        s.deliver(TransferAction::ConsentAccept).await.unwrap();
+        let mut peer = s.peer.take().unwrap();
+        let _reply = upgrade::read_plain_frame(&mut peer).await.unwrap();
+        let _marker = upgrade::read_plain_frame(&mut peer).await.unwrap();
+        // The peer announces 1000 bytes and sends one.
+        peer.write_all(&[7]).await.unwrap();
+        let _ = s.bus.send(ChannelMessage {
+            id: "peer".into(),
+            msg: channel::Message::Lib {
+                action: TransferAction::TransferCancel,
+            },
+        });
+        let closer = async move {
+            let mut sink = Vec::new();
+            let _ = peer.read_to_end(&mut sink).await;
+            sink
+        };
+        let started = std::time::Instant::now();
+        let (result, sink) = tokio::join!(
+            tokio::time::timeout(Duration::from_secs(5), s.req._handle(1000u32.to_be_bytes())),
+            closer
+        );
+        let result = result.expect("the cancel never ended");
+        assert!(is_end_of_session(&result), "{result:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "the cancel waited"
+        );
+        let mut at = 0;
+        let mut requested = false;
+        while at + 4 <= sink.len() {
+            let len = u32::from_be_bytes(sink[at..at + 4].try_into().unwrap()) as usize;
+            let frame = OfflineFrame::decode(&sink[at + 4..at + 4 + len]).unwrap();
+            requested |= frame
+                .v1
+                .and_then(|v1| v1.disconnection)
+                .is_some_and(|d| d.request_safe_to_disconnect == Some(true));
+            at += 4 + len;
+        }
+        assert!(requested, "our request did not go out");
     }
 
     /// A3: a body that stalls ends the session at the idle limit.

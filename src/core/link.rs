@@ -465,7 +465,9 @@ pub trait NmApi: Send + Sync {
     /// The firewalld zone of the interface (the default zone if it has none); `None` means
     /// firewalld is absent.
     fn lan_zone(&self, iface: &str) -> impl Future<Output = io::Result<Option<String>>> + Send;
-    /// Opens a TCP port in `zone` until `close_lan_port` (or a timeout).
+    /// Opens a TCP port in `zone` until `close_lan_port` (or a timeout). `AlreadyExists` when
+    /// the zone already lets the port in (a range, as Fedora Workstation's zone opens
+    /// 1025-65535): the port is reachable and there is nothing to close.
     fn open_lan_port(&self, zone: &str, port: u16) -> impl Future<Output = io::Result<()>> + Send;
     /// A port that is not open is not an error.
     fn close_lan_port(&self, zone: &str, port: u16) -> impl Future<Output = io::Result<()>> + Send;
@@ -796,6 +798,11 @@ fn is_gone(e: &zbus::Error) -> bool {
             .any(|suffix| name.as_str().ends_with(suffix)),
         _ => false,
     }
+}
+
+/// firewalld's answer to `addPort` for a port the zone already lets in.
+fn is_port_already_enabled(e: &zbus::Error) -> bool {
+    matches!(e, zbus::Error::MethodError(_, Some(detail), _) if detail.contains("ALREADY_ENABLED"))
 }
 
 /// firewalld's answer to `removePort` for a port that is not open.
@@ -1203,7 +1210,13 @@ impl NmApi for DbusNm {
                 .map(drop)
         }
         .await
-        .map_err(firewall_err)
+        .map_err(|e| {
+            if is_port_already_enabled(&e) {
+                io::Error::new(io::ErrorKind::AlreadyExists, format!("firewalld: {e}"))
+            } else {
+                firewall_err(e)
+            }
+        })
     }
 
     async fn close_lan_port(&self, zone: &str, port: u16) -> io::Result<()> {
@@ -1807,7 +1820,15 @@ impl<A: NmApi> NmLink<A> {
             return Ok(false);
         }
         st.lan_port = Some((zone.clone(), port));
-        self.api.open_lan_port(&zone, port).await?;
+        match self.api.open_lan_port(&zone, port).await {
+            Ok(()) => {}
+            // Not our rule: it must stay when the offer ends.
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                tracing::info!("the {zone} zone already lets the LAN port in; nothing to open");
+                st.lan_port = None;
+            }
+            Err(e) => return Err(e),
+        }
         Ok(true)
     }
 
@@ -3212,6 +3233,27 @@ mod tests {
         }
     }
 
+    /// ALREADY_ENABLED: the LAN is offered, and the rule that is not ours is never removed.
+    #[tokio::test]
+    async fn a_port_the_zone_already_lets_in_is_offered_and_left_alone() {
+        let mut b = fake();
+        b.lan_zone = Some("FedoraWorkstation".into());
+        b.fail = Box::new(|op, _| {
+            (op == "open_lan_port").then(|| {
+                io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "ALREADY_ENABLED: '4000:tcp' already in 'FedoraWorkstation'",
+                )
+            })
+        });
+        let (link, log) = b.build();
+        assert!(link.host_lan(LAN_IP, 4000).await.unwrap());
+        link.close_lan().await;
+        link.release().await;
+        assert_eq!(count(&log, "close_lan_port"), 0);
+        assert!(link.begin().is_ok(), "the link must be free");
+    }
+
     #[tokio::test]
     async fn the_lan_is_not_offered_on_an_address_that_is_gone_and_needs_no_rule_without_firewalld()
     {
@@ -3363,6 +3405,16 @@ mod tests {
         assert!(!is_port_not_enabled(&exception(Some("INVALID_ZONE: x"))));
         assert!(!is_port_not_enabled(&exception(None)));
         assert!(!is_port_not_enabled(&zbus::Error::Failure("x".into())));
+        // The answer to addPort in a zone that already lets the port in, as firewalld gave it
+        // in a hand test.
+        assert!(is_port_already_enabled(&exception(Some(
+            "ALREADY_ENABLED: '40105:tcp' already in 'FedoraWorkstation'"
+        ))));
+        assert!(!is_port_already_enabled(&exception(Some(
+            "NOT_AUTHORIZED: addPort()"
+        ))));
+        assert!(!is_port_already_enabled(&exception(None)));
+        assert!(!is_port_already_enabled(&zbus::Error::Failure("x".into())));
     }
 
     #[tokio::test]

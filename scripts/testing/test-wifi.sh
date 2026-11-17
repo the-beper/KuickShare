@@ -3,8 +3,11 @@
 # records everything into dist/logs/<timestamp>/ (symlink dist/logs/latest). The daemon and the
 # GUI run with settings, history and received files in RAM (see sandbox.sh).
 # Run it as your normal user, NOT with sudo: polkit refuses NetworkManager and firewalld to a
-# process that is not in your active session. Only btmon is run through sudo (it asks once).
+# process that is not in your active session. Only btmon and the nft/iptables dumps use sudo
+# (it asks once).
 # Stop with Ctrl-C.   scripts/testing/test-wifi.sh
+# NO_SUDO=1 skips what needs sudo (btmon and the nft/iptables dumps), for a run started without
+# a terminal to type the password in.
 # Build first: build/build-env.sh cargo build && build/build-env.sh cmake --build dist/tmp/cmake-dev
 set -u
 
@@ -18,7 +21,9 @@ LOGS=$ROOT/dist/logs/$(date +%Y%m%d-%H%M%S)
 mkdir -p "$LOGS" || { echo "cannot create $LOGS (owned by root? sudo chown -R $USER: $ROOT/dist/logs)" >&2; exit 1; }
 ln -sfn "$LOGS" "$ROOT/dist/logs/latest"
 
-sudo -v || exit 1
+SUDO=1
+[ -z "${NO_SUDO:-}" ] || SUDO=
+[ -z "$SUDO" ] || sudo -v || exit 1
 
 PIDS=()
 bg() { # bg <logfile> <command...>
@@ -29,7 +34,7 @@ bg() { # bg <logfile> <command...>
 cleanup() {
     echo "stopping..."
     kill "${PIDS[@]}" 2>/dev/null
-    sudo pkill -x btmon 2>/dev/null
+    [ -z "$SUDO" ] || sudo pkill -x btmon 2>/dev/null
     sleep 1
     kill -9 "${PIDS[@]}" 2>/dev/null
     sandbox_cleanup
@@ -53,8 +58,10 @@ trap 'exit 0' INT TERM HUP
 } > "$LOGS/state-before.txt" 2>&1
 
 # System side
-bg "$LOGS/btmon.txt" sudo btmon -t
-bg "$LOGS/btmon-raw.log" sudo btmon -w "$LOGS/capture.btsnoop"
+if [ -n "$SUDO" ]; then
+    bg "$LOGS/btmon.txt" sudo btmon -t
+    bg "$LOGS/btmon-raw.log" sudo btmon -w "$LOGS/capture.btsnoop"
+fi
 bg "$LOGS/system.log" journalctl -f -o short-precise \
     -u NetworkManager -u bluetooth -u firewalld -u wpa_supplicant
 bg "$LOGS/kernel.log" journalctl -k -f -o short-precise
@@ -72,15 +79,17 @@ done
 # so nat.log shows the rules NetworkManager adds when the hotspot starts and removes at the end
 nat_state() {
     echo "ip_forward: $(sysctl -n net.ipv4.ip_forward)"
-    echo "--- nft"; sudo nft list ruleset 2>&1
-    echo "--- iptables nat"; sudo iptables-save -t nat 2>&1
+    if [ -n "$SUDO" ]; then
+        echo "--- nft"; sudo nft list ruleset 2>&1
+        echo "--- iptables nat"; sudo iptables-save -t nat 2>&1
+    fi
     echo "--- firewalld"; firewall-cmd --get-active-zones 2>&1
     echo "--- addresses"; ip -br -4 addr
 }
 (
     prev=
     while :; do
-        sudo -v # keep the credentials fresh, a run can outlast the 15 minute cache
+        [ -z "$SUDO" ] || sudo -v # keep the credentials fresh, a run can outlast the 15 minute cache
         cur=$(nat_state)
         if [ "$cur" != "$prev" ]; then
             echo "===== $(date -u +%T)"; echo "$cur"; prev=$cur

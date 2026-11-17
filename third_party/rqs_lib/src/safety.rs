@@ -1686,6 +1686,7 @@ mod tests {
             offset: Some(offset),
             flags: Some(flags),
             body: Some(body.to_vec()),
+            index: None,
         }
     }
 

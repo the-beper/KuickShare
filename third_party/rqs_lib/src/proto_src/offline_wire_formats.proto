@@ -165,6 +165,10 @@ message PayloadTransferFrame {
     optional int32 flags = 1;
     optional int64 offset = 2;
     optional bytes body = 3;
+    // Upstream: "optional int32 index = 4". The chunk's position in its payload, counted from
+    // 0 with the last-chunk marker included. A peer at safe-to-disconnect level 4 or more
+    // (auto-resume) rejects a FILE chunk whose index is not above the previous one.
+    optional int32 index = 4;
   }
 
   // Accompanies CONTROL packets.

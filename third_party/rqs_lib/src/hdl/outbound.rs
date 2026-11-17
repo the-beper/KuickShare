@@ -754,10 +754,25 @@ impl OutboundRequest {
                 self.process_bwu_frame(offline).await?;
             }
             location_nearby_connections::v1_frame::FrameType::Disconnection => {
-                if is_safe_disconnect_request(offline) {
+                let request = is_safe_disconnect_request(offline);
+                if request {
                     self.encrypt_and_send(&safe_disconnect_ack_frame()).await?;
                 }
                 debug!("The peer is disconnecting");
+                // After the transfer ended this is the handshake's last frame: the session is
+                // over, and waiting for the peer's FIN only logs a lost connection. A request
+                // crossed the one we sent at the end: the ack to ours is read first, or it
+                // stays unread at a peer that waits to hand it over (a BLE bridge, 5 s).
+                if matches!(
+                    self.state.state,
+                    TransferState::Finished | TransferState::Cancelled
+                ) {
+                    if request && self.state.peer_disconnect_version >= 1 {
+                        self.finish_safe_disconnect(tokio::time::Instant::now() + CANCEL_TIMEOUT)
+                            .await;
+                    }
+                    return Err(anyhow!(crate::errors::AppError::NotAnError));
+                }
             }
             other => {
                 error!("Unhandled offline frame encrypted: {:?}", other);
@@ -808,6 +823,7 @@ impl OutboundRequest {
             )
             .await;
             self.disconnection().await?;
+            self.close_after_request().await;
             return Err(anyhow!(crate::errors::AppError::NotAnError));
         }
 
@@ -1190,6 +1206,7 @@ impl OutboundRequest {
                                 offset: Some(0),
                                 flags: Some(0),
                                 body: Some(text_bytes.clone()),
+                                index: Some(0),
                             }),
                             payload_header: Some(payload_header.clone()),
                             ..Default::default()
@@ -1214,6 +1231,7 @@ impl OutboundRequest {
                                 offset: Some(text_len),
                                 flags: Some(1), // lastChunk
                                 body: Some(vec![]),
+                                index: Some(1),
                             }),
                             payload_header: Some(payload_header),
                             ..Default::default()
@@ -1281,6 +1299,9 @@ impl OutboundRequest {
                 }
             };
 
+            // The position of the next chunk of this file, the last-chunk marker included: a
+            // peer at safe-to-disconnect level 4 or more rejects a repeated index as a duplicate.
+            let mut chunk_index: i32 = 0;
             // Loop until we reached end of file
             loop {
                 // Since this task's runtime is blocked with the outer loop,
@@ -1393,6 +1414,7 @@ impl OutboundRequest {
                                 offset: Some(curr_state.bytes_transferred),
                                 flags: Some(0),
                                 body: Some(buffer[..bytes_read].to_vec()),
+                                index: Some(chunk_index),
                             }),
                             payload_header: Some(payload_header.clone()),
                             ..Default::default()
@@ -1412,6 +1434,7 @@ impl OutboundRequest {
                 {
                     break 'send_all_files;
                 }
+                chunk_index += 1;
                 self.update_state(
                     |e| {
                         if let Some(mu) = e.transferred_files.get_mut(&current) {
@@ -1449,6 +1472,7 @@ impl OutboundRequest {
                                     offset: Some(curr_state.total_size),
                                     flags: Some(1), // lastChunk
                                     body: Some(vec![]),
+                                    index: Some(chunk_index),
                                 }),
                                 payload_header: Some(payload_header),
                                 ..Default::default()
@@ -1682,6 +1706,7 @@ impl OutboundRequest {
                 )
                 .await;
                 self.disconnection().await?;
+                self.close_after_request().await;
                 return Err(anyhow!(crate::errors::AppError::NotAnError));
             }
             sharing_nearby::connection_response_frame::Status::Unknown => {
@@ -1694,6 +1719,7 @@ impl OutboundRequest {
                 )
                 .await;
                 self.disconnection().await?;
+                self.close_after_request().await;
                 return Err(anyhow!(crate::errors::AppError::NotAnError));
             }
         }
@@ -1917,6 +1943,7 @@ impl OutboundRequest {
     pub(crate) async fn cancel_peer(&mut self, unsent: &[u8]) {
         info!("Transfer canceled by the user");
         self.user_cancelled = true;
+        let deadline = tokio::time::Instant::now() + CANCEL_TIMEOUT;
         let closing = async {
             let sent: Result<(), anyhow::Error> = async {
                 if !unsent.is_empty() {
@@ -1926,8 +1953,12 @@ impl OutboundRequest {
                 self.disconnection().await
             }
             .await;
-            if let Err(e) = sent {
-                debug!("Cancel frames not sent: {e}");
+            match sent {
+                Ok(()) if self.state.peer_disconnect_version >= 1 => {
+                    self.finish_safe_disconnect(deadline).await;
+                }
+                Ok(()) => {}
+                Err(e) => debug!("Cancel frames not sent: {e}"),
             }
             if let Err(e) = self.socket.shutdown().await {
                 debug!("Closing the write half failed: {e}");
@@ -1936,25 +1967,84 @@ impl OutboundRequest {
             let mut sink = [0u8; 4096];
             while matches!(self.socket.read(&mut sink).await, Ok(n) if n > 0) {}
         };
-        if tokio::time::timeout(CANCEL_TIMEOUT, closing).await.is_err() {
+        if tokio::time::timeout_at(deadline, closing).await.is_err() {
             debug!("The peer did not close after the cancel in time");
         }
     }
 
-    async fn disconnection(&mut self) -> Result<(), anyhow::Error> {
-        let frame = location_nearby_connections::OfflineFrame {
-            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
-            v1: Some(location_nearby_connections::V1Frame {
-                r#type: Some(
-                    location_nearby_connections::v1_frame::FrameType::Disconnection.into(),
+    /// The rest of the handshake after our request (upstream `EndpointManager`): reads the
+    /// peer's frames until `deadline` (see `handshake_step`).
+    async fn finish_safe_disconnect(&mut self, deadline: tokio::time::Instant) {
+        loop {
+            let read = tokio::time::timeout_at(
+                deadline,
+                read_frame(
+                    &mut self.socket,
+                    &mut self.length_buf,
+                    &mut self.length_filled,
+                    &mut self.frame_buf,
+                    &mut self.frame_filled,
+                    SANE_FRAME_LENGTH as usize,
                 ),
-                disconnection: Some(location_nearby_connections::DisconnectionFrame {
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-        };
+            )
+            .await;
+            let Ok(Ok(frame_data)) = read else {
+                return;
+            };
+            let Ok(offline) =
+                Self::decode_peer_frame(&mut self.state, self.plain_frames, &frame_data)
+            else {
+                return;
+            };
+            match handshake_step(&offline) {
+                // The peer's own request crossed ours: answered, and the ack to ours is still to
+                // be read, or it stays unread at a peer that waits to hand it over.
+                HandshakeStep::Request => {
+                    if tokio::time::timeout_at(
+                        deadline,
+                        self.encrypt_and_send(&safe_disconnect_ack_frame()),
+                    )
+                    .await
+                    .is_err()
+                    {
+                        return;
+                    }
+                }
+                HandshakeStep::Done => {
+                    debug!("Safe-to-disconnect handshake done");
+                    return;
+                }
+                // A reply cut by the deadline may be half on the wire: nothing more is written.
+                HandshakeStep::KeepAlive => {
+                    if tokio::time::timeout_at(deadline, self.send_keepalive(true))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                HandshakeStep::Other => {}
+            }
+        }
+    }
 
+    /// The end of a session that sent our Disconnection and has nothing more to do: the
+    /// handshake (a peer at level 1 or more), then the FIN, within `CANCEL_TIMEOUT`.
+    async fn close_after_request(&mut self) {
+        let deadline = tokio::time::Instant::now() + CANCEL_TIMEOUT;
+        if self.state.peer_disconnect_version >= 1 {
+            self.finish_safe_disconnect(deadline).await;
+        }
+        if let Ok(Err(e)) = tokio::time::timeout_at(deadline, self.socket.shutdown()).await {
+            debug!("Closing the write half failed: {e}");
+        }
+    }
+
+    /// Our Disconnection: a safe-to-disconnect request to a peer that reads one (level 1 or
+    /// more), a plain one otherwise. The peer's ack is taken in `process_offline_frame` or
+    /// `finish_safe_disconnect`.
+    async fn disconnection(&mut self) -> Result<(), anyhow::Error> {
+        let frame = disconnection_frame(self.state.peer_disconnect_version >= 1);
         if self.state.encryption_done {
             self.encrypt_and_send(&frame).await
         } else {
@@ -2063,6 +2153,7 @@ impl OutboundRequest {
                 offset: Some(0),
                 flags: Some(0),
                 body: Some(frame_data),
+                index: Some(0),
             }),
             payload_header: Some(payload_header.clone()),
             ..Default::default()
@@ -2089,6 +2180,7 @@ impl OutboundRequest {
                 offset: Some(body_size as i64),
                 flags: Some(1), // lastChunk
                 body: Some(vec![]),
+                index: Some(1),
             }),
             payload_header: Some(payload_header),
             ..Default::default()
@@ -2272,6 +2364,52 @@ pub(super) fn is_safe_disconnect_request(offline: &OfflineFrame) -> bool {
         .filter(|v1| v1.r#type() == location_nearby_connections::v1_frame::FrameType::Disconnection)
         .and_then(|v1| v1.disconnection.as_ref())
         .is_some_and(|d| d.request_safe_to_disconnect() && !d.ack_safe_to_disconnect())
+}
+
+/// A Disconnection of ours: with `request`, the safe-to-disconnect request that a peer at level 1
+/// or more answers with its ack; without, the plain one older peers get.
+pub(super) fn disconnection_frame(request: bool) -> OfflineFrame {
+    OfflineFrame {
+        version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+        v1: Some(location_nearby_connections::V1Frame {
+            r#type: Some(location_nearby_connections::v1_frame::FrameType::Disconnection.into()),
+            disconnection: Some(location_nearby_connections::DisconnectionFrame {
+                request_safe_to_disconnect: request.then_some(true),
+                ack_safe_to_disconnect: request.then_some(false),
+            }),
+            ..Default::default()
+        }),
+    }
+}
+
+/// What the safe-to-disconnect handshake does with one peer frame read after our request.
+pub(super) enum HandshakeStep {
+    /// The peer's ack, or a plain Disconnection: the handshake is over.
+    Done,
+    /// The peer's own request, crossing ours: answered with the ack, then the ack to ours is
+    /// still read.
+    Request,
+    /// A keep-alive, answered while the handshake goes on.
+    KeepAlive,
+    /// Anything else (a chunk still in flight): read past.
+    Other,
+}
+
+pub(super) fn handshake_step(offline: &OfflineFrame) -> HandshakeStep {
+    match offline.v1.as_ref().map(|v1| v1.r#type()) {
+        Some(location_nearby_connections::v1_frame::FrameType::Disconnection)
+            if is_safe_disconnect_request(offline) =>
+        {
+            HandshakeStep::Request
+        }
+        Some(location_nearby_connections::v1_frame::FrameType::Disconnection) => {
+            HandshakeStep::Done
+        }
+        Some(location_nearby_connections::v1_frame::FrameType::KeepAlive) => {
+            HandshakeStep::KeepAlive
+        }
+        _ => HandshakeStep::Other,
+    }
 }
 
 /// The answer to a safe-to-disconnect request. Level 6, declared in the connection
@@ -2683,6 +2821,7 @@ mod tests {
                         offset: Some(0),
                         flags: Some(0),
                         body: Some(sharing.encode_to_vec()),
+                        index: None,
                     }),
                     ..Default::default()
                 }),
@@ -3402,6 +3541,131 @@ mod tests {
         assert!(read_plain_frame(&mut peer).await.is_none());
     }
 
+    /// Every chunk of a file carries its position, the last-chunk marker included: a peer at
+    /// safe-to-disconnect level 4 (a Pixel 7) rejects a repeated index as a duplicate and the
+    /// file never completes there.
+    #[tokio::test]
+    async fn file_chunks_carry_their_index() {
+        let tmp = TempDir::new("index");
+        // Two data chunks of at most 512 KiB, then the marker.
+        let (mut req, mut peer, _bus) = plain_files_request(&tmp.0, &[600_000]);
+        let task = tokio::spawn(async move { req.send_payloads().await });
+        let mut indices = Vec::new();
+        for _ in 0..3 {
+            let frame = read_plain_frame(&mut peer).await.unwrap();
+            let chunk = frame
+                .v1
+                .unwrap()
+                .payload_transfer
+                .unwrap()
+                .payload_chunk
+                .unwrap();
+            indices.push((chunk.index, chunk.flags()));
+        }
+        assert_eq!(indices, [(Some(0), 0), (Some(1), 0), (Some(2), 1)]);
+        drop(peer);
+        let _ = tokio::time::timeout(Duration::from_secs(5), task).await;
+    }
+
+    /// A finished send to a peer at level 1 or more ends with the safe-to-disconnect handshake:
+    /// our close asks for it, and the peer's ack ends the session at once (the Pixel 7 at
+    /// level 4 otherwise takes the end for a lost link and tries to reconnect).
+    #[tokio::test]
+    async fn a_finished_send_ends_with_the_safe_disconnect_handshake() {
+        let tmp = TempDir::new("safe-end");
+        let (mut req, mut peer, _bus) = plain_files_request(&tmp.0, &[4]);
+        req.state.peer_disconnect_version = 4;
+        let task = tokio::spawn(async move {
+            req.send_payloads().await.unwrap();
+            loop {
+                if let Err(e) = req.handle().await {
+                    break (e, req.state.state);
+                }
+            }
+        });
+        read_plain_frame(&mut peer).await.unwrap();
+        read_plain_frame(&mut peer).await.unwrap();
+        let close = read_plain_frame(&mut peer).await.unwrap();
+        let disconnection = close.v1.unwrap().disconnection.unwrap();
+        assert_eq!(disconnection.request_safe_to_disconnect, Some(true));
+        assert_eq!(disconnection.ack_safe_to_disconnect, Some(false));
+        write_plain_frame(&mut peer, &safe_disconnect_ack_frame()).await;
+        let (ended, state) = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the session waited past the peer's ack")
+            .unwrap();
+        assert!(
+            matches!(
+                ended.downcast_ref(),
+                Some(crate::errors::AppError::NotAnError)
+            ),
+            "{ended:?}"
+        );
+        assert_eq!(state, TransferState::Finished);
+    }
+
+    /// A user cancel to a peer at level 1 or more: the Cancel, our request, and the peer's own
+    /// request that crosses it is answered with the ack before the FIN.
+    #[tokio::test]
+    async fn a_user_cancel_answers_a_crossing_safe_disconnect_request() {
+        let tmp = TempDir::new("safe-cancel");
+        let (mut req, mut peer, _bus) = plain_files_request(&tmp.0, &[]);
+        req.state.peer_disconnect_version = 4;
+        let task = tokio::spawn(async move { req.cancel_peer(&[]).await });
+        // The sharing Cancel is a Bytes payload: its chunk, then the last-chunk marker.
+        let _cancel = read_plain_frame(&mut peer).await.unwrap();
+        let _marker = read_plain_frame(&mut peer).await.unwrap();
+        let ours = read_plain_frame(&mut peer).await.unwrap();
+        assert_eq!(
+            ours.v1
+                .unwrap()
+                .disconnection
+                .unwrap()
+                .request_safe_to_disconnect,
+            Some(true)
+        );
+        let crossing = super::disconnection_frame(true);
+        write_plain_frame(&mut peer, &crossing).await;
+        let reply = read_plain_frame(&mut peer).await.unwrap();
+        let reply = reply.v1.unwrap().disconnection.unwrap();
+        assert_eq!(
+            (
+                reply.request_safe_to_disconnect,
+                reply.ack_safe_to_disconnect
+            ),
+            (Some(true), Some(true))
+        );
+        // Then the FIN: the peer reads the end of the stream, and closes its side.
+        assert!(read_plain_frame(&mut peer).await.is_none());
+        drop(peer);
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("the cancel waited past the handshake")
+            .unwrap();
+    }
+
+    /// A peer at level 1 or more that never answers (and never closes) holds a user cancel no
+    /// longer than `CANCEL_TIMEOUT`.
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_peer_does_not_hold_the_cancel_past_its_bound() {
+        let tmp = TempDir::new("safe-silent");
+        let (mut req, mut peer, _bus) = plain_files_request(&tmp.0, &[]);
+        req.state.peer_disconnect_version = 4;
+        let started = tokio::time::Instant::now();
+        let task = tokio::spawn(async move { req.cancel_peer(&[]).await });
+        let reader = tokio::spawn(async move {
+            while read_plain_frame(&mut peer).await.is_some() {}
+            // Kept open: only the deadline can end the wait.
+            std::future::pending::<()>().await;
+        });
+        tokio::time::timeout(CANCEL_TIMEOUT * 2, task)
+            .await
+            .expect("the cancel was held past its bound")
+            .unwrap();
+        assert!(started.elapsed() <= CANCEL_TIMEOUT + Duration::from_millis(50));
+        reader.abort();
+    }
+
     /// A peer below level 6 never acks: the close follows the last chunk like before, and
     /// nothing waits for acks that will not come.
     #[tokio::test]
@@ -3416,9 +3680,15 @@ mod tests {
         read_plain_frame(&mut peer).await.unwrap();
         read_plain_frame(&mut peer).await.unwrap();
         let close = read_plain_frame(&mut peer).await.unwrap();
+        let v1 = close.v1.unwrap();
         assert_eq!(
-            close.v1.unwrap().r#type(),
+            v1.r#type(),
             location_nearby_connections::v1_frame::FrameType::Disconnection
+        );
+        assert_eq!(
+            v1.disconnection.unwrap().request_safe_to_disconnect,
+            None,
+            "a level-0 peer gets the plain close"
         );
         let (result, state, no_unacked) = tokio::time::timeout(Duration::from_secs(5), task)
             .await
