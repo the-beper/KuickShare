@@ -16,9 +16,6 @@
   <img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue" alt="License" />
 </p>
 
-> [!IMPORTANT]
-> KuickShare began as a project for my own personal use, and is shared as is. Generative AI was use to assist me in writing the code and drafting the documentation.
-
 <table>
   <tr>
     <td><img src="docs/screenshots/send-files.png" alt="The Send page with files ready to send"></td>
@@ -93,3 +90,6 @@ KuickShare is derived from [Packet](https://github.com/nozwock/packet) and uses 
 GPL-3.0-or-later. See [LICENSE](LICENSE), and [THIRD_PARTY.md](THIRD_PARTY.md) for the third-party code and data it uses.
 
 *KuickShare is an independent open-source project, not affiliated with or endorsed by Google.*
+
+## AI disclosure
+Generative AI assistend me in writing the code and drafting the documentation.
