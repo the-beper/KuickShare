@@ -71,6 +71,24 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.10.0" date="2026-11-17">
+      <description>
+        <p>More reliable transfers with phones over the network and Bluetooth, and received files that appear only when complete</p>
+        <ul>
+          <li>Received files are written to a hidden folder inside the download folder and get their name only once complete, so a partial file never looks like a finished one; an existing file is never replaced</li>
+          <li>Receiving over the network no longer fails at once with phones that send their first messages in a different order</li>
+          <li>On Fedora Workstation, a transfer received over Bluetooth can move to the network you are already on instead of always starting a hotspot</li>
+          <li>Network transfers are bound to the network card that holds the phone's network instead of following the default route, which a VPN or a second card may own</li>
+          <li>When several networks could carry a transfer and none is clearly the right one, the hotspot is used instead of a guess</li>
+          <li>Transfers with phones end cleanly: a transfer cancelled on the phone shows as cancelled there at once, not after a few seconds</li>
+          <li>Bluetooth announcements of phones in two more formats are understood</li>
+          <li>Incoming transfers are checked more strictly against what the sender announced</li>
+          <li>The device list refreshes when the window opens, and a device that joins the network later is found within 20 seconds</li>
+          <li>Updated the network discovery library, with its fix for Android 13 phones that dropped the computer from their list every two minutes</li>
+          <li>Updated dependencies</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.9.1" date="2026-11-15">
       <description>
         <p>Better use of the network a phone shares with the computer, and a fix for the notification Copy button</p>
