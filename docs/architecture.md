@@ -94,7 +94,7 @@ Settings that restart the engine (device name, static port, reset) are refused w
 
 At start the core removes leftover `kuickshare-*` NetworkManager profiles (unconditionally, bounded at 5 s) before it takes its D-Bus name; at stop it releases the Wi-Fi link within 2 s ([timings](wifi-direct.md#timings-and-timeouts)). Temporary AP and join activations are bound to that long-lived system-bus client and should also be removed if the daemon crashes *(inferred until a kill -9 test)*. A BLE receive session offers `WIFI_LAN` first when the phone lists it, through the `WifiLink` methods `lan_address`, `host_lan(ip, port)`, `close_lan` and `release`, with a temporary firewalld port instead of disrupting the current Wi-Fi, and falls back to the hotspot; see [Behaviour](wifi-direct.md#behaviour).
 
-The core is behind one lock, but a send holds it only briefly: to take a snapshot at the start and to queue the send at the end. Choosing the route (the LAN probe, the mDNS restart, the Bluetooth lookup, see the timeouts in `choose_route`) and the announce to a paired computer run without it, so other D-Bus calls do not wait for them; if the engine restarted meanwhile, the send fails with "the service restarted". Answering a transfer (`AnswerTransfer`, `Accept`, `Decline`) and `Cancel` do not take the lock either: answers go through the consent book, and a Cancel marks a send that is still choosing its route so it is dropped before it is queued and ends as `Cancelled` (a Cancel in the instant between queuing and the library taking the send can still be lost; it is sent twice to narrow that window). A restart still holds the lock while the old engine stops (bounded: the library first, then the final events are drained; unfinished transfers end as `Disconnected`). At exit the engine stop is bounded to 0.8 s and the Wi-Fi cleanup always runs after it (2 s), within the shell's 3 s wait.
+The core is behind one lock, but a send holds it only briefly: to take a snapshot at the start and to queue the send at the end. Choosing the route (the LAN probe, the mDNS restart, the Bluetooth lookup, see the timeouts in `choose_route`) and the announce to a paired computer run without it, so other D-Bus calls do not wait for them; if the engine restarted meanwhile, the send fails with "The sharing service restarted. Try again". Answering a transfer (`AnswerTransfer`, `Accept`, `Decline`) and `Cancel` do not take the lock either: answers go through the consent book, and a Cancel marks a send that is still choosing its route so it is dropped before it is queued and ends as `Cancelled` (a Cancel in the instant between queuing and the library taking the send can still be lost; it is sent twice to narrow that window). A restart still holds the lock while the old engine stops (bounded: the library first, then the final events are drained; unfinished transfers end as `Disconnected`). At exit the engine stop is bounded to 0.8 s and the Wi-Fi cleanup always runs after it (2 s), within the shell's 3 s wait.
 
 ### Inside the shell
 
@@ -102,6 +102,7 @@ The core is behind one lock, but a send holds it only briefly: to take a snapsho
 | --- | --- |
 | `main.cpp` | Window, single instance, starts the core detached, window-open flag, whole-app quits |
 | `corebridge.*` | `CoreBridge`: D-Bus client and the QML-facing state; `transferBusy` is true while a transfer is live and not just awaiting approval; also the detached starts of the core and the pid-file kill of a stuck one |
+| `coreerror.h` | Classifies a D-Bus failure: no answer (no core, or none in time), the core reporting its engine stopped (`NotRunning`), or anything else. The shell shows its own sentence for the first two |
 | `transfermodel.*` | `TransferModel`: live and history rows; `beginPending`/`failPending` show a send before the core reports it; `busy` and `transferEnded` feed the Send page and the toasts |
 | `transferfiltermodel.*` | `TransferFilterModel`: `TransferModel` narrowed by direction, status group and search text for the Transfers page |
 | `devicemodel.*` | Nearby devices |
@@ -409,7 +410,7 @@ Everything below runs in CI (`.github/workflows/ci.yml`) through `build/check.sh
 | --- | --- | --- |
 | Rust unit tests | `#[cfg(test)]` in `src/core/*.rs` | Name guard, rate limiter, ARP parsing and the trusted-sender rule, settings round trip and defaults, history, stale transfer cleanup, event merging, local-address filter, final states, code format. `trust.rs` tests run two real nodes over loopback: pairing, declined pairing, strangers refused, unnamed computer, unpair, per-address and global connection limits |
 | Rust integration | `tests/core/dbus_api.rs` | Starts the real `kuickshared` binary and drives its D-Bus API as the shell does: default settings, persistence, reset, history remove, clear and expiry, legacy entries without an id, trusting an unknown transfer |
-| Qt tests | `tests/shell/`, run by `ctest` | `TransferModel` (merging, final-state handling, history rows), `TransferFilterModel`, `DeviceModel`, Dolphin menu entry writing, Exec quoting |
+| Qt tests | `tests/shell/`, run by `ctest` | `TransferModel` (merging, final-state handling, history rows), `TransferFilterModel`, `DeviceModel`, Dolphin menu entry writing, Exec quoting, `CoreError` classification |
 | `rqs_lib` | `cargo test -p rqs_lib` (not part of the root run: it is not a workspace member) | The upgrade hand-over, plain and encrypted, the Bluetooth receiver and sender and the scanner, in memory and over loopback, with a fake `WifiLink` |
 | Hardware | `#[ignore]` tests in `rqs_lib` (`hdl::ble_scan`, `hdl::ble_send::dial`) | Scan, dial and send with a real adapter and phone, run by hand outside the container; see [Wi-Fi upgrade](wifi-direct.md) |
 
@@ -419,8 +420,8 @@ Not covered by automated tests:
 
 - Real Quick Share transfers (with a phone or between two instances): the consent book and `consent_step` (consent, auto-accept, name guard) are tested with events made by hand and a fake MAC reader, and the library's receive limits and file handling with in-memory sessions; none of that ran against a phone. BLE, Wi-Fi and NetworkManager have no automated test with a real device: the firewall refusal and consent of the hotspot are tested against a fake NetworkManager and firewalld only.
 - Pairing between two real computers; it is tested over loopback only.
-- `CoreBridge`, notifications, progress jobs and the QML UI, beyond `qmllint`.
-- The Flatpak: only the headless smoke test above. Notifications, job progress, the file chooser and Dolphin reading the entry are unverified.
+- `CoreBridge` itself, notifications and the QML UI, beyond `qmllint` and the `CoreError` test.
+- The Flatpak: only the headless smoke test above. Notifications, the file chooser and Dolphin reading the entry are unverified.
 - The AppImage: `build/appimage/test-appimage.sh` is a headless smoke test in bare containers (Debian, Alpine, NixOS, and Ubuntu 22.04 under Xvfb without Wayland: the main window appears within 10 s). Following the desktop theme, tray, notifications, file dialogs, GPU rendering, Wayland and the first-launch dialog are unverified on a real desktop. The tarball installer: `build/test-tarball.sh`, also headless.
 
 ## Packaging
@@ -505,7 +506,7 @@ flowchart LR
   - a file is forwarded to the sandbox;
   - a second launch hands over to the running instance.
 
-  Notifications, job progress, the file chooser and Dolphin itself need a real Plasma session and are untested.
+  Notifications, the file chooser and Dolphin itself need a real Plasma session and are untested.
 
 ### Native packages
 

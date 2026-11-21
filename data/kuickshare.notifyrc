@@ -6,15 +6,25 @@ DesktopEntry=io.github.the_beper.KuickShare
 
 [Event/incomingTransfer]
 Name=Incoming Transfer
-Comment=A nearby device wants to share something
+Comment=A nearby device wants to send something and waits for your answer
 Action=Popup
 
 [Event/transferFinished]
-Name=Transfer Completed
-Comment=Files or text were received
+Name=Content Received
+Comment=Files, text or a link arrived from a nearby device
 Action=Popup
 
 [Event/transferFailed]
 Name=Transfer Failed
-Comment=A transfer was declined or interrupted
+Comment=An offer was refused, or a transfer was not accepted or was interrupted
+Action=Popup
+
+[Event/wifiJoined]
+Name=Wi-Fi Network Joined
+Comment=A Wi-Fi network shared by a phone was joined automatically
+Action=Popup
+
+[Event/wifiJoinFailed]
+Name=Could Not Join Wi-Fi
+Comment=A Wi-Fi network shared by a phone could not be joined
 Action=Popup

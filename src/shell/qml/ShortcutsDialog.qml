@@ -36,10 +36,7 @@ Kirigami.Dialog {
         return parts;
     }
 
-    // The room around the header icon and the close button, the same on every side, and the room around the content.
-    readonly property real margin: Kirigami.Units.largeSpacing
     readonly property real contentMargin: Kirigami.Units.largeSpacing * 2
-    readonly property real headerSize: Kirigami.Units.iconSizes.medium
 
     title: KI18n.i18n("Shortcuts")
     standardButtons: Kirigami.Dialog.NoButton
@@ -48,41 +45,6 @@ Kirigami.Dialog {
     // Room above and below for the opening animation, which moves the dialog: a dialog as tall as the window
     // would be clamped to it and stretch while it moves. A taller content scrolls.
     maximumHeight: absoluteMaximumHeight - Kirigami.Units.gridUnit * 3
-
-    header: QQC2.Control {
-        // Every side set on its own: the desktop style ignores `padding` for the top and bottom.
-        // The header spans the dialog border (1 px at the top and the sides); the content sits inside it.
-        topPadding: dialog.margin + 1
-        bottomPadding: dialog.margin
-        leftPadding: dialog.margin + 1
-        rightPadding: dialog.margin + 1
-        // The icon and the close button are the same size, so the header has the same room above, below and at the
-        // sides of what you see: the icon, and the box of the button (it shows when focused).
-        contentItem: RowLayout {
-            spacing: Kirigami.Units.largeSpacing
-
-            Kirigami.Icon {
-                source: "input-keyboard-symbolic"
-                Layout.preferredWidth: dialog.headerSize
-                Layout.preferredHeight: dialog.headerSize
-            }
-            Kirigami.Heading {
-                level: 3
-                text: dialog.title
-                Layout.fillWidth: true
-            }
-            QQC2.ToolButton {
-                icon.name: "window-close"
-                icon.width: Kirigami.Units.iconSizes.smallMedium
-                icon.height: Kirigami.Units.iconSizes.smallMedium
-                display: QQC2.AbstractButton.IconOnly
-                text: KI18n.i18nc("@action:button", "Close")
-                Layout.preferredWidth: dialog.headerSize
-                Layout.preferredHeight: dialog.headerSize
-                onClicked: dialog.close()
-            }
-        }
-    }
 
     // The dialog only sizes itself from an Item's implicitHeight; a layout alone gives a collapsed dialog.
     Item {

@@ -113,8 +113,8 @@ jobs:
       # pull fails the job.
       - name: Pull the build image
         run: |
-          podman pull ghcr.io/the-beper/kuickshare-appimage:arch@sha256:59ffbf669837133b7345429d7e9787d9fd97ed1c63939f691a63b02593a3de2d
-          podman tag ghcr.io/the-beper/kuickshare-appimage:arch@sha256:59ffbf669837133b7345429d7e9787d9fd97ed1c63939f691a63b02593a3de2d localhost/kuickshare-appimage:arch
+          podman pull ghcr.io/the-beper/kuickshare-appimage:arch@sha256:bfb963dcae1a59f254a6e50ee1f7ba1327d7612828d58eec405f151d3b2273e7
+          podman tag ghcr.io/the-beper/kuickshare-appimage:arch@sha256:bfb963dcae1a59f254a6e50ee1f7ba1327d7612828d58eec405f151d3b2273e7 localhost/kuickshare-appimage:arch
 
       - name: Build the AppImage
         run: build/build-appimage.sh
@@ -151,7 +151,7 @@ jobs:
       contents: read
     container:
       # By digest (bump: CONTRIBUTING.md, Pinned tools).
-      image: ghcr.io/the-beper/kuickshare-build:fedora45@sha256:07102bc08be87297ee28a0ca26d9224371bc09ec685d6c36c38f0c289ac72cb3
+      image: ghcr.io/the-beper/kuickshare-build:fedora45@sha256:b18b1a7e00cf008eaeef6d58ec6f26e0093c5d28d086a39d6207f4ea9c59666b
     outputs:
       tarball_sha256: ${{ steps.hash.outputs.tarball }}
     steps:
@@ -205,8 +205,8 @@ jobs:
       # A failed pull fails the job.
       - name: Pull the build image
         run: |
-          podman pull ghcr.io/the-beper/kuickshare-build:fedora45@sha256:07102bc08be87297ee28a0ca26d9224371bc09ec685d6c36c38f0c289ac72cb3
-          podman tag ghcr.io/the-beper/kuickshare-build:fedora45@sha256:07102bc08be87297ee28a0ca26d9224371bc09ec685d6c36c38f0c289ac72cb3 localhost/kuickshare-build:fedora45
+          podman pull ghcr.io/the-beper/kuickshare-build:fedora45@sha256:b18b1a7e00cf008eaeef6d58ec6f26e0093c5d28d086a39d6207f4ea9c59666b
+          podman tag ghcr.io/the-beper/kuickshare-build:fedora45@sha256:b18b1a7e00cf008eaeef6d58ec6f26e0093c5d28d086a39d6207f4ea9c59666b localhost/kuickshare-build:fedora45
 
       # The script enters the image itself and works on the checkout; the smoke test below runs in bare Fedora containers.
       - name: Build the rpm
@@ -247,8 +247,8 @@ jobs:
       # (bump: CONTRIBUTING.md, Pinned tools). A failed pull fails the job.
       - name: Pull the build image
         run: |
-          podman pull ghcr.io/the-beper/kuickshare-build:ubuntu26@sha256:6d43f0cd74c47470359f939127296afb1c62cc70118cd2127a1dbebd27fc9782
-          podman tag ghcr.io/the-beper/kuickshare-build:ubuntu26@sha256:6d43f0cd74c47470359f939127296afb1c62cc70118cd2127a1dbebd27fc9782 localhost/kuickshare-build:ubuntu26
+          podman pull ghcr.io/the-beper/kuickshare-build:ubuntu26@sha256:347c9c69edc387e0837491f4375792e88273384b68af0b878d809501ad742c22
+          podman tag ghcr.io/the-beper/kuickshare-build:ubuntu26@sha256:347c9c69edc387e0837491f4375792e88273384b68af0b878d809501ad742c22 localhost/kuickshare-build:ubuntu26
 
       - name: Build the deb
         run: build/packaging/build-deb.sh
@@ -288,8 +288,8 @@ jobs:
       # same bump), tagged to the name build-arch.sh looks for.
       - name: Pull the build image
         run: |
-          podman pull ghcr.io/the-beper/kuickshare-appimage:arch@sha256:59ffbf669837133b7345429d7e9787d9fd97ed1c63939f691a63b02593a3de2d
-          podman tag ghcr.io/the-beper/kuickshare-appimage:arch@sha256:59ffbf669837133b7345429d7e9787d9fd97ed1c63939f691a63b02593a3de2d localhost/kuickshare-appimage:arch
+          podman pull ghcr.io/the-beper/kuickshare-appimage:arch@sha256:bfb963dcae1a59f254a6e50ee1f7ba1327d7612828d58eec405f151d3b2273e7
+          podman tag ghcr.io/the-beper/kuickshare-appimage:arch@sha256:bfb963dcae1a59f254a6e50ee1f7ba1327d7612828d58eec405f151d3b2273e7 localhost/kuickshare-appimage:arch
 
       # The script runs makepkg in the image as an unprivileged user (--userns=keep-id); the smoke test below runs in a
       # bare Arch container.
@@ -348,8 +348,8 @@ jobs:
       # By digest (bump: CONTRIBUTING.md, Pinned tools). A failed pull fails the job.
       - name: Pull the build image
         run: |
-          podman pull ghcr.io/the-beper/kuickshare-flatpak:fedora45@sha256:af1109af183b816c772252dc2b85c14eeb4f29defc47aa0aae772c54e9abeb71
-          podman tag ghcr.io/the-beper/kuickshare-flatpak:fedora45@sha256:af1109af183b816c772252dc2b85c14eeb4f29defc47aa0aae772c54e9abeb71 localhost/kuickshare-flatpak:fedora45
+          podman pull ghcr.io/the-beper/kuickshare-flatpak:fedora45@sha256:4b901dcefb3f2337530147228edb3c762c23923a40256e26fcc38ec2bddc9466
+          podman tag ghcr.io/the-beper/kuickshare-flatpak:fedora45@sha256:4b901dcefb3f2337530147228edb3c762c23923a40256e26fcc38ec2bddc9466 localhost/kuickshare-flatpak:fedora45
 
       - name: Build the Flatpak (unsigned)
         run: KUICKSHARE_FLATPAK_REPO="$PWD/pages/repo" build/flatpak/build-flatpak.sh

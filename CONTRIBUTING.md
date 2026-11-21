@@ -201,7 +201,7 @@ The release builds with fixed tool versions, bumped by hand in a pull request. D
 |---|---|---|---|
 | Rust of the tarball | `1.99.1` | `RUST_VERSION` in `release.yml`, and CI's tarball job (`check.sh` keeps them equal) | run `build/build-env.sh build/check.sh` with that toolchain; the `rustup-init` script itself is not pinned, it only installs this toolchain |
 | Rust of the Flatpak | `org.freedesktop.Sdk.Extension.rust-stable//25.08` at `09784a99…1507` (rustc 1.98.1) | `rust_commit` in `build/flatpak/build-flatpak.sh` | below |
-| KDE SDK and runtime | `org.kde.Sdk//6.11` at `df314f9c…3a86`, `org.kde.Platform//6.11` at `76fa01ac…c473` | `sdk_commit`, `platform_commit` in the same file | below |
+| KDE SDK and runtime | `org.kde.Sdk//6.11` at `adaeaaee…976f`, `org.kde.Platform//6.11` at `2c059c88…ab5d` | `sdk_commit`, `platform_commit` in the same file | below |
 | Build images | `ghcr.io/the-beper/kuickshare-build:fedora45`, `…-build:ubuntu26`, `…-flatpak:fedora45`, `…-appimage:arch`, each `@sha256:…` | the image references of the build jobs in `release.yml` (`check.sh` fails on one without a digest; the two fedora45 lines and the two arch lines move in the same bump) | [Bump the images](#bump-the-build-images) |
 | `tomlkit` of the Flatpak image | exact version and wheel hash (`--require-hashes`) | `build/flatpak/Containerfile` | the hash is `urls[].digests.sha256` of the wheel in `https://pypi.org/pypi/tomlkit/<version>/json`; after a change of the pin, the release uses it only once `images.yml` has rebuilt `kuickshare-flatpak` on `main` and its digest in `release.yml` is bumped |
 

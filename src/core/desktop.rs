@@ -53,7 +53,7 @@ const FINISHED_KEEP: Duration = Duration::from_secs(60);
 /// The name the shell owns on the bus while its window lives.
 const SHELL_NAME: &str = "org.kde.kuickshare";
 
-/// The duration of the "Visible for 10 Minutes" menu entry, in seconds.
+/// The duration of the "Visible for 10 minutes" menu entry, in seconds.
 const TEMP_VISIBLE_SECS: u32 = 600;
 
 /// Sees whether the process runs in a Flatpak sandbox: several pieces of the desktop must go
@@ -86,17 +86,29 @@ fn waits_consent(event: &TransferEvent) -> bool {
 /// Why an offer was refused by the library, in the words `CoreBridge::refusalText` had.
 fn refusal_text(reason: &str) -> String {
     match reason {
-        "too_many_files" => crate::i18n::i18n!("The offer has too many files"),
+        "too_many_files" => crate::i18n::i18n!(
+            "The offer has too many files. Ask the sender to send fewer files at once"
+        ),
         "not_enough_space" => {
-            crate::i18n::i18n!("There is not enough free space in the download folder")
+            crate::i18n::i18n!(
+                "There is not enough free space in the download folder. Free some space or choose another download folder in Preferences"
+            )
         }
-        "destination" => crate::i18n::i18n!("The download folder cannot be used"),
-        "bad_name" => crate::i18n::i18n!("A file name in the offer cannot be saved"),
-        "bad_size" | "duplicate_id" => crate::i18n::i18n!("The offer is malformed"),
+        "destination" => crate::i18n::i18n!(
+            "The download folder cannot be used. Choose another download folder in Preferences"
+        ),
+        "bad_name" => crate::i18n::i18n!(
+            "A file name in the offer cannot be saved. Ask the sender to rename the file and send it again"
+        ),
+        "bad_size" | "duplicate_id" => {
+            crate::i18n::i18n!("The offer is malformed. Ask the sender to try again")
+        }
         // The offer may be refused without a reason in this version, or the reason is a word
         // unknown to it.
         "" => String::default(),
-        _ => crate::i18n::i18n!("The offer was refused"),
+        _ => crate::i18n::i18n!(
+            "The offer was refused for an unknown reason. Ask the sender to try again"
+        ),
     }
 }
 
@@ -1237,29 +1249,38 @@ mod tests {
     fn refusals_come_out_in_the_same_words() {
         assert_eq!(
             refusal_text("too_many_files"),
-            i18n!("The offer has too many files")
+            i18n!("The offer has too many files. Ask the sender to send fewer files at once")
         );
         assert_eq!(
             refusal_text("not_enough_space"),
-            i18n!("There is not enough free space in the download folder")
+            i18n!(
+                "There is not enough free space in the download folder. Free some space or choose another download folder in Preferences"
+            )
         );
         assert_eq!(
             refusal_text("destination"),
-            i18n!("The download folder cannot be used")
+            i18n!(
+                "The download folder cannot be used. Choose another download folder in Preferences"
+            )
         );
         assert_eq!(
             refusal_text("bad_name"),
-            i18n!("A file name in the offer cannot be saved")
+            i18n!(
+                "A file name in the offer cannot be saved. Ask the sender to rename the file and send it again"
+            )
         );
-        assert_eq!(refusal_text("bad_size"), i18n!("The offer is malformed"));
+        assert_eq!(
+            refusal_text("bad_size"),
+            i18n!("The offer is malformed. Ask the sender to try again")
+        );
         assert_eq!(
             refusal_text("duplicate_id"),
-            i18n!("The offer is malformed")
+            i18n!("The offer is malformed. Ask the sender to try again")
         );
         assert_eq!(refusal_text(""), "");
         assert_eq!(
             refusal_text("some_future_code"),
-            i18n!("The offer was refused")
+            i18n!("The offer was refused for an unknown reason. Ask the sender to try again")
         );
     }
 

@@ -166,6 +166,9 @@ Kirigami.Dialog {
                             icon.name: "edit-copy"
                             display: QQC2.AbstractButton.IconOnly
                             text: KI18n.i18nc("@action:button", "Copy Command")
+                            QQC2.ToolTip.text: text
+                            QQC2.ToolTip.visible: hovered || visualFocus
+                            QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                             onClicked: dialog.core.copyToClipboard(problem.modelData.command)
                         }
                     }

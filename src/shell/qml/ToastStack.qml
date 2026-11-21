@@ -143,7 +143,7 @@ Item {
                 Kirigami.Action {
                     visible: toast.detailId.length > 0
                     text: KI18n.i18n("Show Details")
-                    icon.name: "view-list-details"
+                    icon.name: "help-about-symbolic"
                     onTriggered: {
                         stack.detailsRequested(toast.detailId);
                         stack.dismiss(toast.uid);
@@ -173,8 +173,24 @@ Item {
                 onTapped: stack.dismiss(toast.uid)
             }
 
+            HoverHandler {
+                id: hover
+            }
+            // True while the keyboard focus is on something inside the toast (its buttons).
+            readonly property bool focusInside: {
+                let item = toast.Window.window?.activeFocusItem ?? null;
+                while (item) {
+                    if (item === toast) {
+                        return true;
+                    }
+                    item = item.parent;
+                }
+                return false;
+            }
+
+            // Paused while the pointer is over the toast or the focus is inside it; it restarts when both end.
             Timer {
-                running: !toast.persistent && toast.timeout > 0
+                running: !toast.persistent && toast.timeout > 0 && !hover.hovered && !toast.focusInside
                 interval: toast.timeout
                 onTriggered: stack.dismiss(toast.uid)
             }

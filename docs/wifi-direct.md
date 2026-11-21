@@ -46,7 +46,7 @@ sequenceDiagram
 | Protocol: frames, hand-over state machine, timeouts, `WifiLink` trait | `third_party/rqs_lib/src/upgrade.rs`, handlers in `hdl/inbound.rs` and `hdl/outbound.rs` (see [THIRD_PARTY.md](../THIRD_PARTY.md)) |
 | BLE receiver: `0xFEF3` advertisement, GATT "weave" service, bridge to a receive session | `third_party/rqs_lib/src/hdl/ble_receiver/` |
 | BLE sender: windowed scan, L2CAP and GATT dial, central bridges | `hdl/ble_scan.rs`, `hdl/ble_send/` |
-| Bluetooth devices in the app: `ble:` ids, `ScanBluetooth`, job steps, Send page | `src/core/app.rs`, `src/core/dbus.rs`, `src/shell/` (see [D-Bus API](dbus-api.md)) |
+| Bluetooth devices in the app: `ble:` ids, `ScanBluetooth`, Send page | `src/core/app.rs`, `src/core/dbus.rs`, `src/shell/` (see [D-Bus API](dbus-api.md)) |
 | NetworkManager backend (`NmLink`): volatile hotspot and join profiles, 5 GHz capability, and existing-LAN port/zone handling over D-Bus | `src/core/link.rs` |
 | Setting | `wifi_upgrade` in `settings.json`, D-Bus property `WifiUpgrade`; the firewall consent of a session is set with `RequestWifiUpgrade` (see [D-Bus API](dbus-api.md)) |
 
@@ -293,7 +293,6 @@ All with the MT7922 adapter, a Pixel 7 and a Galaxy A55 (Samsung Quick Share 13.
 | Laptop (Fedora 45, NetworkManager 1.58, MT7922 associated to the home Wi-Fi) | Send to both phones and receive from both: OK; the home connection returned about 0.6 s after the transfer; no `kuickshare-*` profile left; the join took 6-8 s after the offer |
 | Plain frames after the upgrade, the phone's `CLIENT_INTRODUCTION` endpoint id (the receiver checks it), an advertisement without the "RxInstantConnectionAdv" field | Work on both phones |
 | NAT | While the hotspot is up NetworkManager adds `masquerade` for `192.168.49.0/24` leaving the subnet and forward rules limited to the hotspot interface and that subnet; gone afterwards. `net.ipv4.ip_forward` stays `0`, so nothing is routed to another network |
-| Plasma job | Step texts ("Looking for the device…", "Connecting…", "Waiting for the other device to accept", "Sending files", "Receiving files") and terminate/progress updates reach the tracker (`org.kde.JobViewV3`); the popup showed title, progress bar and Cancel for a receive; the other step texts were seen only in the capture |
 | Kernel log around transfers | No `btusb`/`mt79xx` reset or Wi-Fi timeout |
 | Pixel 7 at safe-to-disconnect level 4 (Play services 26.45) | Send over the LAN, 20 MB, same SHA-256; receive of two files started over Bluetooth and moved to the LAN, one name already taken and numbered, both seen in the hidden staging folder until complete; send over Bluetooth then its Wi-Fi Direct group, same SHA-256; receive of 600 MB at about 60 MB/s; a cancel from the phone and one from the computer's notification left no partial file and no staging folder. With the handshake the phone logs `[safe disconnection]` at the end and shows its own cancel 0.4 s after the tap |
 | Android and the hotspot | Android drops a network it validated as having no internet when joined from Settings; Nearby joins programmatically and no drop was seen in the logged transfers |

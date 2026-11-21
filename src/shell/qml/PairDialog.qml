@@ -116,13 +116,28 @@ Kirigami.Dialog {
                     dialog.stage = "waiting";
                 }
 
-                QQC2.Label {
-                    visible: candidate.trust === "trusted" || !candidate.pairing
-                    text: candidate.trust === "trusted" ? KI18n.i18n("Already paired") : KI18n.i18n("Waiting for the other device")
-                    opacity: 0.7
-                    anchors.right: parent.right
-                    anchors.rightMargin: Kirigami.Units.largeSpacing
-                    anchors.verticalCenter: parent.verticalCenter
+                // Shown at the right of the name, which elides instead of running under it.
+                readonly property string statusText: trust === "trusted" ? KI18n.i18n("Already paired") : !pairing ? KI18n.i18n("Waiting for the other device") : ""
+
+                Accessible.description: statusText
+                contentItem: RowLayout {
+                    spacing: Kirigami.Units.largeSpacing
+
+                    Kirigami.Icon {
+                        source: candidate.icon.name
+                        Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                        Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                    }
+                    QQC2.Label {
+                        text: candidate.text
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+                    QQC2.Label {
+                        visible: candidate.statusText.length > 0
+                        text: candidate.statusText
+                        opacity: 0.7
+                    }
                 }
             }
         }
@@ -177,7 +192,7 @@ Kirigami.Dialog {
             visible: dialog.stage === "code"
             level: 1
             text: dialog.code
-            font.family: "monospace"
+            font.family: Kirigami.Theme.fixedWidthFont.family
             horizontalAlignment: Text.AlignHCenter
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.largeSpacing

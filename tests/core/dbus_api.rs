@@ -543,11 +543,11 @@ async fn bluetooth_ids_are_refused_where_they_make_no_sense() {
         .call("SendText", &("ble:G483", "hi", "text"))
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("unknown device"), "{err}");
+    assert!(err.to_string().contains("no longer available"), "{err}");
     // A scan window needs discovery to be on.
     let err = daemon.call("ScanBluetooth", &()).await.unwrap_err();
     assert!(
-        err.to_string().contains("discovery is not running"),
+        err.to_string().contains("device search is not running"),
         "{err}"
     );
 }

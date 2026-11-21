@@ -144,6 +144,8 @@ public:
     void setHistoryKeepDays(int days);
     /// `row` is a row of the unfiltered transfer model.
     Q_INVOKABLE void removeTransfer(int row);
+    /// Removes a saved entry by its history uid (the row of a list may have moved since it was chosen).
+    Q_INVOKABLE void removeSavedTransfer(quint64 uid);
     /// Tells the core whether the window shows now: end-of-transfer notifications stay off
     /// while it does (its own toast reports the end). The core does not read this back. The
     /// call at the end of `main` must land before the process is gone.

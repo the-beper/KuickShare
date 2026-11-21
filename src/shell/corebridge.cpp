@@ -34,6 +34,7 @@
 #include <KLocalizedString>
 
 #include "autostart.h"
+#include "coreerror.h"
 #include "folderexpand.h"
 #include "openablefile.h"
 #include <kcoreaddons.h>
@@ -79,20 +80,22 @@ namespace
 
 namespace
 {
-    /// The reply says nobody answered (no core, or none in time), as opposed to the core refusing.
-    bool coreUnreachable(const QDBusError &error)
+    using CoreError::unreachable;
+
+    /// What the user reads when a call to the core failed: a sentence of ours when nobody answered or the engine is
+    /// stopped, otherwise the core's own message (its outermost layer, see `failed()` in dbus.rs).
+    QString reportedError(const QDBusError &error)
     {
-        switch (error.type()) {
-        case QDBusError::ServiceUnknown:
-        case QDBusError::NoReply:
-        case QDBusError::Disconnected:
-        case QDBusError::NoServer:
-        case QDBusError::TimedOut:
-        case QDBusError::UnknownObject:
-            return true;
-        default:
-            return false;
+        qWarning() << "a call to the core failed:" << error.name() << error.message();
+        switch (CoreError::kindOf(error)) {
+        case CoreError::Kind::Unreachable:
+            return i18n("The sharing service is not responding. Restart KuickShare and try again");
+        case CoreError::Kind::NotRunning:
+            return i18n("The sharing service is not running. Restart KuickShare and try again");
+        case CoreError::Kind::Other:
+            break;
         }
+        return error.message().isEmpty() ? i18n("Something went wrong. Try again, and look in the log if it keeps happening") : error.message();
     }
 }
 
@@ -484,7 +487,7 @@ void CoreBridge::callAsync(const QDBusMessage &message, const std::function<void
         w->deleteLater();
         const QDBusPendingReply<> reply = *w;
         if (reply.isError()) {
-            emit errorOccurred(reply.error().message());
+            emit errorOccurred(reportedError(reply.error()));
             refreshProperties(); // drop any optimistic value the UI is showing
             if (onError) {
                 onError();
@@ -747,7 +750,7 @@ void CoreBridge::answerWithToken(const QString &id, quint64 token, const QString
         } else if (is(".Error.DeviceChanged")) {
             emit errorOccurred(i18n("This device cannot be trusted: its network address now belongs to another device"));
         } else {
-            emit errorOccurred(reply.error().message());
+            emit errorOccurred(reportedError(reply.error()));
         }
         emit answerNotApplied(id); });
 }
@@ -756,26 +759,26 @@ QString CoreBridge::refusalText(const QString &reason)
 {
     if (reason == QLatin1String("too_many_files"))
     {
-        return i18n("The offer has too many files");
+        return i18n("The offer has too many files. Ask the sender to send fewer files at once");
     }
     if (reason == QLatin1String("not_enough_space"))
     {
-        return i18n("There is not enough free space in the download folder");
+        return i18n("There is not enough free space in the download folder. Free some space or choose another download folder in Preferences");
     }
     if (reason == QLatin1String("destination"))
     {
-        return i18n("The download folder cannot be used");
+        return i18n("The download folder cannot be used. Choose another download folder in Preferences");
     }
     if (reason == QLatin1String("bad_name"))
     {
-        return i18n("A file name in the offer cannot be saved");
+        return i18n("A file name in the offer cannot be saved. Ask the sender to rename the file and send it again");
     }
     if (reason == QLatin1String("bad_size") || reason == QLatin1String("duplicate_id"))
     {
-        return i18n("The offer is malformed");
+        return i18n("The offer is malformed. Ask the sender to try again");
     }
     // A code this version does not know.
-    return reason.isEmpty() ? QString() : i18n("The offer was refused");
+    return reason.isEmpty() ? QString() : i18n("The offer was refused for an unknown reason. Ask the sender to try again");
 }
 
 namespace
@@ -1168,7 +1171,7 @@ void CoreBridge::requestWifiRequirements(bool force)
         if (reply.isError()) {
             qWarning() << "WifiRequirements failed:" << reply.error().name();
             if (latest) {
-                markRequirementsStale(coreUnreachable(reply.error()) ? QStringLiteral("unavailable") : QStringLiteral("schema"));
+                markRequirementsStale(unreachable(reply.error()) ? QStringLiteral("unavailable") : QStringLiteral("schema"));
             }
             return;
         }
@@ -1367,11 +1370,11 @@ void CoreBridge::requestWifiUpgrade(bool enabled, bool allowInsecure)
         QString reason = QStringLiteral("failed");
         if (error.name().endsWith(QLatin1String(".Error.RequirementsBlocked"))) {
             reason = QStringLiteral("requirements_blocked");
-        } else if (coreUnreachable(error)) {
+        } else if (unreachable(error)) {
             reason = QStringLiteral("service_unavailable");
         }
         if (reason == QLatin1String("failed")) {
-            emit errorOccurred(error.message());
+            emit errorOccurred(reportedError(error));
         }
         // The switch shows the value of the core again, whatever the user did to it.
         emit wifiUpgradeChanged();
@@ -1404,7 +1407,7 @@ void CoreBridge::setDolphinIntegration(bool enabled)
         return;
     }
     if (!DolphinMenu::setEnabled(enabled)) {
-        emit errorOccurred(i18n("Could not update Dolphin’s context menu"));
+        emit errorOccurred(i18n("Could not update Dolphin’s context menu. Check the permissions of your home folder and try again"));
         return;
     }
     m_dolphinIntegration = enabled;
@@ -1428,7 +1431,7 @@ void CoreBridge::setMenuEntry(bool enabled)
         return;
     }
     if (!(enabled ? Integration::installMenuEntry() : Integration::removeMenuEntry())) {
-        emit errorOccurred(i18n("Could not update the application menu"));
+        emit errorOccurred(i18n("Could not update the application menu. Check the permissions of your home folder and try again"));
     } else {
         Integration::markAsked();
     }
@@ -1439,7 +1442,7 @@ void CoreBridge::integrateAppImage()
 {
     if (!Integration::installMenuEntry() || !DolphinMenu::setEnabled(true)) {
         // Not remembered: it is asked again at the next start.
-        emit errorOccurred(i18n("Could not add KuickShare to the menus"));
+        emit errorOccurred(i18n("Could not add KuickShare to the menus. Check the permissions of your home folder and try again"));
         return;
     }
     Integration::markAsked();
@@ -1479,8 +1482,13 @@ void CoreBridge::removeTransfer(int row)
         m_transfers.remove(row); // a live row: nothing saved yet
         return;
     }
+    removeSavedTransfer(uid);
+}
+
+void CoreBridge::removeSavedTransfer(quint64 uid)
+{
     auto msg = methodCall(iface, QStringLiteral("RemoveHistory"));
-    msg << QVariant::fromValue(quint64(uid));
+    msg << QVariant::fromValue(uid);
     callAsync(msg, [this, uid] { m_transfers.removeHistory(uid); });
 }
 
@@ -1681,7 +1689,7 @@ void CoreBridge::setAutostart(bool enabled)
     }
     if (!Autostart::setEnabled(enabled))
     {
-        emit errorOccurred(i18n("Could not update the autostart entry"));
+        emit errorOccurred(i18n("Could not update the autostart entry. Check the permissions of your home folder and try again"));
     }
     m_autostart = Autostart::isEnabled();
     emit autostartChanged();

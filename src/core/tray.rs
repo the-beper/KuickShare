@@ -101,7 +101,7 @@ impl ksni::Tray for TrayIcon {
     }
 
     fn text_direction(&self) -> TextDirection {
-        TextDirection::LeftToRight
+        text_direction_of(&crate::i18n::locales())
     }
 
     /// The same name as the shell used, as a theme icon.
@@ -170,21 +170,21 @@ impl ksni::Tray for TrayIcon {
                 ..StandardItem::default()
             }),
             MenuItem::Standard(StandardItem {
-                label: i18nc!("@action:inmenu", "Send Clipboard"),
+                label: i18nc!("@action:inmenu", "Send Clipboard…"),
                 icon_name: "edit-paste".into(),
                 activate: sender(Action::PasteClipboard),
                 ..StandardItem::default()
             }),
             MenuItem::Separator,
             MenuItem::Checkmark(CheckmarkItem {
-                label: i18nc!("@action:inmenu", "Visible to Nearby Devices"),
+                label: i18nc!("@action:inmenu", "Visible to nearby devices"),
                 icon_name: "visibility".into(),
                 checked: view.visible,
                 activate: sender(Action::SetVisible),
                 ..CheckmarkItem::default()
             }),
             MenuItem::Checkmark(CheckmarkItem {
-                label: i18nc!("@action:inmenu", "Visible for 10 Minutes"),
+                label: i18nc!("@action:inmenu", "Visible for 10 minutes"),
                 icon_name: "chronometer".into(),
                 checked: view.visible_until > 0,
                 activate: sender(Action::ToggleTemporaryVisible),
@@ -207,9 +207,47 @@ impl ksni::Tray for TrayIcon {
     }
 }
 
+/// The scripts written right to left, by language code (the codes KDE ships right-to-left layouts for).
+const RTL_LANGUAGES: [&str; 8] = ["ar", "fa", "he", "ps", "sd", "ug", "ur", "yi"];
+
+/// The direction of the first language of the locale list (see [`crate::i18n::locales`]).
+fn text_direction_of(locales: &[String]) -> TextDirection {
+    let language = locales
+        .first()
+        .and_then(|name| name.split(['_', '-', '@']).next())
+        .unwrap_or_default();
+    if RTL_LANGUAGES.contains(&language) {
+        TextDirection::RightToLeft
+    } else {
+        TextDirection::LeftToRight
+    }
+}
+
 fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_menu_follows_the_direction_of_the_language() {
+        let direction = |names: &[&str]| {
+            text_direction_of(&names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>())
+        };
+        assert!(matches!(
+            direction(&["he_IL", "he"]),
+            TextDirection::RightToLeft
+        ));
+        assert!(matches!(direction(&["ar"]), TextDirection::RightToLeft));
+        assert!(matches!(
+            direction(&["it_IT", "it"]),
+            TextDirection::LeftToRight
+        ));
+        assert!(matches!(direction(&[]), TextDirection::LeftToRight));
+    }
 }
