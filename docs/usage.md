@@ -166,15 +166,15 @@ Uninstalling leaves `~/.config/kuickshare/` (settings, history, paired devices);
 
 The window opens on the Send page and a tray icon appears. The computer is visible to nearby devices under the hostname, until you change the name in Preferences.
 
-The window has a fixed size. Closing it ends the window program and frees its memory (queued files and the current page are forgotten); the background service keeps running with its tray icon, so the computer can still receive. The tray icon opens the window on a left click (it starts the window program for that). Its menu has these entries:
+The window has a fixed size and its title is `<page> — KuickShare`. Closing it ends the window program and frees its memory (queued files and the current page are forgotten); the background service keeps running with its tray icon, so the computer can still receive. The tray icon opens the window on a left click (it starts the window program for that). Its menu has these entries:
 
 | Entry | Effect |
 |---|---|
 | Open KuickShare | Show the window |
 | Send Files… | Open the file chooser on the Send page |
-| Send Clipboard | Add the clipboard to the Send page |
-| Visible to Nearby Devices | Same switch as in Preferences |
-| Visible for 10 Minutes | Checkable. Visible even when the switch above is off, then back to it. The minutes left are in the tray tooltip; click again to stop |
+| Send Clipboard… | Add the clipboard to the Send page |
+| Visible to nearby devices | Same switch as in Preferences |
+| Visible for 10 minutes | Checkable. Visible even when the switch above is off, then back to it. The minutes left are in the tray tooltip; click again to stop |
 | Preferences | Open Preferences |
 | Quit | Stop the service; when a transfer is running, the window opens to ask first |
 
@@ -188,7 +188,7 @@ The tabs are Send and Transfers. The "More" button at their right opens a menu w
 
 ![The Send page with a device list](screenshots/send.png)
 
-The Send page takes files, or text, or a link. Choose what to send, then click a device in the "Send to" list. While a transfer is running (sending or receiving, not one that only waits for your approval) the devices are greyed out and a note says so; you can still queue files and text, and send when it ends. The status line at the top says whether this computer is ready, hidden or hidden by Do Not Disturb.
+The Send page takes files, or text, or a link. Choose what to send, then click a device in the "Send to" list. While a transfer is running (sending or receiving, not one that only waits for your approval) the devices are greyed out and a box says so, with a **Show Transfers** button; you can still queue files and text, and send when it ends. With no device in the list the page shows a progress bar while it looks; after about 20 seconds without any device it says "No devices found", with "Try searching again" and an **Open Help** button. The refresh button next to "Send to" looks for devices again, over Wi-Fi Direct and Bluetooth. When the service is not running there is no progress bar. The status line at the top says whether this computer is ready, hidden or hidden by Do Not Disturb.
 
 On the phone, open Quick Share and set it to receive from **Everyone** first. See [Troubleshooting](#troubleshooting).
 
@@ -200,10 +200,10 @@ Before sending to a device found on the network, KuickShare checks briefly that 
 
 There are five ways to add files, and they combine:
 
-- Click the drop area, or press `Ctrl+O`, or use **Send files...** in the tray menu.
-- Drop files on the drop area, or anywhere on the window. The window accepts a drop on any page and switches to Send.
+- Click the drop area, or press `Ctrl+O`, or use **Send Files…** in the tray menu.
+- Drop files on the drop area, or anywhere on the window. The window accepts a drop on any page and switches to Send. A dropped web link (`http://` or `https://`) goes into the text box instead, unless files are already queued.
 - Press `Ctrl+V` on the Send page. File paths copied in Dolphin are added as files. An image on the clipboard without text, such as a screenshot, is saved as a PNG in `~/.cache/kuickshare/clipboard/` and added.
-- Use **Paste from clipboard** in the drop area, or **Send clipboard** in the tray menu.
+- Use **Paste from Clipboard** in the drop area, or **Send Clipboard…** in the tray menu.
 - Pass them on the command line, or use the Dolphin entry below.
 
 A folder, dropped, pasted or given on the command line, is flattened: each regular file below it is queued as if chosen on its own and the folder structure is not kept on the receiving side. Hidden files and folders (names starting with `.`) and symbolic links are skipped. A folder that would bring one add past 500 files in total, or has more than 20000 entries, adds none of its files and shows an error; so does a folder with no file to send. The file dialog picks files only. The list shows the first five files and a "Show all" link for the rest. **Clear** empties the list, **Add** adds more.
@@ -212,7 +212,9 @@ A folder, dropped, pasted or given on the command line, is flattened: each regul
 
 The "Text or link" box takes up to 100000 characters. A counter appears when the text is within 10% of the limit; pasting and typing stop at the limit and longer text is cut. Spaces and blank lines around the text, and trailing spaces on each line, are removed before sending.
 
-If the whole text is one link of the form `scheme://host.tld...`, it is sent as a link by default. The receiving phone then offers to open it. Tick **Send as text** to send it as plain text instead. A link with any other text around it can only be sent as text, so the box is ticked and locked. Files and text are exclusive: if files are queued, they are sent and the text is not.
+If the whole text is one link of the form `scheme://host.tld...`, it is sent as a link by default. The receiving phone then offers to open it. Tick **Send as text** to send it as plain text instead. A link with any other text around it can only be sent as text, so the box is ticked and locked. Files and text are exclusive: if files are queued, the text card stays visible but disabled, and the files are sent and the text is not.
+
+The text stays in the box when you switch pages. The window keeps it until a send finishes or you press `Ctrl+L`; closing the window forgets it.
 
 `Ctrl+V` outside the text box pastes into the page as described above; inside the text box it pastes text only.
 
@@ -233,7 +235,7 @@ The options `--open-files`, `--clipboard`, `--transfer <id>` and `--page setting
 
 ## Receiving
 
-The notifications come from the background service: they appear while no window is open at all. When a nearby device wants to send, a persistent notification titled "Incoming Transfer" names the sender, shows a PIN if the protocol supplied one, and offers these actions. Requests always notify. The end-of-transfer notifications below are skipped while the window is shown, because the in-app toast covers them; error toasts stay until closed and have a Copy action.
+The notifications come from the background service: they appear while no window is open at all. Each one carries an `x-kde-eventId` from the installed `kuickshare.notifyrc` (`incomingTransfer`, `transferFinished`, `transferFailed`, `wifiJoined`, `wifiJoinFailed`); that Plasma then lists them under System Settings → Notifications is unverified *(inferred)*. When a nearby device wants to send, a persistent notification titled "Incoming Transfer" names the sender, shows a PIN if the protocol supplied one, and offers these actions. Requests always notify. The end-of-transfer notifications below are skipped while the window is shown, because the in-app toast covers them; error toasts stay until closed and have a Copy action.
 
 | Action | Effect |
 |---|---|
@@ -259,7 +261,7 @@ Sending to the phone produces the same notifications in the other direction. If 
 
 ## Without a shared network (experimental)
 
-With **Settings → Wi-Fi Direct → Receive and send without a shared network** on, a phone whose Wi-Fi is off or on another network can send to this computer, and this computer can send to it. The transfer starts over Bluetooth and moves to a temporary Wi-Fi link. It is off by default.
+With **Settings → Wi-Fi Direct → Receive and send without a shared network** on, a phone whose Wi-Fi is off or on another network can send to this computer, and this computer can send to it. The transfer starts over Bluetooth and moves to a temporary Wi-Fi link. It is off by default. Preferences shows an "Experimental" warning above the Wi-Fi Direct card.
 
 | | Receiving | Sending |
 |---|---|---|
@@ -311,10 +313,10 @@ When you turn the switch on:
 - When the last network connection drops (for example the Wi-Fi is turned off), the devices found over the network disappear from the Send page at once and a Bluetooth scan starts. A phone still in range shows up with the Bluetooth icon after a few seconds.
 - When a network comes back, the search for devices starts over at once, so a phone on it is found without waiting for the periodic check (up to about 30 s).
 
-**Plasma and the job tracker**
+**Plasma and the Transfers page**
 
 - Plasma shows "Connection 'kuickshare-ap' activated" for the temporary link. It cannot be hidden per connection, only for all networks in System Settings → Notifications → Network Management.
-- When you press a device on the Send page, the Transfers page gets its row and a job appears in Plasma's job tracker at once. The job names the step, in this order: "Looking for the device…", "Connecting…", "Waiting for the other device to accept", then "Switching to Wi-Fi…" until data moves.
+- When you press a device on the Send page, the Transfers page gets its row at once. The row names the step, in this order: "Looking for the device…", "Connecting…", "Waiting for the other device to accept", then "Switching to Wi-Fi…" until data moves.
 - When it finishes, the Send page is left empty; after a failure the files and text stay for a new attempt.
 
 ## Transfers page and history
@@ -327,24 +329,31 @@ The Transfers page lists transfers newest first, running ones included. A card s
 |---|---|
 | Accept, Decline | A request is waiting |
 | Cancel | A transfer is running |
-| Open folder | A received file transfer finished |
-| Copy | A text or link was received or sent |
-| More details | Always on finished entries: result, size, file names or text. For files received in this session (the saved history does not keep where files went), each file still in the download folder has an **Open** button; executables and launcher files never do |
-| Remove from list | Finished entries |
+| Show Details | Finished entries: opens a dialog with the result, size, file names or text. For files received in this session (the saved history does not keep where files went), each file still in the download folder has an **Open** button; executables and launcher files never do |
+| Remove from list | Finished entries. For a received text or link it asks first, because the text may exist nowhere else |
 
-At the top, a search field and two menus narrow the list: the search matches the device name, received text and file names; the menus pick the direction (all, received, sent) and the status (any, in progress, completed, not completed, which covers cancelled, declined and interrupted transfers). The filters are not saved and do not change the history. With no match the page says so; **Reset filters**, next to the menus, brings the whole list back (it is greyed out while no filter is set).
+A request waiting for your answer has a highlighted border and only the Accept and Decline buttons.
 
-When a transfer ends, a message slides up from the bottom edge of the window, on any page, and stacks above older ones (at most four):
+The details dialog also has **Open Folder** (a received file transfer), **Copy** (a text or link, received or sent) and **Open Link** (a received link).
+
+At the top, a search field and two menus narrow the list: the search matches the device name, received text and file names; the menus pick the direction (all, received, sent) and the status (any, in progress, completed, not completed, which covers cancelled, declined and interrupted transfers). The filters are not saved and do not change the history. With no match the page says so (with no transfer at all it reads "No transfers yet", and explains that transfers are only listed while the app is open when the history is off); **Reset filters**, next to the menus, brings the whole list back (it is greyed out while no filter is set).
+
+When a transfer ends, a message slides up from the bottom edge of the window and stacks above older ones (at most four):
 
 | Message | Colour | Stays |
 |---|---|---|
-| Transfer completed | Green | 4 s |
-| The transfer failed | Red | 10 s |
+| Transfer completed (not shown on the Transfers page, where the row says it) | Green | 8 s; the time stops while the pointer or keyboard focus is on it |
+| The transfer failed | Red | Until closed |
+| The other device declined the transfer or could not receive it (an outgoing transfer that moved no data) | Blue | 6 s |
 | The transfer was declined, The transfer was cancelled | Blue | 6 s |
 
-Errors the service reports, and "Copied to clipboard" (green, 1.5 s), use the same messages. A message that stays more than 3 s has a close button.
+Errors the service reports use red messages; "Copied to clipboard" (green, 1.5 s) uses the same stack. Red messages have a close button; they also have a **Copy** action, or **Show Details** when they report a failed transfer.
 
-Entries keep at most 200 file names and 10000 characters of text. Wi-Fi credentials received from a phone are saved without the password; the password is never written to disk (it stays in memory for 10 minutes at most, see [Receiving](#receiving)). **Clear History** deletes the whole list, not only the transfers the filters show, and does not touch received files. A banner suggests clearing when the history file gets large.
+The shell shows the core's outermost error message. When the service did not answer or is not running it shows its own sentence instead. Refusal texts and "Could not update …" messages say what to do next.
+
+The messages of the app (service not running, update installed, trusted devices removed, the menu question, the firewall box) sit above the page and push it down instead of covering it.
+
+Entries keep at most 200 file names and 10000 characters of text. Wi-Fi credentials received from a phone are saved without the password; the password is never written to disk (it stays in memory for 10 minutes at most, see [Receiving](#receiving)). **Clear History** deletes the whole list, not only the transfers the filters show. It does not touch received files, but received texts and links are lost with it. A banner suggests clearing when the history file gets large.
 
 The history is saved in a file on disk, 1000 entries at most (the oldest go first). It is controlled in Preferences: it can be turned off, and entries can expire after 1, 7, 30 or 90 days. With the history off, the page only lists transfers made while the app is open.
 
@@ -363,7 +372,7 @@ Closing the dialog before confirming cancels the pairing.
 
 The computers must reach each other on TCP port **47891**; open it in the firewall if one is active. Paired computers are listed in Preferences with a short fingerprint and a **Remove** button. Removing one only forgets it on this computer; remove it on the other computer too.
 
-Once paired, a transfer from the other computer is accepted without a notification when it arrives from the same IP address shortly after the other computer announced it (limits in [architecture.md](architecture.md#limits-on-the-trust-port)). The match is by address, so pair only computers you own.
+Once paired, a transfer from the other computer is accepted without a notification when it arrives from the same IP address shortly after the other computer announced it (limits in [architecture.md](architecture.md#limits-on-the-trust-port)). The match is by address, so pair only computers you own; the Pairing section of Preferences carries a warning to that effect (and that phones cannot pair).
 
 ## Trusted devices
 
@@ -374,7 +383,7 @@ A device is recognised by its advertised name **and** its MAC address together. 
 > [!WARNING]
 > Name and MAC address can both be copied by anyone on your network, and that device is then accepted without asking. Use trusted devices only on networks where you trust every device.
 
-**After an update.** Older versions recognised a device by name and network address only, which is easy to copy. The first start of this version deleted those trusted devices (once, and only if there were any) and shows a notice, "Trusted devices were removed…", until you press **Got it**; the notice survives a restart. Trust each device again with **Accept and Trust** on its next transfer. The switch and the feature stay.
+**After an update.** Older versions recognised a device by name and network address only, which is easy to copy. The first start of this version deleted those trusted devices (once, and only if there were any) and shows a notice, "Trusted devices were removed…", until you press **Dismiss**; the notice survives a restart. Trust each device again with **Accept and Trust** on its next transfer. The switch and the feature stay.
 
 Preferences has a **Trusted Devices** section with the list (name and MAC address, each with **Remove**) and a **Trust devices** switch. Switched off, listed devices are asked about again and the notification has no **Accept and Trust** action. The list is kept for when the switch is turned on again.
 

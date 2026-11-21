@@ -71,7 +71,7 @@ impl LibActions {
             .lock()
             .unwrap()
             .clone()
-            .context("service is not running")?;
+            .context("The sharing service is not running")?;
         let id = self.redirects.lock().unwrap().get(id_in).cloned();
         sender
             .send(ChannelMessage {
@@ -814,7 +814,12 @@ impl Core {
     pub fn set_download_dir(&mut self, dir: &str) -> Result<()> {
         let dir = Some(PathBuf::from(dir.trim())).filter(|d| !d.as_os_str().is_empty());
         if let Some(dir) = &dir {
-            fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+            fs::create_dir_all(dir).map_err(|e| {
+                anyhow!(
+                    "Cannot create {}: {e}. Choose another folder",
+                    dir.display()
+                )
+            })?;
         }
         if let Some(engine) = &self.engine {
             engine.rqs.set_download_path(dir.clone());
@@ -985,7 +990,10 @@ impl Core {
     }
 
     pub fn start_discovery(&mut self) -> Result<()> {
-        let engine = self.engine.as_mut().context("service is not running")?;
+        let engine = self
+            .engine
+            .as_mut()
+            .context("The sharing service is not running")?;
         if engine.discovery_on {
             // The shell calls this again whenever its window shows: search again instead of doing
             // nothing (a running search repeats its queries with an ever longer delay, and no
@@ -1006,9 +1014,12 @@ impl Core {
 
     /// Runs one more Bluetooth scan window; the devices arrive like the ones of `start_discovery`.
     pub fn scan_bluetooth(&self) -> Result<()> {
-        let engine = self.engine.as_ref().context("service is not running")?;
+        let engine = self
+            .engine
+            .as_ref()
+            .context("The sharing service is not running")?;
         if !engine.discovery_on {
-            bail!("discovery is not running");
+            bail!("The device search is not running. Try again in a moment");
         }
         engine.rqs.scan_ble(engine.discovery_tx.clone())
     }
@@ -1080,7 +1091,7 @@ impl Core {
     /// announcement) need, taken as a snapshot so they run without the lock.
     fn begin_send(&self, endpoint_id: &str) -> Result<SendStart> {
         if self.engine.is_none() {
-            bail!("service is not running");
+            bail!("The sharing service is not running");
         }
         let picked = self
             .endpoints
@@ -1088,7 +1099,7 @@ impl Core {
             .unwrap()
             .get(endpoint_id)
             .cloned()
-            .with_context(|| format!("unknown device {endpoint_id}"))?;
+            .context("That device is no longer available. Search again")?;
         Ok(SendStart {
             picked,
             generation: self.consents.generation(),
@@ -1112,9 +1123,12 @@ impl Core {
         endpoint: EndpointInfo,
         ob: OutboundPayload,
     ) -> Result<Queued> {
-        let engine = self.engine.as_ref().context("the service is not running")?;
+        let engine = self
+            .engine
+            .as_ref()
+            .context("The sharing service is not running")?;
         if self.consents.generation() != start.generation {
-            bail!("the service restarted, try again");
+            bail!("The sharing service restarted. Try again");
         }
         let ble = endpoint.ble.is_some();
         if ble && !self.settings.wifi_upgrade {
@@ -1163,8 +1177,12 @@ impl Core {
         if let Err(e) = engine.send_tx.try_send(send_info) {
             self.redirects.lock().unwrap().remove(endpoint_id);
             return Err(match e {
-                mpsc::error::TrySendError::Full(_) => anyhow!("too many sends are starting"),
-                mpsc::error::TrySendError::Closed(_) => anyhow!("service stopped while sending"),
+                mpsc::error::TrySendError::Full(_) => {
+                    anyhow!("Too many sends are starting. Wait a moment and try again")
+                }
+                mpsc::error::TrySendError::Closed(_) => {
+                    anyhow!("The sharing service stopped while sending. Try again")
+                }
             });
         }
         // A Cancel from now on is broadcast before the library can listen for it (it subscribes
@@ -1305,7 +1323,7 @@ impl Core {
         let (send_tx, _) = rqs
             .run()
             .await
-            .context("failed to start the Quick Share service")?;
+            .context("Could not start the sharing service. Restart KuickShare and try again")?;
 
         let (discovery_tx, _) = broadcast::channel(32);
         let forwarders = dbus::spawn_forwarders(
@@ -1362,7 +1380,7 @@ fn control_addr(endpoints: &Endpoints, endpoint_id: &str) -> Result<SocketAddr> 
         .unwrap()
         .get(endpoint_id)
         .and_then(|e| e.ip.clone())
-        .with_context(|| format!("unknown device {endpoint_id}"))?;
+        .context("That device is no longer available. Search again")?;
     Ok(SocketAddr::new(ip.parse()?, trust::DEFAULT_PORT))
 }
 
@@ -1468,10 +1486,12 @@ pub async fn send_files(
     paths: Vec<String>,
 ) -> Result<()> {
     if paths.is_empty() {
-        bail!("no files to send");
+        bail!("Choose something to send first");
     }
     for path in &paths {
-        fs::metadata(path).with_context(|| format!("cannot read {path}"))?;
+        fs::metadata(path).with_context(|| {
+            format!("Cannot read {path}. Check that the file exists and can be opened")
+        })?;
     }
     send_payload(core, sends, endpoint_id, OutboundPayload::Files(paths)).await
 }
@@ -1485,7 +1505,7 @@ pub async fn send_text(
     url: bool,
 ) -> Result<()> {
     if text.trim().is_empty() {
-        bail!("nothing to send");
+        bail!("Choose something to send first");
     }
     let text_type = if url {
         TextPayloadType::Url

@@ -15,7 +15,7 @@
     <p>KuickShare is a KDE-native Quick Share client for Linux. It lets you send files to and receive files from nearby Android devices and other Quick Share clients.</p>
     <ul>
       <li>Send files to nearby devices and receive files from them</li>
-      <li>Tray icon, desktop notifications and job progress in Plasma</li>
+      <li>Tray icon and desktop notifications</li>
       <li>Dolphin context menu entry to send files</li>
       <li>Transfer history and trusted devices</li>
     </ul>

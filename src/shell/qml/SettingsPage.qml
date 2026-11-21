@@ -21,6 +21,16 @@ FormCard.FormCardPage {
     rightPadding: Kirigami.Units.largeSpacing
     bottomPadding: Kirigami.Units.largeSpacing
 
+    // The stock description colour (disabledTextColor) is below 4.5:1 on light themes. The button and text delegates expose their description label, the switch delegate does not (its description stays at the stock colour).
+    component ButtonRow: FormCard.FormButtonDelegate {
+        descriptionItem.color: enabled ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
+        descriptionItem.opacity: enabled ? 0.7 : 1
+    }
+    component TextRow: FormCard.FormTextDelegate {
+        descriptionItem.color: Kirigami.Theme.textColor
+        descriptionItem.opacity: 0.7
+    }
+
     PairDialog {
         id: pairDialog
         core: page.core
@@ -110,16 +120,16 @@ FormCard.FormCardPage {
     }
     FormCard.FormCard {
         maximumWidth: width - 1
-        FormCard.FormButtonDelegate {
-            icon.name: "folder-download-symbolic"
+        ButtonRow {
+            icon.name: "folder-open-symbolic"
             text: KI18n.i18nc("@action:button", "Choose Download Folder…")
             description: page.core.downloadDir.length > 0 ? page.core.downloadDir : KI18n.i18n("Default (Downloads)")
             enabled: page.core.connected
             onClicked: folderDialog.open()
         }
-        FormCard.FormButtonDelegate {
+        ButtonRow {
             visible: page.core.downloadDir.length > 0
-            icon.name: "folder-download"
+            icon.name: "edit-undo-symbolic"
             text: KI18n.i18nc("@action:button", "Use the Default Folder")
             onClicked: page.core.downloadDir = ""
         }
@@ -139,6 +149,11 @@ FormCard.FormCardPage {
             contentItem: RowLayout {
                 spacing: Kirigami.Units.largeSpacing
 
+                // Keeps the label in the text column of the rows that have an icon.
+                Item {
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                }
                 QQC2.Label {
                     text: KI18n.i18nc("@label:spinbox", "Fixed port")
                     Layout.fillWidth: true
@@ -157,6 +172,8 @@ FormCard.FormCardPage {
     }
     FormCard.FormSectionText {
         Layout.bottomMargin: 0
+        color: Kirigami.Theme.textColor
+        opacity: 0.7
         text: KI18n.i18n("A fixed port (1024–65535) can be opened in the firewall. Changing the name or the port restarts sharing.")
     }
 
@@ -166,9 +183,9 @@ FormCard.FormCardPage {
     FormCard.FormCard {
         maximumWidth: width - 1
         FormCard.FormSwitchDelegate {
-            icon.name: "network-wireless"
+            icon.name: "network-wireless-symbolic"
             text: KI18n.i18nc("@option:check", "Join shared networks automatically")
-            description: KI18n.i18n("Connect this computer when a phone shares a Wi-Fi network; the current Wi-Fi connection may be replaced")
+            description: KI18n.i18n("Connect this system when a phone shares a Wi-Fi network; the current Wi-Fi connection may be replaced")
             checked: page.core.wifiAutoJoin
             enabled: page.core.connected
             onToggled: page.core.wifiAutoJoin = checked
@@ -177,6 +194,14 @@ FormCard.FormCardPage {
 
     SectionTitle {
         text: KI18n.i18nc("@title:group", "Wi-Fi Direct")
+    }
+    // Experimental and with side effects, so a warning box like the one under Trusted Devices, above the switch it concerns.
+    MessageBox {
+        type: Kirigami.MessageType.Warning
+        text: KI18n.i18n("Experimental. Needs NetworkManager, its dnsmasq package and Bluetooth. While on, this system is visible over Bluetooth to devices in range, and its Wi-Fi connection may drop while the temporary Wi-Fi link is active")
+        Layout.fillWidth: true
+        Layout.topMargin: Kirigami.Units.largeSpacing
+        Layout.bottomMargin: Kirigami.Units.largeSpacing
     }
     FormCard.FormCard {
         id: wifiCard
@@ -192,7 +217,7 @@ FormCard.FormCardPage {
         maximumWidth: width - 1
         FormCard.FormSwitchDelegate {
             id: wifiSwitch
-            icon.name: "network-wireless"
+            icon.name: "network-wireless-hotspot"
             text: KI18n.i18nc("@option:check", "Receive and send without a shared network")
             description: KI18n.i18n("Be found over Bluetooth and move the transfer to a temporary Wi-Fi link")
             checked: page.core.wifiUpgrade
@@ -210,7 +235,7 @@ FormCard.FormCardPage {
             }
         }
         // Always reachable, also when the switch is disabled; the description sums up the last check.
-        FormCard.FormButtonDelegate {
+        ButtonRow {
             icon.name: "view-list-details"
             text: KI18n.i18nc("@action:button", "Check System Requirements…")
             description: {
@@ -251,13 +276,6 @@ FormCard.FormCardPage {
             onClicked: requirementsDialog.open()
         }
     }
-    // Experimental and with side effects, so a warning box like the one under Trusted Devices.
-    MessageBox {
-        type: Kirigami.MessageType.Warning
-        text: KI18n.i18n("Experimental. Needs NetworkManager, its dnsmasq package and Bluetooth. While on, this system is visible over Bluetooth to devices in range, and its Wi-Fi connection may drop while the temporary Wi-Fi link is active")
-        Layout.fillWidth: true
-        Layout.topMargin: Kirigami.Units.largeSpacing
-    }
     // A link, not a button in the box: URLs open from links (HIG getting_input#signaling-interactivity).
     Kirigami.UrlButton {
         url: "https://github.com/the-beper/KuickShare/blob/main/docs/wifi-direct.md"
@@ -276,7 +294,7 @@ FormCard.FormCardPage {
         maximumWidth: width - 1
         Repeater {
             model: page.core.trustedDevices
-            delegate: FormCard.FormTextDelegate {
+            delegate: TextRow {
                 id: paired
 
                 required property var modelData
@@ -288,6 +306,9 @@ FormCard.FormCardPage {
                     icon.name: "edit-delete-remove"
                     display: QQC2.AbstractButton.IconOnly
                     text: KI18n.i18nc("@action:button %1 is a device name", "Unpair %1", paired.modelData.name)
+                    QQC2.ToolTip.text: text
+                    QQC2.ToolTip.visible: hovered || visualFocus
+                    QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                     onClicked: {
                         page.unpairName = paired.modelData.name;
                         page.unpairFingerprint = paired.modelData.fingerprint;
@@ -296,12 +317,12 @@ FormCard.FormCardPage {
                 }
             }
         }
-        FormCard.FormTextDelegate {
+        TextRow {
             visible: page.core.trustedDevices.length === 0
             text: KI18n.i18n("No paired devices yet")
             description: KI18n.i18n("Paired devices can send to each other without asking")
         }
-        FormCard.FormButtonDelegate {
+        ButtonRow {
             icon.name: "list-add"
             text: KI18n.i18nc("@action:button", "Pair a Device…")
             enabled: page.core.connected
@@ -311,6 +332,13 @@ FormCard.FormCardPage {
     MessageBox {
         type: Kirigami.MessageType.Information
         text: KI18n.i18n("Pairing works only between devices on the same local network")
+        Layout.fillWidth: true
+        Layout.topMargin: Kirigami.Units.largeSpacing
+    }
+    // The match by address is the same weakness as for trusted devices; phones are covered there.
+    MessageBox {
+        type: Kirigami.MessageType.Warning
+        text: KI18n.i18n("A paired system is recognised by its network address, which another device on the network could copy. Pair only systems you own. Phones cannot pair")
         Layout.fillWidth: true
         Layout.topMargin: Kirigami.Units.largeSpacing
     }
@@ -330,7 +358,7 @@ FormCard.FormCardPage {
         }
         Repeater {
             model: page.core.trustedDevicesEnabled ? page.core.allowedDevices : []
-            delegate: FormCard.FormTextDelegate {
+            delegate: TextRow {
                 id: allowed
 
                 required property var modelData
@@ -342,11 +370,14 @@ FormCard.FormCardPage {
                     icon.name: "edit-delete-remove"
                     display: QQC2.AbstractButton.IconOnly
                     text: KI18n.i18nc("@action:button %1 is a device name", "Remove %1", allowed.modelData.title)
+                    QQC2.ToolTip.text: text
+                    QQC2.ToolTip.visible: hovered || visualFocus
+                    QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                     onClicked: page.core.forgetAllowed(allowed.modelData.name, allowed.modelData.mac)
                 }
             }
         }
-        FormCard.FormTextDelegate {
+        TextRow {
             visible: page.core.trustedDevicesEnabled && page.core.allowedDevices.length === 0
             text: KI18n.i18n("No devices yet")
             description: KI18n.i18n("Use “Accept and Trust” on an incoming transfer notification to add one")
@@ -356,7 +387,7 @@ FormCard.FormCardPage {
     MessageBox {
         visible: page.core.trustedDevicesEnabled
         type: Kirigami.MessageType.Warning
-        text: KI18n.i18n("Devices are recognised by name and network address, which another device on the same network can copy: it would be accepted without asking too. Use only on a network where you trust every device")
+        text: KI18n.i18n("Devices are recognised by name and network address, which another device on the same network can copy: it would be accepted without asking too. Use only on a network where every device is trusted")
         Layout.fillWidth: true
         Layout.topMargin: Kirigami.Units.largeSpacing
     }
@@ -416,7 +447,9 @@ FormCard.FormCardPage {
     }
     FormCard.FormSectionText {
         Layout.bottomMargin: 0
-        text: KI18n.i18n("With the history turned off nothing is saved. Entries already saved stay until they expire or you clear them.")
+        color: Kirigami.Theme.textColor
+        opacity: 0.7
+        text: KI18n.i18n("With the history turned off nothing is saved. Entries already saved stay until they expire or are cleared.")
     }
 
     SectionTitle {
@@ -465,7 +498,7 @@ FormCard.FormCardPage {
     MessageBox {
         visible: page.core.connected && !page.core.trayIcon
         type: Kirigami.MessageType.Information
-        text: KI18n.i18n("Closing the window quits KuickShare, and nothing can be received until you open it again. At login it starts hidden, without a tray icon: open KuickShare again to show the window")
+        text: KI18n.i18n("Closing the window quits KuickShare, and nothing can be received until it is opened again. At login it starts hidden, without a tray icon: open KuickShare again to show the window")
         Layout.fillWidth: true
         Layout.topMargin: Kirigami.Units.largeSpacing
     }
@@ -550,7 +583,7 @@ FormCard.FormCardPage {
     }
     FormCard.FormCard {
         maximumWidth: width - 1
-        FormCard.FormButtonDelegate {
+        ButtonRow {
             icon.name: "document-revert"
             text: KI18n.i18nc("@action:button", "Reset Preferences…")
             description: KI18n.i18n("Go back to the default preferences")

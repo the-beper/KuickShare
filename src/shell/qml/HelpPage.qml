@@ -16,7 +16,10 @@ FormCard.FormCardPage {
     rightPadding: Kirigami.Units.largeSpacing
     bottomPadding: Kirigami.Units.largeSpacing
 
+    // The stock description colour (disabledTextColor) is below 4.5:1 on light themes.
     component Entry: FormCard.FormTextDelegate {
+        descriptionItem.color: Kirigami.Theme.textColor
+        descriptionItem.opacity: 0.7
     }
 
     SectionTitle {
@@ -38,7 +41,7 @@ FormCard.FormCardPage {
         Entry {
             icon.name: "folder-download-symbolic"
             text: KI18n.i18n("Receive")
-            description: KI18n.i18n("An incoming transfer asks for your approval in a notification. Received files go to the download folder chosen in Preferences.")
+            description: KI18n.i18n("An incoming transfer asks for approval in a notification. Received files go to the download folder chosen in Preferences.")
         }
     }
 
@@ -65,7 +68,7 @@ FormCard.FormCardPage {
     FormCard.FormCard {
         maximumWidth: width - 1
         Entry {
-            icon.name: "network-wireless"
+            icon.name: "network-wireless-hotspot"
             text: KI18n.i18n("Without a Shared Network")
             description: KI18n.i18n("The transfer starts over Bluetooth and moves to a temporary Wi-Fi link: this system hosts a hotspot to receive, and joins the other device’s Wi-Fi Direct group to send. Turn it on in Preferences; it needs NetworkManager, its dnsmasq package and Bluetooth.")
         }
@@ -99,12 +102,12 @@ FormCard.FormCardPage {
         Entry {
             icon.name: "network-bluetooth"
             text: KI18n.i18n("The other device is not found over Bluetooth")
-            description: KI18n.i18n("Open Quick Share’s Receive screen on the other device, set it to Everyone and use “Search Again” on the Send page.")
+            description: KI18n.i18n("Open Quick Share’s Receive screen on the other device, set it to Everyone and use the refresh button next to “Send to” on the Send page.")
         }
         Entry {
             icon.name: "security-medium"
             text: KI18n.i18n("Firewall")
-            description: KI18n.i18n("Nearby devices are found through announcements on the local network (mDNS). The transfer port is random unless you fix one in Preferences: open that port in the firewall.")
+            description: KI18n.i18n("Nearby devices are found through announcements on the local network (mDNS). The transfer port is random unless one is fixed in Preferences: open that port in the firewall.")
         }
     }
 }

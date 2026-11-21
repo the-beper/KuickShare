@@ -34,7 +34,7 @@ KDE Connect would be the natural choice, but its data transfer has been unreliab
 **Send and receive**
 - Files, text and links with phones and other Quick Share devices on the same Wi-Fi network.
 - Drag and drop, clipboard paste and **Send With KuickShare** in Dolphin.
-- Accept or decline incoming transfers from a notification; progress shows in Plasma's job tracker.
+- Accept or decline incoming transfers from a notification or from the Transfers page.
 
 **Devices and history**
 - Trusted devices (matched by name and MAC address) and paired KuickShare computers (8-digit code) can send without asking.

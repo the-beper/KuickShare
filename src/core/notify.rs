@@ -53,6 +53,16 @@ const WIFI_ICON: &str = "network-wireless";
 
 const APP_NAME: &str = "KuickShare";
 
+/// The base name of `data/kuickshare.notifyrc`, which KDE looks the event ids up in.
+const NOTIFYRC_NAME: &str = "kuickshare";
+
+/// The events of `data/kuickshare.notifyrc`; Plasma lists them in System Settings > Notifications.
+const EVENT_INCOMING: &str = "incomingTransfer";
+const EVENT_RECEIVED: &str = "transferFinished";
+const EVENT_FAILED: &str = "transferFailed";
+const EVENT_WIFI_JOINED: &str = "wifiJoined";
+const EVENT_WIFI_JOIN_FAILED: &str = "wifiJoinFailed";
+
 mod proxies {
     use std::collections::HashMap;
 
@@ -151,6 +161,8 @@ pub enum Event {
 
 /// One notification to show, as the flat `Notify` call takes it.
 struct Text {
+    /// The `x-kde-eventId` of the notice, one of the events of the notifyrc.
+    event: &'static str,
     icon: &'static str,
     summary: String,
     body: String,
@@ -190,6 +202,7 @@ fn text_of(notice: &Notice) -> Text {
             }
             actions.push((DECLINE, i18nc!("@action:button", "Decline")));
             Text {
+                event: EVENT_INCOMING,
                 icon: APP_ICON,
                 summary: i18nc!("@title:notification", "Incoming Transfer"),
                 body,
@@ -214,6 +227,7 @@ fn text_of(notice: &Notice) -> Text {
             }
             actions.push((VIEW, i18nc!("@action:button", "View")));
             Text {
+                event: EVENT_RECEIVED,
                 icon: APP_ICON,
                 summary: if *is_link {
                     i18nc!("@title:notification", "Link Received")
@@ -233,6 +247,7 @@ fn text_of(notice: &Notice) -> Text {
             }
             actions.push((OPEN_FOLDER, i18nc!("@action:button", "Open Folder")));
             Text {
+                event: EVENT_RECEIVED,
                 icon: APP_ICON,
                 summary: i18nc!("@title:notification", "Files Received"),
                 body: i18n!("From %1", &who),
@@ -241,6 +256,7 @@ fn text_of(notice: &Notice) -> Text {
             }
         }
         Notice::WifiJoined { ssid } => Text {
+            event: EVENT_WIFI_JOINED,
             icon: WIFI_ICON,
             summary: i18nc!("@title:notification", "Wi-Fi Network Joined"),
             body: i18n!("Connected to %1", &plain(ssid)),
@@ -248,6 +264,7 @@ fn text_of(notice: &Notice) -> Text {
             expire: NOTICE_TIMEOUT,
         },
         Notice::WifiJoinFailed { ssid, reason } => Text {
+            event: EVENT_WIFI_JOIN_FAILED,
             icon: WARNING_ICON,
             summary: i18nc!("@title:notification", "Could Not Join Wi-Fi"),
             body: i18n!("Could not connect to %1\n%2", &plain(ssid), &plain(reason)),
@@ -255,6 +272,7 @@ fn text_of(notice: &Notice) -> Text {
             expire: NOTICE_TIMEOUT,
         },
         Notice::Refusal { device, reason } => Text {
+            event: EVENT_FAILED,
             icon: WARNING_ICON,
             summary: i18nc!("@title:notification", "Offer Refused"),
             body: i18n!(
@@ -284,6 +302,7 @@ fn text_of(notice: &Notice) -> Text {
                 )
             };
             Text {
+                event: EVENT_FAILED,
                 icon: WARNING_ICON,
                 summary: i18nc!("@title:notification", "Transfer Not Accepted"),
                 body,
@@ -292,6 +311,7 @@ fn text_of(notice: &Notice) -> Text {
             }
         }
         Notice::Interrupted { device } => Text {
+            event: EVENT_FAILED,
             icon: WARNING_ICON,
             summary: i18nc!("@title:notification", "Transfer Interrupted"),
             body: i18n!(
@@ -393,9 +413,14 @@ impl Notifier {
     pub async fn show(&self, notice: &Notice, replaces: u32) -> Option<u32> {
         let text = text_of(notice);
         // The urgency is normal for everything the shell showed with `NormalUrgency`.
+        // `x-kde-appname` and `x-kde-eventId` are what Plasma reads to find the event in the
+        // notifyrc, so that the user can configure it (inferred from how KDE reads the hints, not
+        // checked against Plasma).
         let hints: HashMap<&str, Variant> = HashMap::from([
             ("urgency", Variant::U8(1)),
             ("desktop-entry", Variant::from(APP_ICON)),
+            ("x-kde-appname", Variant::from(NOTIFYRC_NAME)),
+            ("x-kde-eventId", Variant::from(text.event)),
         ]);
         // The flat list of the call: key and label, in turns.
         let actions: Vec<&str> = text
@@ -591,6 +616,51 @@ mod tests {
             plain_who("<Eve>", "Someone".to_owned()),
             "\u{2039}Eve\u{203A}"
         );
+    }
+
+    #[test]
+    fn every_notice_names_an_event_of_the_notifyrc() {
+        let notifyrc = include_str!("../../data/kuickshare.notifyrc");
+        let device = || "Pixel".to_owned();
+        let notices = [
+            Notice::Consent {
+                device: device(),
+                pin: "1234".to_owned(),
+                offer_trust: true,
+            },
+            Notice::Text {
+                device: device(),
+                text: "hi".to_owned(),
+                is_link: false,
+            },
+            Notice::Files {
+                device: device(),
+                path: None,
+            },
+            Notice::WifiJoined {
+                ssid: "Home".to_owned(),
+            },
+            Notice::WifiJoinFailed {
+                ssid: "Home".to_owned(),
+                reason: "x".to_owned(),
+            },
+            Notice::Refusal {
+                device: device(),
+                reason: "x".to_owned(),
+            },
+            Notice::NotAccepted {
+                device: device(),
+                over_bluetooth: false,
+            },
+            Notice::Interrupted { device: device() },
+        ];
+        for notice in &notices {
+            let event = text_of(notice).event;
+            assert!(
+                notifyrc.contains(&format!("[Event/{event}]")),
+                "{event} is not in kuickshare.notifyrc"
+            );
+        }
     }
 
     #[test]

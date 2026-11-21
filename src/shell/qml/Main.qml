@@ -17,18 +17,33 @@ Kirigami.ApplicationWindow {
     property bool askIntegration: false
 
     property string currentPage: ""
-    // Files queued for sending; filled from the Send page or by dropping onto the window.
+    // Files queued for sending and the text of the Send page's box; both live here because the page is rebuilt on every show.
+    // The files are filled from the Send page or by dropping onto the window.
     property var outgoingFiles: []
-    // The send in progress: when it finishes the Send page is left clean, ready for the next one.
+    property string outgoingText: ""
+    // The send in progress: when it finishes the Send page is left clean (files and text), ready for the next one.
     // A failed send keeps the files and the text so that it can be tried again.
     property string pendingSendId: ""
     // Why the firewall stopped the hotspot last (a code of the core).
     property string wifiBlockedReason: ""
 
-    title: KI18n.i18n("KuickShare")
+    readonly property string pageName: {
+        switch (currentPage) {
+        case "send":
+            return KI18n.i18nc("@title:tab", "Send");
+        case "transfers":
+            return KI18n.i18nc("@title:tab", "Transfers");
+        case "settings":
+            return KI18n.i18nc("@action:inmenu", "Preferences");
+        case "help":
+            return KI18n.i18nc("@action:inmenu", "Help");
+        }
+        return "";
+    }
+    title: pageName.length > 0 ? KI18n.i18nc("@title:window page name, application name", "%1 — KuickShare", pageName) : KI18n.i18n("KuickShare")
     // Compact, fixed size (so it cannot be maximized or resized): the pages scroll when needed.
     readonly property real fixedWidth: Kirigami.Units.gridUnit * 26
-    readonly property real fixedHeight: Math.min(Kirigami.Units.gridUnit * 37, Screen.desktopAvailableHeight * 0.9)
+    readonly property real fixedHeight: Math.min(Kirigami.Units.gridUnit * 40, Screen.desktopAvailableHeight * 0.95)
     width: fixedWidth
     height: fixedHeight
     minimumWidth: fixedWidth
@@ -56,7 +71,7 @@ Kirigami.ApplicationWindow {
             }
             root.pendingSendId = "";
             root.outgoingFiles = [];
-            (root.pageStack.currentItem as SendPage)?.clearText();
+            root.outgoingText = "";
         }
     }
 
@@ -194,12 +209,19 @@ Kirigami.ApplicationWindow {
             switch (state) {
             case "Finished":
                 if (root.currentPage !== "transfers") {
-                    toasts.show(Kirigami.MessageType.Positive, KI18n.i18n("Transfer completed"), 4000, id);
+                    toasts.show(Kirigami.MessageType.Positive, KI18n.i18n("Transfer completed"), 8000, id);
                 }
                 break;
-            case "Disconnected":
-                toasts.show(Kirigami.MessageType.Error, KI18n.i18n("The transfer failed. Keep both devices close and awake, then send again"), 0, id);
+            case "Disconnected": {
+                // The library reports a refusal by the other device as Disconnected. The same rule as stateText() of TransfersPage: an outgoing transfer that never got a byte acknowledged was not accepted.
+                const info = root.core.transfers.info(id);
+                if (info.kind === "outbound" && !info.ack_bytes) {
+                    toasts.show(Kirigami.MessageType.Information, KI18n.i18n("The other device declined the transfer or could not receive it. Check its free space, then try again"), 6000);
+                } else {
+                    toasts.show(Kirigami.MessageType.Error, KI18n.i18n("The transfer failed. Keep both devices close and awake, then send again"), 0, id);
+                }
                 break;
+            }
             case "Rejected":
                 toasts.show(Kirigami.MessageType.Information, KI18n.i18n("The transfer was declined"), 6000);
                 break;
@@ -212,95 +234,217 @@ Kirigami.ApplicationWindow {
     pageStack.globalToolBar.style: Kirigami.ApplicationHeaderStyle.None
     pageStack.columnView.scrollDuration: 0
 
-    header: Item {
-        implicitHeight: tabs.implicitHeight
+    header: ColumnLayout {
+        spacing: 0
 
-        // The bar spans the whole header, so its own line runs under "More" as well; the room for
-        // the button is taken from its padding.
-        Kirigami.NavigationTabBar {
-            id: tabs
+        Item {
+            Layout.fillWidth: true
+            implicitHeight: tabs.implicitHeight
 
-            anchors.fill: parent
-            // The stock bar centres its tabs with extra side padding; here they start at the edge, and the
-            // room at the right is the button plus a small gap.
-            leftPadding: 0
-            rightPadding: more.width + Kirigami.Units.largeSpacing
+            // The bar spans the whole header, so its own line runs under "More" as well; the room for
+            // the button is taken from its padding.
+            Kirigami.NavigationTabBar {
+                id: tabs
 
-            delegate: Kirigami.NavigationTabButton {
-                id: tab
+                anchors.fill: parent
+                // The stock bar centres its tabs with extra side padding; here they start at the edge, and the
+                // room at the right is the button plus a small gap.
+                leftPadding: 0
+                rightPadding: more.width + Kirigami.Units.largeSpacing
 
-                required property T.Action modelData
+                delegate: Kirigami.NavigationTabButton {
+                    id: tab
 
-                parent: tabs.contentItem
-                action: modelData
-                // The same workaround as the stock delegate: without it the tabs are not checkable.
-                onActionChanged: action.checkable = true
-                display: T.AbstractButton.TextBesideIcon
+                    required property T.Action modelData
 
-                Layout.minimumWidth: tabs.buttonWidth
-                Layout.maximumWidth: tabs.buttonWidth
-                Layout.fillHeight: true
+                    parent: tabs.contentItem
+                    action: modelData
+                    // The same workaround as the stock delegate: without it the tabs are not checkable.
+                    onActionChanged: action.checkable = true
+                    display: T.AbstractButton.TextBesideIcon
 
-                contentItem: RowLayout {
-                    spacing: Kirigami.Units.largeSpacing
+                    Layout.minimumWidth: tabs.buttonWidth
+                    Layout.maximumWidth: tabs.buttonWidth
+                    Layout.fillHeight: true
 
-                    Item {
-                        Layout.fillWidth: true
-                    }
-                    Kirigami.Icon {
-                        source: tab.icon.name
-                        color: tab.icon.color
-                        Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
-                        Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-                    }
-                    QQC2.Label {
-                        text: tab.text
-                        color: Kirigami.Theme.textColor
-                    }
-                    Item {
-                        Layout.fillWidth: true
+                    contentItem: RowLayout {
+                        spacing: Kirigami.Units.largeSpacing
+
+                        Item {
+                            Layout.fillWidth: true
+                        }
+                        Kirigami.Icon {
+                            source: tab.icon.name
+                            color: tab.icon.color
+                            Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                            Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                        }
+                        QQC2.Label {
+                            text: tab.text
+                            color: Kirigami.Theme.textColor
+                        }
+                        Item {
+                            Layout.fillWidth: true
+                        }
                     }
                 }
-            }
 
-            actions: [
-                Kirigami.Action {
-                    text: KI18n.i18nc("@title:tab", "Send")
-                    icon.name: "document-send"
-                    checked: root.currentPage === "send"
-                    shortcut: "Ctrl+1"
-                    onTriggered: root.show("send")
-                },
-                Kirigami.Action {
-                    text: KI18n.i18nc("@title:tab", "Transfers")
-                    icon.name: "folder-sync"
-                    checked: root.currentPage === "transfers"
-                    shortcut: "Ctrl+2"
-                    onTriggered: root.show("transfers")
+                actions: [
+                    Kirigami.Action {
+                        text: KI18n.i18nc("@title:tab", "Send")
+                        icon.name: "document-send"
+                        checked: root.currentPage === "send"
+                        shortcut: "Ctrl+1"
+                        onTriggered: root.show("send")
+                    },
+                    Kirigami.Action {
+                        text: KI18n.i18nc("@title:tab", "Transfers")
+                        icon.name: "folder-sync"
+                        checked: root.currentPage === "transfers"
+                        shortcut: "Ctrl+2"
+                        onTriggered: root.show("transfers")
+                    }
+                ]
+            }
+            // A short vertical line midway between the visible edge of the last tab and the button; it stays
+            // clear of the line under the header.
+            Kirigami.Separator {
+                x: Math.round(((tabs.width - tabs.rightPadding - Kirigami.Units.smallSpacing) + more.x) / 2)
+                height: Math.round(parent.height * 0.55)
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            QQC2.ToolButton {
+                id: more
+
+                text: KI18n.i18nc("@action:button", "More")
+                icon.name: "open-menu-symbolic"
+                // Only the icon; the text is for screen readers and the tooltip.
+                display: QQC2.AbstractButton.IconOnly
+                QQC2.ToolTip.text: text
+                QQC2.ToolTip.visible: hovered || visualFocus
+                QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                down: root.currentPage === "settings" || root.currentPage === "help"
+                anchors {
+                    right: parent.right
+                    rightMargin: Kirigami.Units.smallSpacing + tabs.leftPadding
+                    verticalCenter: parent.verticalCenter
                 }
-            ]
-        }
-        // A short vertical line midway between the visible edge of the last tab and the button; it stays
-        // clear of the line under the header.
-        Kirigami.Separator {
-            x: Math.round(((tabs.width - tabs.rightPadding - Kirigami.Units.smallSpacing) + more.x) / 2)
-            height: Math.round(parent.height * 0.55)
-            anchors.verticalCenter: parent.verticalCenter
-        }
-        QQC2.ToolButton {
-            id: more
-
-            text: KI18n.i18nc("@action:button", "More")
-            icon.name: "open-menu-symbolic"
-            // Only the icon; the text is for screen readers.
-            display: QQC2.AbstractButton.IconOnly
-            down: root.currentPage === "settings" || root.currentPage === "help"
-            anchors {
-                right: parent.right
-                rightMargin: Kirigami.Units.smallSpacing + tabs.leftPadding
-                verticalCenter: parent.verticalCenter
+                onClicked: moreMenu.open()
             }
-            onClicked: moreMenu.open()
+        }
+
+        // The messages of the whole app, one under the other so that several can show at once. They sit in the
+        // header, so they push the page down instead of covering it.
+        Item {
+            Layout.fillWidth: true
+            implicitHeight: messages.implicitHeight > 0 ? messages.implicitHeight + Kirigami.Units.largeSpacing * 2 : 0
+
+            ColumnLayout {
+                id: messages
+
+                anchors {
+                    top: parent.top
+                    left: parent.left
+                    right: parent.right
+                    margins: Kirigami.Units.largeSpacing
+                }
+                spacing: Kirigami.Units.smallSpacing
+
+                // The sharing service is not running (it stopped, or never started): offer to start it.
+                MessageBox {
+                    Layout.fillWidth: true
+                    visible: !root.core.connected && !root.core.serviceStarting
+                    type: Kirigami.MessageType.Error
+                    text: KI18n.i18n("The sharing service is not running. Nothing can be sent or received until it is started")
+                    actions: [
+                        Kirigami.Action {
+                            text: KI18n.i18nc("@action:button", "Start Service")
+                            icon.name: "media-playback-start"
+                            onTriggered: root.core.startService()
+                        }
+                    ]
+                }
+
+                // A newer version was installed while this one runs (Flatpak, AppImage).
+                MessageBox {
+                    Layout.fillWidth: true
+                    visible: root.core.updateInstalled && root.core.connected
+                    type: Kirigami.MessageType.Information
+                    text: KI18n.i18n("A new version of KuickShare is installed")
+                    actions: [
+                        Kirigami.Action {
+                            text: KI18n.i18nc("@action:button", "Restart")
+                            icon.name: "view-refresh"
+                            enabled: !root.core.transferBusy
+                            onTriggered: root.core.restartForUpdate()
+                        }
+                    ]
+                }
+
+                // Once, after an update: the trusted devices of the older version were removed (the core keeps the
+                // notice until it is acknowledged, so a restart before the user saw it does not lose it).
+                MessageBox {
+                    Layout.fillWidth: true
+                    visible: root.core.trustedDevicesReset && root.core.connected
+                    type: Kirigami.MessageType.Information
+                    text: KI18n.i18n("Trusted devices were removed: they were recognised only by name and network address, which another device on the same network can copy. Trust a device again from its next transfer")
+                    actions: [
+                        Kirigami.Action {
+                            text: KI18n.i18n("Dismiss")
+                            icon.name: "dialog-ok-apply"
+                            onTriggered: root.core.acknowledgeTrustedDevicesReset()
+                        }
+                    ]
+                }
+
+                // The AppImage asks once whether to add itself to the menus; shown by `askIntegration` once the
+                // service is up. Only the two actions hide it, so the question is not dismissed by accident.
+                MessageBox {
+                    id: integrationBox
+                    Layout.fillWidth: true
+                    visible: false
+                    type: Kirigami.MessageType.Information
+                    text: KI18n.i18n("Add KuickShare to the menus? It will appear in the application menu and in Dolphin’s context menu")
+                    actions: [
+                        Kirigami.Action {
+                            text: KI18n.i18n("Add to Menus")
+                            icon.name: "list-add"
+                            onTriggered: {
+                                integrationBox.visible = false;
+                                root.core.integrateAppImage();
+                            }
+                        },
+                        Kirigami.Action {
+                            text: KI18n.i18n("Not Now")
+                            icon.name: "dialog-cancel"
+                            onTriggered: {
+                                integrationBox.visible = false;
+                                root.core.declineIntegration();
+                            }
+                        }
+                    ]
+                }
+
+                // The firewall refused the hotspot: say so, and offer the consent for this session (it is the core
+                // that decides and remembers it). Shown by `onWifiUpgradeBlocked`; the close button hides it.
+                MessageBox {
+                    id: wifiBlockedBox
+                    Layout.fillWidth: true
+                    visible: false
+                    showCloseButton: true
+                    type: Kirigami.MessageType.Warning
+                    // An unknown code is taken as a refusal.
+                    text: root.wifiBlockedReason === "firewall_missing" ? KI18n.i18n("No firewall service that KuickShare can open a port in was found. The transfer continues over Bluetooth, which is very slow") : KI18n.i18n("The firewall did not allow the Wi-Fi link. The transfer continues over Bluetooth, which is very slow")
+                    actions: [
+                        Kirigami.Action {
+                            text: KI18n.i18n("Allow for This Session…")
+                            icon.name: "security-medium"
+                            enabled: root.core.connected
+                            onTriggered: wifiConsentDialog.open()
+                        }
+                    ]
+                }
+            }
         }
     }
 
@@ -361,6 +505,10 @@ Kirigami.ApplicationWindow {
             onFilesAdded: urls => root.addFiles(urls)
             onFileRemoved: path => root.outgoingFiles = root.outgoingFiles.filter(p => p !== path)
             onFilesCleared: root.outgoingFiles = []
+            draft: root.outgoingText
+            onDraftEdited: text => root.outgoingText = text
+            onShowHelpRequested: root.show("help")
+            onShowTransfersRequested: root.show("transfers")
             onSent: deviceId => {
                 root.pendingSendId = deviceId;
                 root.show("transfers");
@@ -422,7 +570,7 @@ Kirigami.ApplicationWindow {
         sequence: "Ctrl+L"
         onActivated: {
             root.outgoingFiles = [];
-            (root.pageStack.currentItem as SendPage)?.clearText();
+            root.outgoingText = "";
         }
     }
     Shortcut {
@@ -441,117 +589,10 @@ Kirigami.ApplicationWindow {
         onDetailsRequested: id => root.showTransfer(id)
     }
 
-    // The messages of the whole app, one under the other so that several can show at once.
-    ColumnLayout {
-        parent: root.contentItem
-        z: 10
-        anchors {
-            top: parent.top
-            left: parent.left
-            right: parent.right
-            margins: Kirigami.Units.largeSpacing
-        }
-        spacing: Kirigami.Units.smallSpacing
-
-        // The sharing service is not running (it stopped, or never started): offer to start it.
-        MessageBox {
-            Layout.fillWidth: true
-            visible: !root.core.connected && !root.core.serviceStarting
-            type: Kirigami.MessageType.Error
-            text: KI18n.i18n("The sharing service is not running. Nothing can be sent or received until it is started")
-            actions: [
-                Kirigami.Action {
-                    text: KI18n.i18nc("@action:button", "Start Service")
-                    icon.name: "media-playback-start"
-                    onTriggered: root.core.startService()
-                }
-            ]
-        }
-
-        // A newer version was installed while this one runs (Flatpak, AppImage).
-        MessageBox {
-            Layout.fillWidth: true
-            visible: root.core.updateInstalled && root.core.connected
-            type: Kirigami.MessageType.Information
-            text: KI18n.i18n("A new version of KuickShare is installed")
-            actions: [
-                Kirigami.Action {
-                    text: KI18n.i18nc("@action:button", "Restart")
-                    icon.name: "view-refresh"
-                    enabled: !root.core.transferBusy
-                    onTriggered: root.core.restartForUpdate()
-                }
-            ]
-        }
-
-        // Once, after an update: the trusted devices of the older version were removed (the core keeps the
-        // notice until it is acknowledged, so a restart before the user saw it does not lose it).
-        MessageBox {
-            Layout.fillWidth: true
-            visible: root.core.trustedDevicesReset && root.core.connected
-            type: Kirigami.MessageType.Information
-            text: KI18n.i18n("Trusted devices were removed: they were recognised only by name and network address, which another device on the same network can copy. Trust a device again from its next transfer")
-            actions: [
-                Kirigami.Action {
-                    text: KI18n.i18n("Got It")
-                    icon.name: "dialog-ok-apply"
-                    onTriggered: root.core.acknowledgeTrustedDevicesReset()
-                }
-            ]
-        }
-
-        // The AppImage asks once whether to add itself to the menus; shown by `askIntegration` once the
-        // service is up. Only the two actions hide it, so the question is not dismissed by accident.
-        MessageBox {
-            id: integrationBox
-            Layout.fillWidth: true
-            visible: false
-            type: Kirigami.MessageType.Information
-            text: KI18n.i18n("Add KuickShare to the menus? It will appear in the application menu and in Dolphin’s context menu")
-            actions: [
-                Kirigami.Action {
-                    text: KI18n.i18n("Add to Menus")
-                    icon.name: "list-add"
-                    onTriggered: {
-                        integrationBox.visible = false;
-                        root.core.integrateAppImage();
-                    }
-                },
-                Kirigami.Action {
-                    text: KI18n.i18n("Not Now")
-                    icon.name: "dialog-cancel"
-                    onTriggered: {
-                        integrationBox.visible = false;
-                        root.core.declineIntegration();
-                    }
-                }
-            ]
-        }
-
-        // The firewall refused the hotspot: say so, and offer the consent for this session (it is the core
-        // that decides and remembers it). Shown by `onWifiUpgradeBlocked`; the close button hides it.
-        MessageBox {
-            id: wifiBlockedBox
-            Layout.fillWidth: true
-            visible: false
-            showCloseButton: true
-            type: Kirigami.MessageType.Warning
-            // An unknown code is taken as a refusal.
-            text: root.wifiBlockedReason === "firewall_missing" ? KI18n.i18n("No firewall service that KuickShare can open a port in was found. The transfer continues over Bluetooth, which is very slow") : KI18n.i18n("The firewall did not allow the Wi-Fi link. The transfer continues over Bluetooth, which is very slow")
-            actions: [
-                Kirigami.Action {
-                    text: KI18n.i18n("Allow for This Session…")
-                    icon.name: "security-medium"
-                    enabled: root.core.connected
-                    onTriggered: wifiConsentDialog.open()
-                }
-            ]
-        }
-    }
     Kirigami.PromptDialog {
         id: wifiConsentDialog
         title: KI18n.i18n("Allow the hotspot without a firewall rule?")
-        subtitle: KI18n.i18n("If you agree, then until KuickShare is closed, the device that joins the hotspot can reach every service on this system. It applies to the next transfer, not to the one in progress")
+        subtitle: KI18n.i18n("Until KuickShare is closed, the device that joins the hotspot can reach every service on this system. This applies to the next transfer, not to the one in progress")
         // The accepting button is named after what it does, so the footer is made of actions.
         standardButtons: Kirigami.Dialog.NoButton
         customFooterActions: [
@@ -580,10 +621,19 @@ Kirigami.ApplicationWindow {
         id: dropArea
         anchors.fill: parent
         onDropped: drop => {
-            if (drop.hasUrls) {
-                root.addFiles(drop.urls);
-                root.show("send");
+            if (!drop.hasUrls) {
+                return;
             }
+            const urls = drop.urls.map(url => url.toString());
+            if (urls.length > 0 && urls.every(url => /^https?:\/\//i.test(url)) && root.outgoingFiles.length === 0) {
+                // Web links, not files: they go to the text box, after what is already there. QUrl would hand back the decoded form, so the raw list of the drag is preferred.
+                const raw = drop.getDataAsString("text/uri-list").split(/\r?\n/).map(line => line.trim()).filter(line => /^https?:\/\/\S+$/i.test(line));
+                const links = (raw.length === urls.length ? raw : urls).join("\n");
+                root.outgoingText = root.outgoingText.length > 0 ? root.outgoingText + "\n" + links : links;
+            } else {
+                root.addFiles(drop.urls);
+            }
+            root.show("send");
         }
     }
 

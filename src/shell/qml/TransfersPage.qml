@@ -37,6 +37,7 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
                 Layout.preferredHeight: bar.controlHeight
                 placeholderText: KI18n.i18n("Search transfers")
+                placeholderTextColor: Qt.alpha(Kirigami.Theme.textColor, 0.7)
                 Accessible.name: KI18n.i18n("Search transfers")
                 text: page.filter.text
                 onTextChanged: page.filter.text = text
@@ -130,13 +131,13 @@ Kirigami.ScrollablePage {
     Kirigami.PromptDialog {
         id: clearDialog
         title: KI18n.i18n("Clear history?")
-        subtitle: page.filter.filtered ? KI18n.i18n("The whole history is cleared, not only the transfers shown. Files you received are not touched") : KI18n.i18n("Files you received are not touched")
+        subtitle: page.filter.filtered ? KI18n.i18n("The whole history is cleared, not only the transfers shown. Files you received are not touched, but received texts and links are lost") : KI18n.i18n("Files you received are not touched, but received texts and links are lost")
         // The accepting button is named after what it does, so the footer is made of actions.
         standardButtons: Kirigami.Dialog.NoButton
         customFooterActions: [
             Kirigami.Action {
                 text: KI18n.i18nc("@action:button", "Clear History")
-                icon.name: "edit-clear-history"
+                icon.name: "edit-delete"
                 onTriggered: {
                     page.core.clearHistory();
                     clearDialog.close();
@@ -180,6 +181,39 @@ Kirigami.ScrollablePage {
         ]
     }
 
+    // Asks before removing a received text or link, which may exist nowhere else; filled by the Remove button of a row.
+    Kirigami.PromptDialog {
+        id: removeDialog
+
+        // A saved entry is found again by its history uid when the dialog is answered: new transfers are prepended, so a row index may have moved. A live row (uid 0) is removed by its row.
+        property int sourceRow: -1
+        property double historyUid: 0
+
+        title: KI18n.i18n("Remove this transfer?")
+        subtitle: KI18n.i18n("The received text or link is not saved anywhere else")
+        // The accepting button is named after what it does, so the footer is made of actions.
+        standardButtons: Kirigami.Dialog.NoButton
+        customFooterActions: [
+            Kirigami.Action {
+                text: KI18n.i18nc("@action:button", "Remove")
+                icon.name: "edit-delete"
+                onTriggered: {
+                    if (removeDialog.historyUid > 0) {
+                        page.core.removeSavedTransfer(removeDialog.historyUid);
+                    } else {
+                        page.core.removeTransfer(removeDialog.sourceRow);
+                    }
+                    removeDialog.close();
+                }
+            },
+            Kirigami.Action {
+                text: KI18n.i18nc("@action:button", "Cancel")
+                icon.name: "dialog-cancel"
+                onTriggered: removeDialog.close()
+            }
+        ]
+    }
+
     // Size of the saved history above which a warning offers to clear it.
     readonly property real bigHistoryBytes: 5 * 1024 * 1024
 
@@ -189,6 +223,7 @@ Kirigami.ScrollablePage {
     property var detailFiles: []
     property string detailText: ""
     property bool detailIsLink: false
+    property bool detailReceivedFiles: false
     // The dialog is centred and at most 3/5 of the window high: a fifth stays free above and below.
     readonly property real detailsMaxHeight: Math.round((page.Window.height || 0) * 3 / 5)
     // What is left for the files or the text once the title, the header row and the paddings are taken
@@ -201,6 +236,7 @@ Kirigami.ScrollablePage {
             kind: item.kind,
             ack_bytes: item.ackBytes,
             total_bytes: item.totalBytes,
+            reason: item.reason,
             files: item.files.join("\n"),
             saved_paths: item.savedPaths.join("\n"),
             text: item.shownText
@@ -218,7 +254,9 @@ Kirigami.ScrollablePage {
     function showInfo(id, info) {
         const files = info.files ? info.files.split("\n").filter(f => f.length > 0) : [];
         const text = info.text && info.text.length > 0 ? info.text : (info.preview ?? "");
-        detailResult = stateText(info.state, info.kind, info.ack_bytes, id.startsWith("ble:"));
+        const finalState = info.state === "Finished" || info.state === "Cancelled" || info.state === "Rejected" || info.state === "Disconnected";
+        detailResult = info.reason && info.reason.length > 0 && finalState ? core.refusalText(info.reason) : stateText(info.state, info.kind, info.ack_bytes, id.startsWith("ble:"));
+        detailReceivedFiles = info.kind === "inbound" && info.state === "Finished" && files.length > 0;
         detailSize = info.total_bytes > 0 ? core.formatSize(info.total_bytes) : "";
         // Received files that are still on disk get an Open button; the saved name can differ from the offered one.
         const saved = info.kind === "inbound" && info.state === "Finished" && info.saved_paths ? info.saved_paths.split("\n").filter(f => f.length > 0) : [];
@@ -261,6 +299,10 @@ Kirigami.ScrollablePage {
                             id: detail
 
                             required property var modelData
+                            required property int index
+
+                            // The result is a sentence that may be long (a refusal): it takes the room and wraps.
+                            Layout.fillWidth: index === 0
 
                             visible: modelData[1].length > 0
                             spacing: 0
@@ -272,6 +314,8 @@ Kirigami.ScrollablePage {
                             Kirigami.Heading {
                                 level: 4
                                 text: detail.modelData[1]
+                                wrapMode: Text.Wrap
+                                Layout.fillWidth: true
                             }
                         }
                     }
@@ -286,6 +330,13 @@ Kirigami.ScrollablePage {
                         icon.name: "internet-services"
                         Layout.fillHeight: true
                         onClicked: page.core.openLink(page.detailText.trim())
+                    }
+                    QQC2.Button {
+                        visible: page.detailReceivedFiles
+                        text: KI18n.i18n("Open Folder")
+                        icon.name: "document-open-folder"
+                        Layout.fillHeight: true
+                        onClicked: page.core.openDownloadFolder()
                     }
                     QQC2.Button {
                         visible: page.detailText.length > 0
@@ -493,18 +544,31 @@ Kirigami.ScrollablePage {
             MessageBox {
                 visible: !page.core.historyEnabled
                 type: Kirigami.MessageType.Information
-                text: KI18n.i18n("History is turned off: new transfers are not saved. You can turn it on in Preferences")
+                text: KI18n.i18n("History is turned off: new transfers are not saved. It can be turned on in Preferences")
                 Layout.fillWidth: true
             }
         }
 
-        Kirigami.PlaceholderMessage {
+        ColumnLayout {
             anchors.centerIn: parent
             width: parent.width - Kirigami.Units.gridUnit * 4
             visible: list.count === 0
-            icon.name: page.filter.sourceCount > 0 ? "edit-find" : page.core.connected ? "folder-sync" : "dialog-warning"
-            text: page.filter.sourceCount > 0 ? KI18n.i18n("No matching transfers") : page.core.connected ? KI18n.i18n("No transfers yet") : KI18n.i18n("Starting the sharing service…")
-            explanation: page.filter.sourceCount > 0 || !page.core.connected ? "" : page.core.historyEnabled ? KI18n.i18n("Sent and received transfers are listed here. Make sure this system is visible in Preferences to receive.") : KI18n.i18n("Transfers are only listed while the app is open, because the history is turned off.")
+            spacing: Kirigami.Units.largeSpacing
+
+            // A spinner while the service starts; the warning icon stays for a service that is down.
+            readonly property bool starting: page.filter.sourceCount === 0 && !page.core.connected && page.core.serviceStarting
+
+            QQC2.BusyIndicator {
+                running: parent.starting && parent.visible
+                visible: parent.starting
+                Layout.alignment: Qt.AlignHCenter
+            }
+            Kirigami.PlaceholderMessage {
+                Layout.fillWidth: true
+                icon.name: parent.starting ? "" : page.filter.sourceCount > 0 ? "edit-find" : page.core.connected ? "folder-sync" : "dialog-warning"
+                text: page.filter.sourceCount > 0 ? KI18n.i18n("No matching transfers") : page.core.connected ? KI18n.i18n("No transfers yet") : page.core.serviceStarting ? KI18n.i18n("Starting the sharing service…") : KI18n.i18n("The sharing service is not running")
+                explanation: page.filter.sourceCount > 0 || !page.core.connected ? "" : page.core.historyEnabled ? KI18n.i18n("Sent and received transfers are listed here. Make sure this system is visible in Preferences to receive.") : KI18n.i18n("Transfers are only listed while the app is open, because the history is turned off.")
+            }
         }
 
         delegate: Item {
@@ -630,6 +694,9 @@ Kirigami.ScrollablePage {
                 readonly property int index: cell.index
 
                 readonly property bool awaitingConsent: kind === "inbound" && transferState === "WaitingForUserConsent"
+                // Without the core's consent token nothing can answer the request: the row can still be cancelled and removed.
+                readonly property bool answerable: awaitingConsent && consent > 0
+                readonly property bool interrupted: transferState === "Disconnected" && !(kind === "outbound" && ackBytes === 0)
                 readonly property bool active: transferState !== "Finished" && transferState !== "Cancelled" && transferState !== "Rejected" && transferState !== "Disconnected"
                 readonly property bool inProgress: active && !awaitingConsent && totalBytes > 0
                 // "Receiving · 12 MB · 4.2 MB/s · 2 minutes left": speed and time appear once there is an estimate.
@@ -644,9 +711,7 @@ Kirigami.ScrollablePage {
                     return text;
                 }
                 // An outbound send can be cancelled while it looks for the device or connects.
-                readonly property bool cancellable: inProgress || (kind === "outbound" && active)
-                readonly property bool receivedFiles: kind === "inbound" && transferState === "Finished" && files.length > 0
-                readonly property bool hasText: transferState === "Finished" && files.length === 0 && (bodyText.length > 0 || preview.length > 0)
+                readonly property bool cancellable: inProgress || (kind === "outbound" && active) || (awaitingConsent && !answerable)
                 readonly property string content: page.describe(files, bodyText, preview)
                 readonly property string shownText: bodyText.length > 0 ? bodyText : preview
                 // Wi-Fi details just received (the core keeps the password for a few minutes, not in the history).
@@ -655,6 +720,19 @@ Kirigami.ScrollablePage {
 
                 padding: Kirigami.Units.largeSpacing
                 highlighted: awaitingConsent
+                // The cards are not Tab stops: the history can hold a thousand of them. Their buttons are.
+                focusPolicy: Qt.NoFocus
+
+                // Edge of a request that waits for an answer; the status line says it too.
+                Rectangle {
+                    anchors.fill: parent
+                    visible: item.awaitingConsent
+                    color: "transparent"
+                    border.width: 2
+                    // The plain highlight is 2.5:1 on a light card: darker there.
+                    border.color: Kirigami.ColorUtils.brightnessForColor(Kirigami.Theme.backgroundColor) === Kirigami.ColorUtils.Light ? Qt.darker(Kirigami.Theme.highlightColor, 1.5) : Kirigami.Theme.highlightColor
+                    radius: Kirigami.Units.cornerRadius
+                }
 
                 contentItem: ColumnLayout {
                     spacing: Kirigami.Units.smallSpacing
@@ -664,7 +742,7 @@ Kirigami.ScrollablePage {
                         Layout.fillWidth: true
 
                         Kirigami.Icon {
-                            source: item.files.length === 0 && item.content.length > 0 ? (item.isLink ? "internet-services" : "format-justify-left") : (item.kind === "outbound" ? "document-send" : "folder-download")
+                            source: item.files.length === 0 && item.content.length > 0 ? (item.isLink ? "internet-services" : "text-plain") : (item.kind === "outbound" ? "document-send" : "folder-download")
                             Layout.preferredWidth: Kirigami.Units.iconSizes.medium
                             Layout.preferredHeight: Kirigami.Units.iconSizes.medium
                             Layout.alignment: Qt.AlignTop
@@ -735,18 +813,29 @@ Kirigami.ScrollablePage {
                                     display: QQC2.AbstractButton.IconOnly
                                     // The device name tells the identical buttons of the rows apart for a screen reader.
                                     text: KI18n.i18nc("@action:button %1 is a device name", "Cancel Transfer with %1", deviceName.text)
-                                    QQC2.ToolTip.visible: hovered
+                                    QQC2.ToolTip.visible: hovered || visualFocus
                                     QQC2.ToolTip.text: KI18n.i18nc("@info:tooltip", "Cancel transfer")
+                                    QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                                     onClicked: page.core.cancel(item.transferId)
                                 }
                                 QQC2.ToolButton {
-                                    visible: !item.active
+                                    visible: !item.active || (item.awaitingConsent && !item.answerable)
                                     icon.name: "edit-delete-remove"
                                     display: QQC2.AbstractButton.IconOnly
                                     text: KI18n.i18nc("@action:button %1 is a device name", "Remove Transfer with %1 from List", deviceName.text)
-                                    QQC2.ToolTip.visible: hovered
+                                    QQC2.ToolTip.visible: hovered || visualFocus
                                     QQC2.ToolTip.text: KI18n.i18n("Remove from list")
-                                    onClicked: page.core.removeTransfer(page.filter.sourceRow(item.index))
+                                    QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                                    onClicked: {
+                                        const row = page.filter.sourceRow(item.index);
+                                        if (item.kind === "inbound" && item.transferState === "Finished" && (item.payloadKind === "Text" || item.payloadKind === "Url")) {
+                                            removeDialog.sourceRow = row;
+                                            removeDialog.historyUid = item.historyUid;
+                                            removeDialog.open();
+                                        } else {
+                                            page.core.removeTransfer(row);
+                                        }
+                                    }
                                 }
                             }
 
@@ -758,20 +847,17 @@ Kirigami.ScrollablePage {
                                     readonly property string status: item.reason.length > 0 && !item.active ? page.core.refusalText(item.reason) : item.awaitingConsent && item.pin.length > 0 ? KI18n.i18n("Wants to share with you · PIN %1", item.pin) : item.inProgress ? item.progressText : page.stateText(item.transferState, item.kind, item.ackBytes, item.viaBluetooth)
                                     readonly property string stamp: page.when(item.time)
                                     text: stamp.length > 0 && !item.active ? page.joined(status, stamp) : status
-                                    opacity: 0.7
-                                    elide: Text.ElideRight
+                                    // An interrupted transfer is red as well as worded; the refusal reason wraps instead of being cut off.
+                                    color: item.interrupted ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
+                                    opacity: item.interrupted ? 1 : 0.7
+                                    wrapMode: Text.Wrap
                                     Layout.fillWidth: true
-                                }
-                                QQC2.Button {
-                                    visible: !item.active
-                                    text: KI18n.i18n("More Details")
-                                    icon.name: "help-about-symbolic"
-                                    onClicked: page.showDetails(item)
                                 }
                             }
 
                             RowLayout {
-                                visible: item.content.length > 0 || item.awaitingConsent
+                                // Also when it holds only the Show Details button of a finished transfer with nothing to show.
+                                visible: item.content.length > 0 || item.awaitingConsent || detailsButton.visible
                                 spacing: Kirigami.Units.largeSpacing
                                 Layout.fillWidth: true
 
@@ -831,27 +917,24 @@ Kirigami.ScrollablePage {
                                     }
                                 }
                                 QQC2.Button {
-                                    visible: item.awaitingConsent && item.consent > 0
+                                    visible: item.answerable
                                     text: KI18n.i18nc("@action:button accept an incoming transfer", "Accept")
                                     icon.name: "dialog-ok-apply"
+                                    Accessible.name: KI18n.i18nc("@action:button %1 is a device name", "Accept Transfer from %1", deviceName.text)
                                     onClicked: page.core.accept(item.transferId)
                                 }
                                 QQC2.Button {
-                                    visible: item.awaitingConsent && item.consent > 0
+                                    visible: item.answerable
                                     text: KI18n.i18nc("@action:button decline an incoming transfer", "Decline")
                                     icon.name: "dialog-cancel"
+                                    Accessible.name: KI18n.i18nc("@action:button %1 is a device name", "Decline Transfer from %1", deviceName.text)
                                     onClicked: page.core.decline(item.transferId)
-                                }
-                                QQC2.Button {
-                                    visible: item.receivedFiles
-                                    text: KI18n.i18n("Open Folder")
-                                    icon.name: "document-open-folder"
-                                    onClicked: page.core.openDownloadFolder()
                                 }
                                 QQC2.Button {
                                     visible: item.joinable
                                     text: KI18n.i18n("Join Network")
                                     icon.name: "network-wireless"
+                                    Accessible.name: KI18n.i18nc("@action:button %1 is a network name", "Join Network “%1”", item.shownText)
                                     onClicked: {
                                         joinDialog.transferId = item.transferId;
                                         joinDialog.ssid = item.shownText;
@@ -859,13 +942,14 @@ Kirigami.ScrollablePage {
                                     }
                                 }
                                 QQC2.Button {
-                                    visible: item.hasText
-                                    text: KI18n.i18nc("@action:button copy the text to the clipboard", "Copy")
-                                    icon.name: "edit-copy"
-                                    onClicked: {
-                                        page.core.copyToClipboard(item.shownText);
-                                        page.toasts.show(Kirigami.MessageType.Positive, KI18n.i18n("Copied to clipboard"), 1500);
-                                    }
+                                    id: detailsButton
+
+                                    // On the last line of the card, with the content it describes.
+                                    visible: !item.active && !item.joinable
+                                    text: KI18n.i18n("Show Details")
+                                    icon.name: "help-about-symbolic"
+                                    Accessible.name: KI18n.i18nc("@action:button %1 is a device name", "Show Details of Transfer with %1", deviceName.text)
+                                    onClicked: page.showDetails(item)
                                 }
                             }
 

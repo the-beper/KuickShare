@@ -7,6 +7,9 @@
 # XDG_RUNTIME_DIR and the session bus stay real, so tray, notifications and job tracker work.
 SANDBOX=$(mktemp -d /dev/shm/kuickshare-test.XXXXXX) || exit 1
 mkdir -p "$SANDBOX/home/.config" "$SANDBOX/home/.local/share" "$SANDBOX/home/.cache" "$SANDBOX/tmp"
+# The application's own icons, as an installed copy would provide them: without them the window and the tray fall back to a stock icon.
+mkdir -p "$SANDBOX/home/.local/share/icons"
+cp -r "$(dirname "${BASH_SOURCE[0]}")/../../data/icons/hicolor" "$SANDBOX/home/.local/share/icons/"
 [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/kdeglobals" ] &&
     cp "${XDG_CONFIG_HOME:-$HOME/.config}/kdeglobals" "$SANDBOX/home/.config/"
 echo $$ > "$SANDBOX/pid"

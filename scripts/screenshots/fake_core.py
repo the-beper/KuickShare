@@ -125,6 +125,7 @@ def info(**kw):
     out = {k: V("s", v) for k, v in d.items()}
     out["total_bytes"] = V("t", kw.get("total_bytes", 0))
     out["ack_bytes"] = V("t", kw.get("ack_bytes", 0))
+    out["consent"] = V("t", kw.get("consent", 0))
     out["history_uid"] = V("t", 0)
     return out
 
@@ -138,7 +139,7 @@ def send_devices():
 def send_transfers():
     for tid, kw in [
         ("t1", dict(kind="inbound", state="WaitingForUserConsent", device="Tux Tablet", pin="4821",
-                    files="Holiday photos.zip\nitinerary.pdf", total_bytes=48_300_000)),
+                    files="Holiday photos.zip\nitinerary.pdf", total_bytes=48_300_000, consent=1)),
         ("t2", dict(kind="outbound", state="SendingFiles", device="Tux Laptop", files="/home/tux/Documents/slides.odp",
                     total_bytes=24_000_000, ack_bytes=15_000_000)),
     ]:

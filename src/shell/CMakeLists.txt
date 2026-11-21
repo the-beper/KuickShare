@@ -155,6 +155,11 @@ if(BUILD_TESTING)
     target_link_libraries(transferfiltermodel_test PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME transferfiltermodel COMMAND transferfiltermodel_test)
 
+    qt_add_executable(coreerror_test ../../tests/shell/coreerror_test.cpp)
+    target_include_directories(coreerror_test PRIVATE .)
+    target_link_libraries(coreerror_test PRIVATE Qt6::Core Qt6::DBus Qt6::Test)
+    add_test(NAME coreerror COMMAND coreerror_test)
+
     qt_add_executable(devicemodel_test ../../tests/shell/devicemodel_test.cpp devicemodel.cpp)
     target_include_directories(devicemodel_test PRIVATE .)
     target_link_libraries(devicemodel_test PRIVATE Qt6::Core Qt6::Test)

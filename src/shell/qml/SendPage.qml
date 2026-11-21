@@ -14,7 +14,12 @@ Kirigami.ScrollablePage {
     required property var core
     required property var files
     property bool dragging: false
+    // The content of the text box. Main owns it, so the text survives a change of page.
+    property string draft: ""
 
+    signal draftEdited(string text)
+    signal showHelpRequested
+    signal showTransfersRequested
     signal filesAdded(var urls)
     signal fileRemoved(string path)
     signal filesCleared
@@ -27,6 +32,7 @@ Kirigami.ScrollablePage {
     // The longest text that can be sent; the counter shows up when it is close.
     readonly property int maxChars: 100000
     readonly property bool nearLimit: textField.length >= maxChars * 0.9
+    readonly property bool atLimit: textField.length >= maxChars
     readonly property bool hasContent: files.length > 0 || trimmedText.length > 0
     // The protocol has a link type for exactly one link; anything more goes as text.
     // A link is at least protocol://word.c, with any protocol; anything shorter is not a valid link yet.
@@ -46,15 +52,42 @@ Kirigami.ScrollablePage {
     // Discovery runs only while this page is open in a visible window; the core keeps it alive
     // for a short while after that, so quick tab switches don't restart it.
     readonly property bool wanted: Window.window ? Window.window.visible : false
-    onWantedChanged: wanted ? core.startDiscovery() : core.stopDiscovery()
+    onWantedChanged: {
+        searchTimedOut = false;
+        wanted ? core.startDiscovery() : core.stopDiscovery();
+    }
+    onDraftChanged: if (textField.text !== draft) textField.text = draft
+
+    // Set after a while of discovery without any device.
+    property bool searchTimedOut: false
+    Timer {
+        interval: 20000
+        running: page.wanted && page.core.connected && deviceRepeater.count === 0 && !page.searchTimedOut
+        onTriggered: page.searchTimedOut = true
+    }
+
+    component FocusRing: Rectangle {
+        // Kirigami's card background draws nothing for the keyboard focus; the card says when to show it (visualFocus: not after a click).
+        property bool shown: false
+        anchors.fill: parent
+        z: 1
+        radius: Kirigami.Units.cornerRadius
+        color: "transparent"
+        border.width: 2
+        border.color: Kirigami.Theme.focusColor
+        visible: shown
+    }
+    // Asks for a fresh look both ways: discovery over Wi-Fi Direct and one more Bluetooth scan.
+    function searchAgain() {
+        searchTimedOut = false;
+        core.startDiscovery();
+        core.scanBluetooth();
+    }
     Component.onCompleted: if (wanted) core.startDiscovery()
     Component.onDestruction: core.stopDiscovery()
 
     function openFileDialog() {
         fileDialog.open();
-    }
-    function clearText() {
-        textField.clear();
     }
 
     // Pastes at most what still fits. A big text that went through the text box whole would first be laid
@@ -133,7 +166,6 @@ Kirigami.ScrollablePage {
                 QQC2.Label {
                     text: row.modelData.size
                     opacity: 0.7
-                    font: Kirigami.Theme.smallFont
                 }
             }
             QQC2.ToolButton {
@@ -141,7 +173,8 @@ Kirigami.ScrollablePage {
                 display: QQC2.AbstractButton.IconOnly
                 // The file name tells the identical buttons of the rows apart for a screen reader.
                 text: KI18n.i18nc("@action:button %1 is a file name", "Remove %1", row.modelData.name)
-                QQC2.ToolTip.visible: hovered
+                QQC2.ToolTip.visible: hovered || visualFocus
+                QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                 QQC2.ToolTip.text: KI18n.i18nc("@info:tooltip", "Remove from the list of files to send")
                 onClicked: page.fileRemoved(row.modelData.path)
             }
@@ -203,7 +236,8 @@ Kirigami.ScrollablePage {
         RowLayout {
             id: status
 
-            readonly property bool starting: !page.core.connected
+            readonly property bool starting: !page.core.connected && page.core.serviceStarting
+            readonly property bool offline: !page.core.connected && !page.core.serviceStarting
             readonly property bool hidden: !page.core.visible
             readonly property bool dnd: page.core.suspended
 
@@ -212,7 +246,7 @@ Kirigami.ScrollablePage {
 
             Kirigami.Icon {
                 // Same icons as the matching options in Settings: hidden = visibility off, Do Not Disturb = notifications off.
-                source: status.starting ? "network-wireless-disconnected" : status.hidden ? "view-hidden" : status.dnd ? "notifications-disabled" : "network-wireless-hotspot"
+                source: status.starting || status.offline ? "network-wireless-disconnected" : status.hidden ? "view-hidden" : status.dnd ? "notifications-disabled" : "network-wireless-hotspot"
                 Layout.alignment: Qt.AlignVCenter
                 Layout.preferredWidth: Kirigami.Units.iconSizes.large
                 Layout.preferredHeight: Kirigami.Units.iconSizes.large
@@ -223,18 +257,18 @@ Kirigami.ScrollablePage {
 
                 Kirigami.Heading {
                     level: 3
-                    color: status.starting || status.hidden || status.dnd ? Kirigami.Theme.textColor : Kirigami.Theme.highlightColor
-                    text: status.starting ? KI18n.i18nc("@info:status", "Starting…") : status.hidden ? KI18n.i18nc("@info:status", "Hidden") : status.dnd ? KI18n.i18n("Do Not Disturb") : KI18n.i18nc("@info:status", "Ready")
+                    text: status.starting ? KI18n.i18nc("@info:status", "Starting…") : status.offline ? KI18n.i18nc("@info:status", "Not running") : status.hidden ? KI18n.i18nc("@info:status", "Hidden") : status.dnd ? KI18n.i18n("Do Not Disturb") : KI18n.i18nc("@info:status", "Ready")
                 }
                 QQC2.Label {
                     visible: text.length > 0
                     opacity: 0.7
-                    text: status.starting ? "" : status.hidden ? KI18n.i18n("Turn on visibility in Preferences to receive files") : status.dnd ? KI18n.i18n("Hidden until Do Not Disturb ends") : KI18n.i18n("Visible as “%1”", page.core.deviceName)
+                    text: status.starting || status.offline ? "" : status.hidden ? KI18n.i18n("Turn on visibility in Preferences to receive files") : status.dnd ? KI18n.i18n("Hidden until Do Not Disturb ends") : KI18n.i18n("Visible as “%1”", page.core.deviceName)
                 }
             }
         }
 
         Kirigami.AbstractCard {
+            id: dropCard
             Layout.fillWidth: true
             // The height follows the content smoothly (drop zone, then the list of files).
             Layout.preferredHeight: implicitHeight
@@ -245,28 +279,55 @@ Kirigami.ScrollablePage {
                 }
             }
             highlighted: page.dragging
-            showClickFeedback: page.files.length === 0
+            // Also while files are queued, so that a drag shows the highlight.
+            showClickFeedback: page.files.length === 0 || page.dragging
+            focusPolicy: page.files.length === 0 ? Qt.StrongFocus : Qt.NoFocus
+            Accessible.role: page.files.length === 0 ? Accessible.Button : Accessible.Grouping
+            Accessible.name: page.files.length === 0 ? KI18n.i18nc("@action:button accessible name of the drop zone", "Add files to send") : KI18n.i18np("%1 file", "%1 files", page.files.length)
             onClicked: if (page.files.length === 0) fileDialog.open()
+
+            FocusRing {
+                shown: dropCard.visualFocus
+            }
 
             contentItem: ColumnLayout {
                 clip: true
                 spacing: Kirigami.Units.largeSpacing
 
-                Kirigami.PlaceholderMessage {
+                ColumnLayout {
                     visible: page.files.length === 0
+                    spacing: Kirigami.Units.smallSpacing
                     Layout.fillWidth: true
-                    Layout.topMargin: Kirigami.Units.largeSpacing
-                    Layout.bottomMargin: Kirigami.Units.largeSpacing
-                    icon.name: page.dragging ? "document-import" : "folder-open"
-                    icon.width: Kirigami.Units.iconSizes.huge
-                    icon.height: Kirigami.Units.iconSizes.huge
-                    text: page.dragging ? KI18n.i18n("Drop to share") : KI18n.i18n("Drop files here")
-                    explanation: KI18n.i18n("Or click to choose them")
-                    helpfulAction: Kirigami.Action {
-                        icon.name: "edit-paste-in-place"
+                    Layout.topMargin: Kirigami.Units.smallSpacing
+                    Layout.bottomMargin: Kirigami.Units.smallSpacing
+
+                    Kirigami.Icon {
+                        source: page.dragging ? "document-import" : "folder-open"
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.preferredWidth: Kirigami.Units.iconSizes.large
+                        Layout.preferredHeight: Kirigami.Units.iconSizes.large
+                    }
+                    Kirigami.Heading {
+                        level: 3
+                        text: page.dragging ? KI18n.i18n("Drop to share") : KI18n.i18n("Drop files here")
+                        wrapMode: Text.Wrap
+                        horizontalAlignment: Text.AlignHCenter
+                        Layout.fillWidth: true
+                    }
+                    QQC2.Label {
+                        text: KI18n.i18n("Or click to choose them")
+                        opacity: 0.7
+                        wrapMode: Text.Wrap
+                        horizontalAlignment: Text.AlignHCenter
+                        Layout.fillWidth: true
+                    }
+                    QQC2.Button {
+                        icon.name: "edit-paste-symbolic"
                         text: KI18n.i18n("Paste from Clipboard")
                         enabled: page.core.clipboardHasFiles
-                        onTriggered: page.pasteFiles()
+                        Layout.topMargin: Kirigami.Units.smallSpacing * 2
+                        Layout.alignment: Qt.AlignHCenter
+                        onClicked: page.pasteFiles()
                     }
                 }
 
@@ -291,7 +352,7 @@ Kirigami.ScrollablePage {
                         onClicked: fileDialog.open()
                     }
                     QQC2.Button {
-                        icon.name: "edit-clear-symbolic"
+                        icon.name: "edit-clear-all-symbolic"
                         text: KI18n.i18nc("@action:button remove all files from the list to send", "Clear")
                         onClicked: page.filesCleared()
                     }
@@ -319,7 +380,8 @@ Kirigami.ScrollablePage {
         }
 
         Kirigami.AbstractCard {
-            visible: page.files.length === 0
+            // Disabled, not hidden, while files are queued: files and text are never sent together.
+            enabled: page.files.length === 0
             Layout.fillWidth: true
 
             contentItem: ColumnLayout {
@@ -373,7 +435,7 @@ Kirigami.ScrollablePage {
                         radius: Kirigami.Units.cornerRadius
                         color: Qt.alpha(Kirigami.Theme.textColor, 0.05)
                         border.width: 1
-                        border.color: textField.activeFocus ? Kirigami.Theme.highlightColor : Qt.alpha(Kirigami.Theme.textColor, 0.2)
+                        border.color: textField.activeFocus ? Kirigami.Theme.highlightColor : Qt.alpha(Kirigami.Theme.textColor, 0.5)
                     }
 
                     FontMetrics {
@@ -383,15 +445,34 @@ Kirigami.ScrollablePage {
 
                     QQC2.TextArea {
                         id: textField
-                        placeholderText: KI18n.i18n("Type or paste something to send")
+                        // The desktop style paints a TextArea's placeholder with disabledTextColor (3.8:1) whatever placeholderTextColor says, so the page draws its own.
+                        Accessible.name: KI18n.i18n("Type or paste something to send")
+                        Component.onCompleted: text = page.draft
                         wrapMode: TextEdit.Wrap
                         leftPadding: Kirigami.Units.largeSpacing
                         rightPadding: Kirigami.Units.largeSpacing
                         topPadding: Kirigami.Units.largeSpacing
                         bottomPadding: Kirigami.Units.largeSpacing
                         background: null
+                        QQC2.Label {
+                            visible: textField.length === 0 && textField.preeditText.length === 0
+                            x: textField.leftPadding
+                            y: textField.topPadding
+                            width: textField.width - textField.leftPadding - textField.rightPadding
+                            text: textField.Accessible.name
+                            color: Qt.alpha(Kirigami.Theme.textColor, 0.7)
+                            wrapMode: Text.Wrap
+                            Accessible.ignored: true
+                        }
                         // Other ways of getting a longer text in (drag and drop, the context menu) are cut here.
-                        onTextChanged: if (length > page.maxChars) remove(page.maxChars, length)
+                        onTextChanged: {
+                            if (length > page.maxChars) {
+                                remove(page.maxChars, length);
+                            }
+                            if (text !== page.draft) {
+                                page.draftEdited(text);
+                            }
+                        }
                         Keys.onPressed: event => {
                             if (event.matches(StandardKey.Paste)) {
                                 event.accepted = true;
@@ -414,7 +495,7 @@ Kirigami.ScrollablePage {
                     QQC2.CheckBox {
                         id: asTextBox
 
-                        readonly property string lockReason: textField.length === 0 || page.singleLink ? "" : page.startsWithLink ? KI18n.i18n("A string can only be sent as a link when it is the only content") : KI18n.i18n("No valid link")
+                        readonly property string lockReason: textField.length === 0 || page.singleLink ? "" : page.startsWithLink ? KI18n.i18n("A link is sent as a link only when it is the only content") : KI18n.i18n("No valid link")
 
                         text: KI18n.i18n("Send as text")
                         checked: !page.singleLink || page.sendAsText
@@ -433,16 +514,30 @@ Kirigami.ScrollablePage {
                     Item {
                         Layout.fillWidth: true
                     }
-                    // How many characters out of the limit, in yellow, only when it is getting close
+                    // How many characters out of the limit, only when it is getting close; the icon and the text at the limit carry the warning
+                    Kirigami.Icon {
+                        visible: page.nearLimit
+                        source: "dialog-warning-symbolic"
+                        Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                        Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                    }
                     QQC2.Label {
                         visible: page.nearLimit
-                        text: KI18n.i18nc("@info:status characters typed out of the most allowed, %1 and %2 are numbers", "%1/%2", Qt.locale().toString(textField.length, "f", 0), Qt.locale().toString(page.maxChars, "f", 0))
-                        color: Kirigami.Theme.neutralTextColor
-                        font: Kirigami.Theme.smallFont
+                        text: page.atLimit ? KI18n.i18nc("@info:status characters typed out of the most allowed, %1 and %2 are numbers; no more fit", "%1/%2 (limit reached)", Qt.locale().toString(textField.length, "f", 0), Qt.locale().toString(page.maxChars, "f", 0)) : KI18n.i18nc("@info:status characters typed out of the most allowed, %1 and %2 are numbers", "%1/%2", Qt.locale().toString(textField.length, "f", 0), Qt.locale().toString(page.maxChars, "f", 0))
+                        opacity: 0.7
                         Layout.rightMargin: Kirigami.Units.smallSpacing
                     }
                 }
             }
+        }
+
+        QQC2.Label {
+            visible: page.files.length > 0
+            text: KI18n.i18n("Remove the files to send text instead")
+            opacity: 0.7
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+            Layout.leftMargin: Kirigami.Units.smallSpacing
         }
 
         RowLayout {
@@ -461,15 +556,16 @@ Kirigami.ScrollablePage {
             Item {
                 Layout.fillWidth: true
             }
-            // Devices in Receive mode are found over Bluetooth by a short scan, not continuously.
+            // The one place to ask for a new search, whatever the state of the list.
             QQC2.ToolButton {
-                visible: page.core.wifiUpgrade
+                enabled: page.core.connected
                 icon.name: "view-refresh-symbolic"
                 text: KI18n.i18n("Search Again")
                 display: QQC2.AbstractButton.IconOnly
-                QQC2.ToolTip.visible: hovered
-                QQC2.ToolTip.text: KI18n.i18n("Search for nearby devices over Bluetooth again")
-                onClicked: page.core.scanBluetooth()
+                QQC2.ToolTip.visible: hovered || visualFocus
+                QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                QQC2.ToolTip.text: KI18n.i18n("Look for nearby devices again")
+                onClicked: page.searchAgain()
             }
         }
 
@@ -485,11 +581,25 @@ Kirigami.ScrollablePage {
 
                 anchors.centerIn: parent
                 width: parent.width - Kirigami.Units.gridUnit * 4
-                text: KI18n.i18n("Looking for nearby devices…")
+                // The service state comes from the core: a spinner only while it starts, none when it is down.
+                readonly property string mode: !page.core.connected ? (page.core.serviceStarting ? "starting" : "offline") : page.searchTimedOut ? "empty" : "searching"
+
+                icon.name: mode === "offline" ? "network-disconnect" : mode === "empty" ? "edit-find" : ""
+                text: mode === "starting" ? KI18n.i18nc("@info:status", "Starting…") : mode === "offline" ? KI18n.i18n("Device search is not available") : mode === "empty" ? KI18n.i18n("No devices found") : KI18n.i18n("Looking for nearby devices…")
+                explanation: mode === "empty" ? KI18n.i18n("Try searching again") : ""
 
                 QQC2.ProgressBar {
+                    visible: searching.mode === "starting" || searching.mode === "searching"
                     indeterminate: true
                     Layout.fillWidth: true
+                }
+                QQC2.Button {
+                    visible: searching.mode === "empty"
+                    flat: true
+                    icon.name: "help-contents-symbolic"
+                    text: KI18n.i18n("Open Help")
+                    Layout.alignment: Qt.AlignHCenter
+                    onClicked: page.showHelpRequested()
                 }
             }
         }
@@ -497,7 +607,14 @@ Kirigami.ScrollablePage {
         MessageBox {
             visible: page.core.transferBusy && deviceRepeater.count > 0
             type: Kirigami.MessageType.Information
-            text: KI18n.i18n("A transfer is in progress. You can send again when it ends")
+            text: KI18n.i18n("Sending is paused while a transfer is in progress")
+            actions: [
+                Kirigami.Action {
+                    text: KI18n.i18nc("@action:button", "Show Transfers")
+                    icon.name: "folder-sync"
+                    onTriggered: page.showTransfersRequested()
+                }
+            ]
             Layout.fillWidth: true
         }
 
@@ -510,6 +627,8 @@ Kirigami.ScrollablePage {
         Repeater {
             id: deviceRepeater
             model: page.core.devices
+            // A device showed up: the next empty list searches again instead of reporting "No devices found" at once.
+            onCountChanged: if (count > 0) page.searchTimedOut = false
 
             delegate: Kirigami.AbstractCard {
                 id: deviceCard
@@ -521,10 +640,19 @@ Kirigami.ScrollablePage {
                 required property string trust
                 required property string medium
 
+                readonly property string displayName: name.length > 0 ? name : medium === "ble" ? KI18n.i18n("Bluetooth device") : address
+                readonly property string kindName: deviceType === "Tablet" ? KI18n.i18nc("@info kind of device", "Tablet") : deviceType === "Laptop" ? KI18n.i18nc("@info kind of device", "Laptop") : deviceType === "Phone" ? KI18n.i18nc("@info kind of device", "Phone") : KI18n.i18nc("@info kind of device", "Computer")
+
                 Layout.fillWidth: true
                 enabled: page.hasContent && !page.core.transferBusy
                 showClickFeedback: true
+                Accessible.role: Accessible.Button
+                Accessible.name: KI18n.i18nc("@info accessible name of a device, %1 is its name and %2 its kind", "%1, %2", displayName, kindName)
                 onClicked: page.sendTo(deviceId)
+
+                FocusRing {
+                    shown: deviceCard.visualFocus
+                }
 
                 // A newly found device fades in and rises a little.
                 NumberAnimation on opacity {
@@ -551,7 +679,9 @@ Kirigami.ScrollablePage {
                     }
                     Kirigami.Heading {
                         level: 4
-                        text: deviceCard.name.length > 0 ? deviceCard.name : deviceCard.medium === "ble" ? KI18n.i18n("Bluetooth device") : deviceCard.address
+                        text: deviceCard.displayName
+                        wrapMode: Text.Wrap
+                        maximumLineCount: 2
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }

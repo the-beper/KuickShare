@@ -58,8 +58,11 @@ struct Service {
     quit: mpsc::UnboundedSender<()>,
 }
 
+/// The caller gets the outermost message only (the sentence written for the user, or the context
+/// of the failure); the whole chain of causes goes to the log, never to the screen.
 fn failed(e: anyhow::Error) -> fdo::Error {
-    fdo::Error::Failed(format!("{e:#}"))
+    tracing::info!("a call failed: {e:#}");
+    fdo::Error::Failed(e.to_string())
 }
 
 /// Why an answer to a transfer was not taken, as D-Bus error names (`<interface>.Error.<Name>`).
@@ -2792,5 +2795,14 @@ mod tests {
         let state = (ended.state.as_str(), ended.consent, ended.last_event);
         assert_eq!(state, ("Disconnected", 0, 123));
         assert_eq!((ended.kind, ended.device.as_str()), ("inbound", "tablet"));
+    }
+
+    #[test]
+    fn a_failed_call_carries_the_outermost_message_only() {
+        let chain = anyhow::anyhow!("os error 13").context("Cannot create /x");
+        match failed(chain) {
+            fdo::Error::Failed(message) => assert_eq!(message, "Cannot create /x"),
+            other => panic!("unexpected error {other:?}"),
+        }
     }
 }
