@@ -27,20 +27,8 @@ Kirigami.ApplicationWindow {
     // Why the firewall stopped the hotspot last (a code of the core).
     property string wifiBlockedReason: ""
 
-    readonly property string pageName: {
-        switch (currentPage) {
-        case "send":
-            return KI18n.i18nc("@title:tab", "Send");
-        case "transfers":
-            return KI18n.i18nc("@title:tab", "Transfers");
-        case "settings":
-            return KI18n.i18nc("@action:inmenu", "Preferences");
-        case "help":
-            return KI18n.i18nc("@action:inmenu", "Help");
-        }
-        return "";
-    }
-    title: pageName.length > 0 ? KI18n.i18nc("@title:window page name, application name", "%1 — KuickShare", pageName) : KI18n.i18n("KuickShare")
+    // The app name alone, without the page (a deliberate exception to the HIG): Qt adds nothing to a title that already ends with it.
+    title: KI18n.i18n("KuickShare")
     // Compact, fixed size (so it cannot be maximized or resized): the pages scroll when needed.
     readonly property real fixedWidth: Kirigami.Units.gridUnit * 26
     readonly property real fixedHeight: Math.min(Kirigami.Units.gridUnit * 40, Screen.desktopAvailableHeight * 0.95)

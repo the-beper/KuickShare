@@ -7,6 +7,7 @@ Exec=kuickshare
 Icon=io.github.the_beper.KuickShare
 Terminal=false
 Categories=Network;FileTransfer;Qt;KDE;
-StartupNotify=true
+# KWin shows the launch feedback of this entry for every press on a notification action, and Copy Text opens no window to end it.
+StartupNotify=false
 StartupWMClass=kuickshare
 Keywords=Quick Share;Nearby Share;Android;send files;file transfer;

@@ -53,7 +53,7 @@ private Q_SLOTS:
     void init();
     void cleanup();
 
-    void sectionTitleStartsFlushWithTheTop();
+    void sectionTitleKeepsItsSpace();
 
     void messageBoxShowsByDefault();
 
@@ -155,7 +155,7 @@ int QmlConsumerTest::messageType(const QString &name)
 // SectionTitle -----------------------------------------------------------------
 //
 
-void QmlConsumerTest::sectionTitleStartsFlushWithTheTop()
+void QmlConsumerTest::sectionTitleKeepsItsSpace()
 {
     // The margins read through the window's own properties, not through an attached property looked up from the other side.
     auto window = windowWith(R"QML(
@@ -163,9 +163,6 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import io.github.the_beper.KuickShareTest
 ApplicationWindow {
-    id: win
-
-    required property bool firstTitle
     readonly property alias heading: heading
     readonly property double topMargin: heading.Layout.topMargin
     readonly property double bottomMargin: heading.Layout.bottomMargin
@@ -174,25 +171,20 @@ ApplicationWindow {
         id: heading
 
         text: "Transfers"
-        first: win.firstTitle
     }
 }
 )QML",
-                            {{QStringLiteral("firstTitle"), true}});
+                             {});
     QVERIFY(window);
     auto *heading =
         QQmlProperty::read(window.get(), QStringLiteral("heading")).value<QQuickItem *>();
     QVERIFY(heading);
     QCOMPARE(heading->property("level"), 4);
-    // "The first title of a page needs no space above it: the page padding is enough."
-    QCOMPARE(QQmlProperty::read(window.get(), QStringLiteral("topMargin")).toDouble(), 0.0);
+    // Every title follows a page heading or a card, so it keeps its space above as well as below.
+    QVERIFY2(QQmlProperty::read(window.get(), QStringLiteral("topMargin")).toDouble() > 0,
+             "every title keeps its space above");
     QVERIFY2(QQmlProperty::read(window.get(), QStringLiteral("bottomMargin")).toDouble() > 0,
              "every title keeps its space below");
-    window->setProperty("firstTitle", false);
-    QVERIFY2(QQmlProperty::read(window.get(), QStringLiteral("topMargin")).toDouble() > 0,
-             "a title that follows the first keeps its space above");
-    window->setProperty("firstTitle", true);
-    QCOMPARE(QQmlProperty::read(window.get(), QStringLiteral("topMargin")).toDouble(), 0.0);
 }
 
 //

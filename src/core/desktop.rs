@@ -123,7 +123,7 @@ fn minutes_left(until: i64, now: i64) -> u64 {
 
 /// `file://` of a local path: path characters that may not travel inside a URI are escaped, and
 /// the rest (letters, numbers, marks, punctuation of a path and URI delimiters) travels as it
-/// is. The OpenURI portal and `xdg-open` read it as a host path.
+/// is. `xdg-open` reads it as a host path.
 fn file_uri(path: &str) -> String {
     let mut out = String::from("file://");
     for byte in path.as_bytes() {
@@ -579,7 +579,11 @@ impl Desktop {
 
     async fn on_notice(&mut self, event: Event) {
         match event {
-            Event::Answered { server_id, key } => self.answer(server_id, &key).await,
+            Event::Answered {
+                server_id,
+                key,
+                token,
+            } => self.answer(server_id, &key, token.as_deref()).await,
             Event::Dismissed { server_id } => self.dismiss(server_id).await,
             Event::DaemonChanged => self.daemon_changed().await,
         }
@@ -588,18 +592,24 @@ impl Desktop {
 
     /// A button of one of our notifications was pressed. The entry of the notice goes first, so
     /// a re-shown prompt of the same id (a refused trust) is kept whatever the server answers.
-    async fn answer(&mut self, server_id: u32, key: &str) {
+    async fn answer(&mut self, server_id: u32, key: &str, token: Option<&str>) {
         let Some(button) = self.prompts.remove(&server_id) else {
             return; // not ours (the signals name every press of every app)
         };
-        if !self.answer_button(&button, key).await {
+        if !self.answer_button(&button, key, token).await {
             // Not one of its buttons: the prompt stays answerable, whatever closed it.
             self.prompts.insert(server_id, button);
         }
     }
 
-    /// Applies one press. `false` when the key is none of the notice's actions.
-    async fn answer_button(&mut self, button: &Button, key: &str) -> bool {
+    /// Applies one press. `false` when the key is none of the notice's actions. `activation`, the
+    /// activation token of the press, goes to the window the press opens.
+    async fn answer_button(
+        &mut self,
+        button: &Button,
+        key: &str,
+        activation: Option<&str>,
+    ) -> bool {
         match button {
             Button::Consent { id, token } => match key {
                 ACCEPT => self.answer_consent(id, Some(*token), Answer::Accept).await,
@@ -619,32 +629,32 @@ impl Desktop {
                     // Only a web link opens, whatever the text says.
                     let link = text.trim();
                     if notify::looks_like_link(link) {
-                        self.open_anything(link).await;
+                        self.open_link(link, activation).await;
                     } else {
                         tracing::warn!("not opening a text that is no http(s) link");
                     }
                     true
                 }
                 VIEW => {
-                    self.spawn_window(["--transfer", id]).await;
+                    self.spawn_window(["--transfer", id], activation).await;
                     true
                 }
                 _ => false,
             },
             Button::File { dir, path } => match key {
                 OPEN_FILE => {
-                    self.open_anything(&file_uri(path)).await;
+                    self.open_path(path, activation).await;
                     true
                 }
                 OPEN_FOLDER => {
-                    self.open_anything(&file_uri(dir)).await;
+                    self.open_path(dir, activation).await;
                     true
                 }
                 _ => false,
             },
             Button::Folder { dir } => match key {
                 OPEN_FOLDER => {
-                    self.open_anything(&file_uri(dir)).await;
+                    self.open_path(dir, activation).await;
                     true
                 }
                 _ => false,
@@ -730,11 +740,11 @@ impl Desktop {
     async fn on_action(&mut self, action: tray::Action) {
         match action {
             tray::Action::OpenWindow(page) => match page {
-                Some("settings") => self.spawn_window(["--page", "settings"]).await,
-                _ => self.spawn_window([]).await,
+                Some("settings") => self.spawn_window(["--page", "settings"], None).await,
+                _ => self.spawn_window([], None).await,
             },
-            tray::Action::OpenFiles => self.spawn_window(["--open-files"]).await,
-            tray::Action::PasteClipboard => self.spawn_window(["--clipboard"]).await,
+            tray::Action::OpenFiles => self.spawn_window(["--open-files"], None).await,
+            tray::Action::PasteClipboard => self.spawn_window(["--clipboard"], None).await,
             tray::Action::SetVisible => {
                 {
                     let mut core = self.core.lock().await;
@@ -762,7 +772,7 @@ impl Desktop {
                     // A transfer would be lost, or the window shows and must close too: the
                     // shell asks before it stops the service (`--request-quit` shows its
                     // "Quit KuickShare?" prompt when a transfer is in flight).
-                    self.spawn_window(["--request-quit"]).await;
+                    self.spawn_window(["--request-quit"], None).await;
                 } else {
                     // Idle: the background service itself is the whole app, and it may stop.
                     let _ = self.quit.send(());
@@ -800,8 +810,9 @@ impl Desktop {
         self.last = Some(view);
     }
 
-    /// Starts the shell for the user to act on. The core never waits for it.
-    async fn spawn_window(&self, args: impl IntoIterator<Item = &str>) {
+    /// Starts the shell for the user to act on. The core never waits for it. `token`, the
+    /// activation token of a notification press, lets its window take the focus.
+    async fn spawn_window(&self, args: impl IntoIterator<Item = &str>, token: Option<&str>) {
         let args: Vec<&str> = args.into_iter().collect();
         let program = match shell_program() {
             Some(program) => program,
@@ -821,7 +832,7 @@ impl Desktop {
                 bytes.push(0);
                 argv.push(bytes);
             }
-            if self.spawn_through_portal(argv).await {
+            if self.spawn_through_portal(argv, token).await {
                 return;
             }
             // The portal refused (rare): the direct start below is the fallback it gets, and
@@ -833,6 +844,7 @@ impl Desktop {
             // new one sets them for itself.
             command.env_remove("ARGV0").env_remove("APPDIR");
         }
+        command.envs(activation_env(token));
         if let Err(e) = command.args(args).spawn() {
             tracing::warn!("cannot open the window: {e}");
         }
@@ -840,15 +852,15 @@ impl Desktop {
 
     /// The Flatpak portal `Spawn` call: the shell starts inside the same sandbox as this core,
     /// with everything seen from the same paths as this process sees. `false` when it failed.
-    async fn spawn_through_portal(&self, argv: Vec<Vec<u8>>) -> bool {
+    async fn spawn_through_portal(&self, argv: Vec<Vec<u8>>, token: Option<&str>) -> bool {
         // No file descriptors to hand over, as an empty `a{uh}` (in the portalled `Spawn` the
-        // map's value type decides, and an empty generic map would arrive as `a{sv}`). Also no
-        // extra environment, and the version flag of the newest portal interface.
+        // map's value type decides, and an empty generic map would arrive as `a{sv}`). The only
+        // extra environment is the activation token, and the flag is the newest portal interface.
         let body = (
             b"/\0".to_vec(), // cwd at the root of the sandbox, a NUL-terminated byte string (`ay`)
             argv,
             HashMap::<u32, Fd>::new(),
-            HashMap::<String, String>::new(),
+            activation_env(token).collect::<HashMap<String, String>>(),
             2u32, // LATEST_VERSION
             HashMap::<String, Variant<'static>>::new(),
         );
@@ -918,33 +930,93 @@ impl Desktop {
         tracing::warn!("nothing can set the clipboard");
     }
 
-    /// Opens a thing (a link, a file or a folder): the OpenURI portal in a sandbox, `xdg-open`
-    /// everywhere else.
-    async fn open_anything(&self, what: &str) {
-        if Path::new(FLATPAK_INFO).exists() {
-            let body = (
-                "", // no parent window to come back from
-                what,
-                HashMap::<String, Variant<'static>>::new(),
-            );
-            if let Err(e) = self
-                .connection
-                .call_method(
-                    Some("org.freedesktop.portal.Desktop"),
-                    "/org/freedesktop/portal/desktop",
-                    Some("org.freedesktop.portal.OpenURI"),
-                    "OpenURI",
-                    &body,
-                )
-                .await
-            {
-                tracing::warn!("the flatpak portal could not open {what}: {e}");
-            }
+    /// Opens a web link: the OpenURI portal in a sandbox, `xdg-open` everywhere else. `token` is
+    /// the activation token of the press, for the window that opens.
+    async fn open_link(&self, link: &str, token: Option<&str>) {
+        if !Path::new(FLATPAK_INFO).exists() {
+            xdg_open(link, token);
             return;
         }
-        if let Err(e) = process::Command::new("xdg-open").arg(what).spawn() {
-            tracing::warn!("cannot open {what}: {e}");
+        let body = (
+            "", // no parent window to come back from
+            link,
+            portal_options(token),
+        );
+        if let Err(e) = self.call_open_uri("OpenURI", &body).await {
+            tracing::warn!("the flatpak portal could not open {link}: {e}");
         }
+    }
+
+    /// Opens a received file or the download folder. In a sandbox the portal gets the file
+    /// itself through `OpenFile`: its `OpenURI` takes no `file://` URI, and turns one down in
+    /// the reply it sends later, not as an error of the call.
+    async fn open_path(&self, path: &str, token: Option<&str>) {
+        if !Path::new(FLATPAK_INFO).exists() {
+            xdg_open(&file_uri(path), token);
+            return;
+        }
+        // Read-only, also for a folder. Off this task's thread: the folder may be on a slow mount.
+        let file = match tokio::fs::File::open(path).await {
+            Ok(file) => file.into_std().await,
+            Err(e) => {
+                tracing::warn!("cannot open {path}: {e}");
+                return;
+            }
+        };
+        let body = (
+            "", // no parent window to come back from
+            Fd::from(&file),
+            portal_options(token),
+        );
+        if let Err(e) = self.call_open_uri("OpenFile", &body).await {
+            tracing::warn!("the flatpak portal could not open {path}: {e}");
+        }
+    }
+
+    /// One call of the OpenURI portal. What it opens is decided after the answer, in a reply this
+    /// core does not wait for.
+    async fn call_open_uri<B>(&self, method: &str, body: &B) -> zbus::Result<()>
+    where
+        B: serde::Serialize + zbus::zvariant::DynamicType,
+    {
+        self.connection
+            .call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.portal.OpenURI"),
+                method,
+                body,
+            )
+            .await
+            .map(|_| ())
+    }
+}
+
+/// The environment that hands an activation token to a started program, which gives it to its
+/// first window.
+fn activation_env(token: Option<&str>) -> impl Iterator<Item = (String, String)> + use<> {
+    token
+        .map(|token| ("XDG_ACTIVATION_TOKEN".to_owned(), token.to_owned()))
+        .into_iter()
+}
+
+/// The options of an OpenURI portal call: the activation token of the press, when the server
+/// gave one, lets the window that opens take the focus (version 4 of the interface).
+fn portal_options(token: Option<&str>) -> HashMap<&'static str, Variant<'_>> {
+    token
+        .map(|token| ("activation_token", Variant::from(token)))
+        .into_iter()
+        .collect()
+}
+
+/// `xdg-open` of a link or a `file://` URI, with the activation token of the press.
+fn xdg_open(what: &str, token: Option<&str>) {
+    if let Err(e) = process::Command::new("xdg-open")
+        .arg(what)
+        .envs(activation_env(token))
+        .spawn()
+    {
+        tracing::warn!("cannot open {what}: {e}");
     }
 }
 

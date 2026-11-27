@@ -83,8 +83,15 @@ FormCard.FormCardPage {
         }
     }
 
+    // Nothing else names this page: it has no tab, and the window title is the app name alone.
+    Kirigami.Heading {
+        level: 1
+        type: Kirigami.Heading.Primary
+        text: page.title
+        Layout.fillWidth: true
+        Layout.leftMargin: Kirigami.Units.largeSpacing
+    }
     SectionTitle {
-        first: true
         text: KI18n.i18nc("@title:group", "Visibility")
     }
     // FormCard rounds its corners only when it is wider than its maximumWidth (30 grid units by

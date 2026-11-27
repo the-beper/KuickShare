@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::time::Duration;
 
-use futures_util::StreamExt;
+use futures_util::{FutureExt, StreamExt};
 use tokio::sync::mpsc::UnboundedSender;
 use zbus::{Connection, Variant, fdo, proxy::CacheProperties};
 
@@ -98,6 +98,12 @@ mod proxies {
         #[zbus(signal)]
         fn action_invoked(&self, id: u32, action_key: String) -> zbus::Result<()>;
 
+        /// Sent just before `ActionInvoked` (Plasma does): the XDG activation token for the
+        /// window the press opens. Until a window uses it, KWin shows the launch feedback of our
+        /// desktop entry.
+        #[zbus(signal)]
+        fn activation_token(&self, id: u32, activation_token: String) -> zbus::Result<()>;
+
         /// The daemon closed one of our notifications: a click on the body, the timeout,
         /// or the banner cleared.
         #[zbus(signal)]
@@ -149,8 +155,12 @@ pub enum Notice {
 /// What the notifier reports back to the desktop.
 pub enum Event {
     /// A button of one of our notifications was pressed; `key` is one of the action
-    /// keys below.
-    Answered { server_id: u32, key: String },
+    /// keys below. `token` is the activation token the server gave for the press, if any.
+    Answered {
+        server_id: u32,
+        key: String,
+        token: Option<String>,
+    },
     /// A notification is gone without an answer: a click on the body, the timeout, or
     /// a banner the server cleared.
     Dismissed { server_id: u32 },
@@ -387,6 +397,15 @@ fn is_dismissal(last_pressed: &mut Option<u32>, closed: u32) -> bool {
     }
 }
 
+/// The activation token of the press on notification `pressed`: the server sends it just before
+/// the press, and a token left from another notification belongs to no press now. An empty token
+/// is none.
+fn token_of_press(last_token: &mut Option<(u32, String)>, pressed: u32) -> Option<String> {
+    last_token
+        .take()
+        .and_then(|(id, token)| (id == pressed && !token.is_empty()).then_some(token))
+}
+
 /// The client of the daemon; it never takes the `Core` lock.
 #[derive(Clone)]
 pub struct Notifier {
@@ -488,6 +507,13 @@ impl Notifier {
         proxy: proxies::NotificationsProxy<'static>,
         events: &UnboundedSender<Event>,
     ) {
+        let mut tokens = match proxy.receive_activation_token().await {
+            Ok(tokens) => tokens,
+            Err(e) => {
+                tracing::debug!("no notification signals: {e}");
+                return;
+            }
+        };
         let mut invoked = match proxy.receive_action_invoked().await {
             Ok(invoked) => invoked,
             Err(e) => {
@@ -511,18 +537,35 @@ impl Notifier {
         };
         // The notification of the last press: its close, which follows, is no dismissal.
         let mut pressed_id: Option<u32> = None;
+        // The last activation token, which the press that follows it takes.
+        let mut last_token: Option<(u32, String)> = None;
         loop {
-            // Biased: Plasma sends `ActionInvoked` and then `NotificationClosed` for a press, and
-            // when both are waiting the press must be read first or the answer is lost.
+            // Biased: Plasma sends `ActivationToken`, `ActionInvoked` and then
+            // `NotificationClosed` for a press, and when the press and its close are both waiting
+            // the press must be read first or the answer is lost.
             tokio::select! {
                 biased;
+                token = tokens.next() => {
+                    let Some(token) = token else { return };
+                    if let Ok(args) = token.args() {
+                        last_token = Some((args.id, args.activation_token));
+                    }
+                }
                 pressed = invoked.next() => {
                     let Some(pressed) = pressed else { return };
+                    // The connection queues each signal before it reads the next one, so the token
+                    // of this press is queued by now, even when this pass found its stream empty.
+                    while let Some(Some(token)) = tokens.next().now_or_never() {
+                        if let Ok(args) = token.args() {
+                            last_token = Some((args.id, args.activation_token));
+                        }
+                    }
                     if let Ok(args) = pressed.args() {
                         pressed_id = Some(args.id);
                         let _ = events.send(Event::Answered {
                             server_id: args.id,
                             key: args.action_key,
+                            token: token_of_press(&mut last_token, args.id),
                         });
                     }
                 }
@@ -606,6 +649,23 @@ mod tests {
         assert!(!is_dismissal(&mut last, 7), "the close of the press");
         assert_eq!(last, None);
         assert!(is_dismissal(&mut last, 7), "a later close of a reused id");
+    }
+
+    #[test]
+    fn a_press_takes_only_its_own_token() {
+        let mut last = Some((7, "t7".to_owned()));
+        assert_eq!(token_of_press(&mut last, 7).as_deref(), Some("t7"));
+        assert_eq!(last, None, "a token serves one press");
+        assert_eq!(token_of_press(&mut last, 7), None, "no token came");
+        last = Some((8, "t8".to_owned()));
+        assert_eq!(
+            token_of_press(&mut last, 9),
+            None,
+            "another notification's token"
+        );
+        assert_eq!(last, None, "a stale token is dropped");
+        last = Some((10, String::new()));
+        assert_eq!(token_of_press(&mut last, 10), None, "an empty token");
     }
 
     #[test]

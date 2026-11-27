@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 import org.kde.ki18n
@@ -8,7 +9,7 @@ FormCard.FormCardPage {
 
     required property var core
 
-    title: KI18n.i18n("Help")
+    title: KI18n.i18nc("@title", "Help")
 
     // Same padding on every page: cards float with rounded corners instead of touching the window edges.
     topPadding: Kirigami.Units.largeSpacing
@@ -22,8 +23,15 @@ FormCard.FormCardPage {
         descriptionItem.opacity: 0.7
     }
 
+    // Nothing else names this page: it has no tab, and the window title is the app name alone.
+    Kirigami.Heading {
+        level: 1
+        type: Kirigami.Heading.Primary
+        text: page.title
+        Layout.fillWidth: true
+        Layout.leftMargin: Kirigami.Units.largeSpacing
+    }
     SectionTitle {
-        first: true
         text: KI18n.i18n("Getting Started")
     }
     FormCard.FormCard {

@@ -166,7 +166,7 @@ Uninstalling leaves `~/.config/kuickshare/` (settings, history, paired devices);
 
 The window opens on the Send page and a tray icon appears. The computer is visible to nearby devices under the hostname, until you change the name in Preferences.
 
-The window has a fixed size and its title is `<page> — KuickShare`. Closing it ends the window program and frees its memory (queued files and the current page are forgotten); the background service keeps running with its tray icon, so the computer can still receive. The tray icon opens the window on a left click (it starts the window program for that). Its menu has these entries:
+The window has a fixed size and its title is `KuickShare`. Closing it ends the window program and frees its memory (queued files and the current page are forgotten); the background service keeps running with its tray icon, so the computer can still receive. The tray icon opens the window on a left click (it starts the window program for that). Its menu has these entries:
 
 | Entry | Effect |
 |---|---|

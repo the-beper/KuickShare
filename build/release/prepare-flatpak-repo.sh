@@ -150,8 +150,9 @@ if [ "$base" != - ]; then
     # refs and commits of the verified summary and what was pulled must be the same.
     ostree --repo="$tmp/verify" remote summary published 2> /dev/null | awk '/^\* / { r = $2 } /Latest Commit/ { getline; print r, $1 }' | LC_ALL=C sort > "$tmp/summary.refs"
     ref_map "$repo" > "$tmp/heads.refs"
-    [ -s "$tmp/summary.refs" ] && cmp -s "$tmp/summary.refs" "$tmp/heads.refs" \
-        || bad_input "the refs of gh-pages are not the refs and commits of its signed summary: gh-pages was altered"
+    if ! { [ -s "$tmp/summary.refs" ] && cmp -s "$tmp/summary.refs" "$tmp/heads.refs"; }; then
+        bad_input "the refs of gh-pages are not the refs and commits of its signed summary: gh-pages was altered"
+    fi
     while read -r ref commit; do
         [ "$(ostree --repo="$tmp/verify" rev-parse "published:$ref" 2> /dev/null || ostree --repo="$tmp/verify" rev-parse "$ref" 2> /dev/null)" = "$commit" ] \
             || bad_input "what was pulled for $ref is not the commit $commit of the signed summary"

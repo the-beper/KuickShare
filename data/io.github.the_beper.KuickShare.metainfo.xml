@@ -71,6 +71,18 @@
     <control>keyboard</control>
   </recommends>
   <releases>
+    <release version="1.11.1" date="2026-11-27">
+      <description>
+        <p>Fixes for notification buttons, and a shorter window title</p>
+        <ul>
+          <li>Open File and Open Folder on a received-files notification open the file or the folder in the Flatpak too</li>
+          <li>A window opened from a notification button takes the focus</li>
+          <li>Notification buttons no longer leave a KuickShare entry loading in the Task Manager</li>
+          <li>The window title is KuickShare alone, and Preferences and Help show their name at the top of the page</li>
+          <li>Updated dependencies</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.11.0" date="2026-11-21">
       <description>
         <p>A clearer window with actionable messages, transfer details and safer removal</p>
